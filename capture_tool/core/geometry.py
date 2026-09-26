@@ -155,6 +155,27 @@ def layout_bars(sel: Rect, monitor: Rect, tb_size: tuple[int, int], sb_size: tup
     return (tx, ty), (corner_x, monitor.y + gap)
 
 
+def match_screen(monitor: Monitor, screens: Sequence[tuple[str, tuple[int, int, int, int], float]]) -> str | None:
+    """Pick the Qt screen (name, (x, y, w, h) logical geometry, dpr) that shows `monitor`.
+
+    Qt on Windows keeps each screen's physical top-left as its geometry origin while the
+    size is divided by its dpr; names are marketing names, not GDI device names."""
+    if not screens:
+        return None
+    r = monitor.rect
+    for name, _, _ in screens:
+        if name == monitor.name:
+            return name
+
+    def score(s):
+        _, (x, y, w, h), dpr = s
+        origin = abs(x - r.x) + abs(y - r.y)
+        size = abs(w * dpr - r.w) + abs(h * dpr - r.h)
+        return origin * 4 + size + abs(dpr - monitor.scale) * 1000
+
+    return min(screens, key=score)[0]
+
+
 def to_logical(r: Rect, scale: float) -> Rect:
     return Rect(round(r.x / scale), round(r.y / scale), round(r.w / scale), round(r.h / scale))
 

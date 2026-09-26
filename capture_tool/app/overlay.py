@@ -11,7 +11,7 @@ from PySide6.QtWidgets import QLineEdit, QWidget
 
 from ..core.annotations import Shape
 from ..core.color import pixel_color
-from ..core.geometry import Rect, layout_bars
+from ..core.geometry import Rect, layout_bars, match_screen
 from ..core.session import State
 from .render import FONT_FAMILY, apply_mosaic, bgr_to_pixmap, bgr_to_qimage, paint_document
 from .side_bar import SideBar
@@ -74,12 +74,24 @@ class OverlayWindow(QWidget):
 
     # --- geometry helpers ------------------------------------------------------
     def place(self) -> None:
-        for scr in QGuiApplication.screens():
-            if scr.name() == self.monitor.name:
-                self.setScreen(scr)
-                self.setGeometry(scr.geometry())
-                return
+        """Cover exactly the Qt screen that shows this monitor. Qt screen names are marketing
+        names ("SAMSUNG"), not GDI names ("\\\\.\\DISPLAY1"), so match by geometry."""
+        screens = QGuiApplication.screens()
+        cand = [(s.name(), s.geometry().getRect(), s.devicePixelRatio()) for s in screens]
+        name = match_screen(self.monitor, cand)
+        scr = next((s for s in screens if s.name() == name), None)
         r = self.monitor.rect
+        if scr is not None:
+            g, dpr = scr.geometry(), scr.devicePixelRatio()
+            exact = (abs(g.x() - r.x) <= 2 and abs(g.y() - r.y) <= 2
+                     and abs(g.width() * dpr - r.w) <= 2 and abs(g.height() * dpr - r.h) <= 2)
+            self.setScreen(scr)
+            if exact:
+                if abs(dpr - self.scale) > 0.01:  # trust Qt's ratio for drawing the frozen frame
+                    self.scale = dpr
+                    self.pixmap = bgr_to_pixmap(self.image, dpr)
+                self.setGeometry(g)
+                return
         self.setGeometry(QRect(round(r.x / self.scale), round(r.y / self.scale),
                                round(r.w / self.scale), round(r.h / self.scale)))
 

@@ -5,6 +5,7 @@ from capture_tool.core.geometry import (
     Rect,
     clamp_rect,
     layout_bars,
+    match_screen,
     monitor_at,
     nudge,
     order_cursor_first,
@@ -159,6 +160,33 @@ def test_GEO_22_bars_never_overlap_and_stay_on_screen(sel):
     assert not _overlap(tb, sb), (tb, sb)
     for r in (tb, sb):
         assert MON.x <= r.x and r.right <= MON.right and MON.y <= r.y and r.bottom <= MON.bottom, r
+
+
+# Qt on Windows: QScreen.geometry() keeps the *physical* top-left, size is physical / dpr.
+# Names differ from GDI device names ("SAMSUNG" vs "\\.\DISPLAY1"), so match by geometry.
+QT_THIS_PC = [("SAMSUNG", (0, 0, 2560, 1440), 1.5), ("C27F390", (3840, 0, 1920, 1080), 1.0)]
+QT_LAPTOP_PLUS_4K = [("Laptop", (0, 0, 1920, 1080), 1.0), ("4K", (1920, 0, 2560, 1440), 1.5)]
+QT_LEFT_SECONDARY = [("Main", (0, 0, 1707, 960), 1.5), ("Left", (-1920, 0, 1920, 1080), 1.0)]
+
+
+@pytest.mark.parametrize("mon,screens,expected", [
+    (Monitor(0, Rect(0, 0, 3840, 2160), 1.5, True, r"\\.\DISPLAY1"), QT_THIS_PC, "SAMSUNG"),
+    (Monitor(1, Rect(3840, 0, 1920, 1080), 1.0, False, r"\\.\DISPLAY2"), QT_THIS_PC, "C27F390"),
+    # the bug: 150% monitor to the right of a 100% laptop; physical/scale would land on the laptop
+    (Monitor(1, Rect(1920, 0, 3840, 2160), 1.5, False, r"\\.\DISPLAY2"), QT_LAPTOP_PLUS_4K, "4K"),
+    (Monitor(0, Rect(0, 0, 1920, 1080), 1.0, True, r"\\.\DISPLAY1"), QT_LAPTOP_PLUS_4K, "Laptop"),
+    (Monitor(1, Rect(-1920, 0, 1920, 1080), 1.0, False, "x"), QT_LEFT_SECONDARY, "Left"),
+    (Monitor(0, Rect(0, 0, 2560, 1440), 1.5, True, "x"), QT_LEFT_SECONDARY, "Main"),
+])
+def test_GEO_23_match_qt_screen_by_geometry(mon, screens, expected):
+    assert match_screen(mon, screens) == expected
+
+
+def test_GEO_24_match_qt_screen_prefers_exact_name_then_nearest():
+    screens = [("A", (0, 0, 1000, 800), 1.0), ("B", (1000, 0, 1000, 800), 1.0)]
+    assert match_screen(Monitor(0, Rect(7, 3, 1000, 800), 1.0, False, "B"), screens) == "B"
+    assert match_screen(Monitor(0, Rect(1003, 2, 1000, 800), 1.0, False, "?"), screens) == "B"
+    assert match_screen(Monitor(0, Rect(0, 0, 10, 10), 1.0), []) is None
 
 
 @pytest.mark.parametrize("scale", [1.0, 1.25, 1.5, 1.75])
