@@ -53,6 +53,7 @@ class Controller(QObject):
         self._notify = notify
         self.session = CaptureSession()
         self.overlays: list[OverlayWindow] = []
+        self._pool: dict[str, OverlayWindow] = {}
         self.active_overlay: OverlayWindow | None = None
         self.pins: list[PinWindow] = []
         self.text_panel: TextPanel | None = None
@@ -106,26 +107,53 @@ class Controller(QObject):
                                               if self.session.state is not State.IDLE])
         return True
 
+    def _overlay_for(self, monitor, img, wins) -> OverlayWindow:
+        ov = self._pool.get(monitor.name)
+        if ov is None:
+            ov = OverlayWindow(self, monitor, img, wins)
+            self._pool[monitor.name] = ov
+        else:
+            ov.reset(monitor, img, wins)
+        return ov
+
+    def prewarm(self) -> None:
+        """Create (hidden) overlay windows for every monitor ahead of the first hotkey."""
+        import numpy as np
+        for m in self.screen.monitors():
+            ov = self._overlay_for(m, np.zeros((8, 8, 3), np.uint8), [])
+            ov.place()
+            ov.winId()  # force native window creation now
+
     def _open_overlay(self, monitor, wins, focus=False) -> None:
         img = self.screen.grab(monitor.rect)
-        ov = OverlayWindow(self, monitor, img, wins)
+        ov = self._overlay_for(monitor, img, wins)
         ov.place()
         ov.show()
+        ov.raise_()
         if focus:
-            ov.raise_()
+            if self.sync:
+                self._focus(ov)
+            else:  # frozen frame is on screen first; keyboard focus a moment later
+                QTimer.singleShot(0, lambda: self._focus(ov))
+        self.overlays.append(ov)
+
+    @staticmethod
+    def _focus(ov) -> None:
+        if ov.isVisible():
             ov.activateWindow()
             ov.setFocus()
-        self.overlays.append(ov)
 
     def close_overlays(self) -> None:
         for ov in self.overlays:
             ov.hide()
-            ov.deleteLater()
         self.overlays = []
         self.active_overlay = None
 
     def close_all(self) -> None:
         self.close_overlays()
+        for ov in self._pool.values():
+            ov.deleteLater()
+        self._pool.clear()
         for p in list(self.pins):
             p.close()
         if self.text_panel:
@@ -223,7 +251,7 @@ class Controller(QObject):
             self.pin(final, pos, ov.scale)
 
     def _copy_image(self, img) -> None:
-        ok, png = cv2.imencode(".png", img)
+        ok, png = cv2.imencode(".png", img, [cv2.IMWRITE_PNG_COMPRESSION, 1])  # fast; size is secondary
         if ok and self._set_clipboard(image_payload(png.tobytes(), dib_from_bgr(img))):
             self.notify("이미지를 클립보드에 복사했습니다. 원하는 곳에 Ctrl+V")
         if self.settings.auto_save:

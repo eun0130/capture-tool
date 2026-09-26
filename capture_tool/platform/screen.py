@@ -86,6 +86,7 @@ def _mss():
 
 
 def grab(r: Rect) -> np.ndarray:
-    """BGR image of a physical-pixel rectangle of the virtual screen."""
+    """BGRA image (zero-copy view of the grab buffer) of a physical-pixel rectangle.
+    Callers convert only the pixels they need; converting a whole 4K frame costs ~30 ms."""
     shot = _mss().grab({"left": r.x, "top": r.y, "width": r.w, "height": r.h})
-    return np.asarray(shot, dtype=np.uint8)[:, :, :3].copy()
+    return np.frombuffer(shot.raw, dtype=np.uint8).reshape(shot.height, shot.width, 4)

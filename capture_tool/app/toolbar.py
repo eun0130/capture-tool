@@ -93,6 +93,8 @@ class Toolbar(QWidget):
         self.arrange(10_000)
 
     def addWidget(self, w: QWidget) -> None:
+        # parent right away: showing a parentless widget would create a native top-level window
+        w.setParent(self)
         self._items.append(w)
 
     def arrange(self, max_width: int) -> None:

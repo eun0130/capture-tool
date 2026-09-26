@@ -13,11 +13,13 @@ from ..core.annotations import Document, Shape
 FONT_FAMILY = "Malgun Gothic"
 
 
-def bgr_to_qimage(img: np.ndarray) -> QImage:
+def bgr_to_qimage(img: np.ndarray, copy: bool = True) -> QImage:
+    """BGR or BGRA numpy image -> QImage. copy=False keeps a view (caller keeps `img` alive)."""
     img = np.ascontiguousarray(img)
     h, w = img.shape[:2]
-    q = QImage(img.data, w, h, img.strides[0], QImage.Format_BGR888)
-    return q.copy()  # detach from numpy buffer
+    fmt = QImage.Format_RGB32 if img.ndim == 3 and img.shape[2] == 4 else QImage.Format_BGR888
+    q = QImage(img.data, w, h, img.strides[0], fmt)
+    return q.copy() if copy else q
 
 
 def qimage_to_bgr(q: QImage) -> np.ndarray:
@@ -28,7 +30,7 @@ def qimage_to_bgr(q: QImage) -> np.ndarray:
 
 
 def bgr_to_pixmap(img: np.ndarray, dpr: float = 1.0) -> QPixmap:
-    pm = QPixmap.fromImage(bgr_to_qimage(img))
+    pm = QPixmap.fromImage(bgr_to_qimage(img, copy=False))  # fromImage copies the pixels itself
     pm.setDevicePixelRatio(dpr)
     return pm
 

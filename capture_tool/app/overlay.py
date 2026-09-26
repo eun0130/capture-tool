@@ -4,7 +4,8 @@ Coordinates: widget-local logical px <-> global physical px (monitor origin + lo
 Annotations (core Document) use physical px relative to the selection."""
 from __future__ import annotations
 
-from PySide6.QtCore import QPointF, QRect, QRectF, Qt
+import numpy as np
+from PySide6.QtCore import QPointF, QRect, QRectF, Qt, QTimer
 from PySide6.QtGui import QColor, QCursor, QFont, QGuiApplication, QPainter, QPainterPath, QPen
 from PySide6.QtWidgets import QLineEdit, QWidget
 
@@ -50,6 +51,22 @@ class OverlayWindow(QWidget):
         self._editor: QLineEdit | None = None
         self.hover_window = None
 
+    def reset(self, monitor, image, windows=()) -> None:
+        """Reuse a pre-created window for a new capture (much faster than creating one)."""
+        self.monitor = monitor
+        self.image = image
+        self.windows = list(windows)
+        self.scale = monitor.scale or 1.0
+        self.pixmap = bgr_to_pixmap(image, self.scale)
+        self._press = self._cursor = self._current = self._move_index = None
+        self._moved = False
+        self.hover_window = None
+        if self._editor is not None:
+            self._editor.deleteLater()
+            self._editor = None
+        self.toolbar.hide()
+        self.update()
+
     # --- geometry helpers ------------------------------------------------------
     def place(self) -> None:
         for scr in QGuiApplication.screens():
@@ -78,7 +95,7 @@ class OverlayWindow(QWidget):
 
     def crop(self, sel: Rect):
         x, y = sel.x - self.monitor.rect.x, sel.y - self.monitor.rect.y
-        return self.image[y:y + sel.h, x:x + sel.w].copy()
+        return np.ascontiguousarray(self.image[y:y + sel.h, x:x + sel.w, :3])  # BGR copy of the region only
 
     @property
     def active(self) -> bool:

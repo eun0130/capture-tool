@@ -94,7 +94,7 @@ def test_WSCR_03_grab_region_shape():
     m = screen.monitors()[0]
     r = Rect(m.rect.x + 10, m.rect.y + 10, 120, 80)
     img = screen.grab(r)
-    assert img.shape == (80, 120, 3) and img.dtype == np.uint8
+    assert img.shape == (80, 120, 4) and img.dtype == np.uint8  # BGRA, zero-copy
 
 
 def test_WSCR_04_grab_monitor_is_fast():
