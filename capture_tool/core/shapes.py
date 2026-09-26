@@ -115,12 +115,60 @@ def _detect_in(img, region, bg, out, depth):
         if cv2.contourArea(c) < MIN_AREA and cv2.arcLength(c, True) < 60:
             continue
         has_hole = hier[i][2] >= 0
-        d = _classify(img, c, fg, has_hole, bg)
-        if d is None:
+        split = _split_attached_lines(img, c, fg)
+        if split is not None:
+            bodies, lines = split
+            out.extend(lines)
+            candidates = [(b, True) for b in bodies]
+        else:
+            candidates = [(c, has_hole)]
+        for contour, hole in candidates:
+            d = _classify(img, contour, fg, hole, bg)
+            if d is None:
+                continue
+            out.append(d)
+            if d.fill and depth < 3 and d.kind not in ("line", "arrow"):
+                _recurse(img, contour, d, region, out, depth)
+
+
+SPLIT_KERNEL = 13  # px; shape bodies are thicker than this, connector lines are thinner
+
+
+def _split_attached_lines(img, contour, fg):
+    """A connector touching a shape merges with it into one region. Cut off the thin
+    parts that look like lines/arrows and return (shape body contours, line detections)."""
+    x, y, w, h = cv2.boundingRect(contour)
+    if w < 30 and h < 30:
+        return None
+    p = 2
+    m = np.zeros((h + 2 * p, w + 2 * p), np.uint8)
+    cv2.drawContours(m, [contour - [x - p, y - p]], -1, 255, -1)
+    opened = cv2.morphologyEx(m, cv2.MORPH_OPEN, np.ones((SPLIT_KERNEL, SPLIT_KERNEL), np.uint8))
+    if np.count_nonzero(opened) < 0.3 * np.count_nonzero(m):
+        return None  # mostly thin: the whole region is a line, handled by _classify
+    thin = cv2.bitwise_and(m, cv2.bitwise_not(cv2.dilate(opened, np.ones((5, 5), np.uint8))))
+    n, labels, stats, _ = cv2.connectedComponentsWithStats(thin)
+    lines, remove = [], np.zeros_like(m)
+    for j in range(1, n):
+        if stats[j, cv2.CC_STAT_AREA] < 25:
             continue
-        out.append(d)
-        if d.fill and depth < 3 and d.kind not in ("line", "arrow"):
-            _recurse(img, c, d, region, out, depth)
+        ys, xs = np.nonzero(labels == j)
+        gx, gy = xs + x - p, ys + y - p
+        keep = fg[gy, gx] > 0
+        if keep.sum() < 10:
+            continue
+        pts = np.stack([gx[keep], gy[keep]], axis=1)
+        d = _line_from_points(img, pts)
+        if d is not None:
+            lines.append(d)
+            remove[labels == j] = 255
+    if not lines:
+        return None
+    body = cv2.bitwise_and(m, cv2.bitwise_not(cv2.dilate(remove, np.ones((3, 3), np.uint8))))
+    body = cv2.morphologyEx(body, cv2.MORPH_OPEN, np.ones((3, 3), np.uint8))
+    cs, _ = cv2.findContours(body, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
+    bodies = [cc + [x - p, y - p] for cc in cs if cv2.contourArea(cc) >= MIN_AREA]
+    return bodies, lines
 
 
 def _recurse(img, contour, d, region, out, depth):
@@ -164,7 +212,15 @@ def _try_line(img, contour, fg, bg):
     ys, xs = np.nonzero(blob)
     if len(xs) < 10:
         return None
-    pts = np.stack([xs + x, ys + y], axis=1)
+    return _line_from_points(img, np.stack([xs + x, ys + y], axis=1))
+
+
+def _line_from_points(img, pts: np.ndarray) -> Detected | None:
+    """Pixels of one region -> line/arrow if the region is a thin straight stroke."""
+    if len(pts) < 10:
+        return None
+    x, y = int(pts[:, 0].min()), int(pts[:, 1].min())
+    w, h = int(pts[:, 0].max()) - x + 1, int(pts[:, 1].max()) - y + 1
     mean, axis, t, s = _line_profile(pts)
     length = t.max() - t.min()
     if length < 20:

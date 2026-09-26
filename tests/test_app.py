@@ -205,7 +205,9 @@ def test_APP_09_arrow_keys_nudge_selection(make):
 # --- save ----------------------------------------------------------------------
 
 def test_APP_10_save_to_folder_with_unique_names(make, tmp_path):
+    from datetime import datetime
     c = make()
+    c.now = lambda: datetime(2026, 9, 26, 14, 30, 12)
     for _ in range(2):
         c.start_capture()
         ov = c.overlays[0]

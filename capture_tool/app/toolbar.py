@@ -40,12 +40,16 @@ class Toolbar(QWidget):
         self.setObjectName("toolbar")
         self.setAttribute(Qt.WA_StyledBackground, True)
         self.setStyleSheet(STYLE)
-        self.color, self.width, self.fill, self.opacity = color, width, False, 1.0
+        self.color, self.line_width, self.fill, self.opacity = color, width, False, 1.0
         self.recent = list(recent or [])
         self.buttons: dict[str, QWidget] = {}
-        lay = QHBoxLayout(self)
-        lay.setContentsMargins(6, 6, 6, 6)
-        lay.setSpacing(2)
+        self._items: list[QWidget] = []
+        self._split = 0
+        self._grid = QGridLayout(self)
+        self._grid.setContentsMargins(6, 6, 6, 6)
+        self._grid.setHorizontalSpacing(2)
+        self._grid.setVerticalSpacing(4)
+        lay = self  # widgets are collected via addWidget below, then arranged
         for name, tip in TOOLS:
             b = self._tool_button(name, tip, checkable=True)
             b.clicked.connect(lambda _=False, n=name: self.set_tool(n))
@@ -59,6 +63,7 @@ class Toolbar(QWidget):
         fill = self._tool_button("fill", "채우기", checkable=True)
         fill.toggled.connect(self._set_fill)
         lay.addWidget(fill)
+        self._split = len(self._items)
         lay.addWidget(self._sep())
         for name, label, tip in [("text", "텍스트", "이미지 속 글자 복사"), ("shapes", "도형→PPT", "도형을 PowerPoint 도형으로 복사")]:
             b = QPushButton(icons.icon("ocr" if name == "text" else "shapes"), label)
@@ -85,6 +90,26 @@ class Toolbar(QWidget):
         self.palette = PalettePopup(self)
         self.set_tool(tool)
         self._refresh_color()
+        self.arrange(10_000)
+
+    def addWidget(self, w: QWidget) -> None:
+        self._items.append(w)
+
+    def arrange(self, max_width: int) -> None:
+        """One row if it fits, otherwise drawing tools on row 1 and actions on row 2."""
+        for w in self._items:
+            self._grid.removeWidget(w)
+        widths = [w.sizeHint().width() for w in self._items]
+        one_row = sum(widths) + 2 * len(widths) + 12
+        split = len(self._items) if one_row <= max_width else self._split
+        for i, w in enumerate(self._items):
+            row, col = (0, i) if i < split else (1, i - split)
+            if row == 1 and col == 0 and isinstance(w, QFrame) and not isinstance(w, QToolButton):
+                w.hide()
+                continue
+            w.show()
+            self._grid.addWidget(w, row, col)
+        self._grid.setColumnStretch(len(self._items), 1)
         self.adjustSize()
 
     def _tool_button(self, name, tip, checkable=False) -> QToolButton:
@@ -128,7 +153,7 @@ class Toolbar(QWidget):
         self.styleChanged.emit()
 
     def set_width(self, w: int) -> None:
-        self.width = w
+        self.line_width = w
         self.styleChanged.emit()
 
     def set_opacity(self, o: float) -> None:

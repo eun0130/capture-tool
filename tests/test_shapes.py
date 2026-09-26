@@ -175,6 +175,28 @@ def test_SHP_15_gray_and_bgra_input():
     assert [d.kind for d in detect(bgra)] == ["rect"]
 
 
+@pytest.mark.parametrize("gap", [0, 2])
+def test_SHP_17_arrow_touching_shapes_is_split(gap):
+    img = synth.canvas(700, 300)
+    synth.rect(img, 40, 100, 150, 64, fill="#F1F3F5")
+    synth.rect(img, 340, 100, 150, 64, fill=None)
+    synth.line(img, 190 + gap, 132, 340 - gap, 132, arrow=True)
+    found = detect(img)
+    assert sorted(d.kind for d in found) == ["arrow", "rect", "rect"]
+    arrow = next(d for d in found if d.kind == "arrow")
+    assert arrow.points[1][0] > arrow.points[0][0]          # head points right
+    shapes, conns = to_drawing(found)
+    assert (conns[0].start, conns[0].end) == (0, 1)
+
+
+def test_SHP_18_line_between_triangle_and_ellipse():
+    img = synth.canvas(700, 300)
+    synth.triangle(img, 40, 60, 160, 140, fill="#FFF3BF")
+    synth.ellipse(img, 400, 60, 200, 140, fill="#D0EBFF")
+    synth.line(img, 200, 130, 400, 130)
+    assert sorted(d.kind for d in detect(img)) == ["ellipse", "line", "triangle"]
+
+
 def _match(found, gts):
     used = set()
     tp = 0
