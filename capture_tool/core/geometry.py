@@ -45,6 +45,7 @@ class Monitor:
     rect: Rect
     scale: float = 1.0
     primary: bool = False
+    name: str = ""
 
 
 def monitor_at(p: Point, monitors: Sequence[Monitor]) -> Monitor:

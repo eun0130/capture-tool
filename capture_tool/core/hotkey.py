@@ -47,6 +47,8 @@ _RESERVED = [
 ]
 _CONFLICTS = {
     "Ctrl+`": "VS Code 터미널 열기 단축키와 겹칩니다.",
+    "Win+`": "Windows Terminal '퀘이크 모드'(globalSummon) 기본 단축키와 겹칩니다. "
+             "Terminal 설정 > 작업에서 해당 단축키를 지우면 사용할 수 있습니다.",
     "PrintScreen": "Windows 11에서 기본으로 캡처 도구를 여는 키입니다.",
     "Win+Shift+S": "Windows 캡처 도구 단축키와 겹칩니다.",
     "Ctrl+Shift+`": "VS Code 새 터미널 단축키와 겹칩니다.",

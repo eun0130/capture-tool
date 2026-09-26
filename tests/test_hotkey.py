@@ -87,7 +87,8 @@ def test_HK_08_not_reserved():
 def test_HK_09_known_conflicts():
     msgs = known_conflicts(parse("Ctrl+`"))
     assert any("VS Code" in m for m in msgs)
-    assert known_conflicts(parse("Win+`")) == []
+    assert any("Windows Terminal" in m for m in known_conflicts(parse("Win+`")))
+    assert known_conflicts(parse("Ctrl+Shift+3")) == []
 
 
 def test_HK_10_duplicates():
