@@ -183,6 +183,7 @@ def selftest(tray: TrayApp) -> int:
 
     c = tray.controller
     tray.ocr._load()  # in real use the warm-up has long finished before the first hotkey
+    tray.ocr._load_secondary()
     c.sync = False  # like real use: cursor monitor now, other monitors right after
     t0 = time.perf_counter()
     assert c.start_capture(), "capture did not start"
@@ -220,7 +221,7 @@ def _selftest_recognition(tray: TrayApp) -> tuple[bool, bool]:
     from ..core.shapes import detect
     from .render import qimage_to_bgr
 
-    img = QImage(900, 300, QImage.Format_RGB888)
+    img = QImage(900, 340, QImage.Format_RGB888)
     img.fill(QColor("white"))
     p = QPainter(img)
     p.setRenderHint(QPainter.Antialiasing)
@@ -229,6 +230,7 @@ def _selftest_recognition(tray: TrayApp) -> tuple[bool, bool]:
     p.setFont(f)
     p.setPen(QColor("black"))
     p.drawText(20, 40, "요청 접수 검토 승인 010-1234-5678")
+    p.drawText(20, 320, "Crème brûlée à côté, niño, Straße")
     p.setPen(QPen(QColor("#343A40"), 2))
     p.setBrush(QColor("#F1F3F5"))
     p.drawRect(QRect(40, 120, 180, 80))
@@ -245,9 +247,15 @@ def _selftest_recognition(tray: TrayApp) -> tuple[bool, bool]:
     except Exception as e:  # noqa: BLE001
         logging.error("selftest ocr failed: %s", e)
         text = ""
-    kinds = sorted(d.kind for d in detect(bgr[90:]))
-    logging.info("selftest ocr=%r shapes=%s", text, kinds)
-    return ("요청접수" in text and "010-1234-5678" in text), kinds == ["arrow", "rect", "rect"]
+    try:
+        latin = "".join(l.text for l in tray.ocr.recognize(bgr[280:])).replace(" ", "")
+    except Exception as e:  # noqa: BLE001
+        logging.error("selftest latin ocr failed: %s", e)
+        latin = ""
+    kinds = sorted(d.kind for d in detect(bgr[90:270]))
+    logging.info("selftest ocr=%r latin=%r shapes=%s", text, latin, kinds)
+    ok_text = "요청접수" in text and "010-1234-5678" in text and all(w in latin for w in ("Crème", "brûlée", "niño", "Straße"))
+    return ok_text, kinds == ["arrow", "rect", "rect"]
 
 
 def main(argv=None) -> int:

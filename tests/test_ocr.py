@@ -90,6 +90,93 @@ def test_char_boxes_proportional():
     assert char_boxes("", (0, 0, 10, 10), [(0, 1)]) == []
 
 
+# --- second recognizer for Latin-script languages (French, Spanish, German, ...) ---------
+
+class FakeLatin:
+    def __init__(self, answers, fail=False):
+        self.answers = answers        # text-from-primary -> (text, score)
+        self.calls = []
+        self.fail = fail
+
+    def factory(self):
+        if self.fail:
+            raise RuntimeError("latin model missing")
+        return self
+
+    def __call__(self, crop, primary_text):
+        self.calls.append(primary_text)
+        return self.answers.get(primary_text)
+
+
+def engine_with(items, latin):
+    return OcrEngine(make_factory(items), secondary_factory=latin.factory,
+                     secondary_call=lambda eng, crop, text: eng(crop, text))
+
+
+def test_OCR_06_latin_line_uses_better_second_reading():
+    items = [("Le garcon mange", quad(10, 10, 200, 20), 0.90)]
+    latin = FakeLatin({"Le garcon mange": ("Le garçon mange", 0.97)})
+    lines = engine_with(items, latin).recognize(IMG)
+    assert [l.text for l in lines] == ["Le garçon mange"]
+    assert lines[0].box == (10, 10, 200, 20)
+
+
+def test_OCR_07_hangul_lines_never_sent_to_latin_model():
+    items = [("요청 접수 Hello", quad(10, 10, 200, 20), 0.95), ("Très bien", quad(10, 40, 100, 20), 0.8)]
+    latin = FakeLatin({"Très bien": ("Très bien", 0.95)})
+    engine_with(items, latin).recognize(IMG)
+    assert latin.calls == ["Très bien"]
+
+
+def test_OCR_08_keep_primary_when_second_is_worse():
+    items = [("Hello World", quad(10, 10, 200, 20), 0.99)]
+    latin = FakeLatin({"Hello World": ("He1lo Wor1d", 0.70)})
+    assert [l.text for l in engine_with(items, latin).recognize(IMG)] == ["Hello World"]
+
+
+def test_OCR_09_digits_only_line_skipped():
+    items = [("010-1234-5678", quad(10, 10, 200, 20), 0.97)]
+    latin = FakeLatin({})
+    engine_with(items, latin).recognize(IMG)
+    assert latin.calls == []
+
+
+def test_OCR_10_latin_model_failure_is_harmless():
+    items = [("Le garcon", quad(10, 10, 200, 20), 0.9)]
+    latin = FakeLatin({}, fail=True)
+    eng = engine_with(items, latin)
+    assert [l.text for l in eng.recognize(IMG)] == ["Le garcon"]
+    assert [l.text for l in eng.recognize(IMG)] == ["Le garcon"]   # still fine on the next call
+
+
+def test_OCR_11_second_returns_nothing_keeps_primary():
+    items = [("Hola", quad(10, 10, 60, 20), 0.9)]
+    latin = FakeLatin({"Hola": None})
+    assert [l.text for l in engine_with(items, latin).recognize(IMG)] == ["Hola"]
+
+
+def _sim(a, b):
+    import difflib
+    return difflib.SequenceMatcher(None, a.replace(" ", ""), b.replace(" ", "")).ratio()
+
+
+@pytest.mark.slow
+def test_OCR_12_real_mixed_korean_french_spanish_german(qt_app):
+    from tests.render import render_text
+    fr = "Le garçon mange une crème brûlée à côté de l'église."
+    es = "El niño comió piña en la montaña. ¿Dónde está la estación?"
+    de = "Größe, Straße und Übung für Mädchen."
+    ko = "요청 접수 검토 승인 010-1234-5678"
+    img = render_text([ko, fr, es, de], width=1100, size=22)
+    text = full_text(OcrEngine().recognize(img))
+    got = text.split("\n")
+    assert got[0].replace(" ", "") == ko.replace(" ", "")
+    joined = " ".join(got[1:])
+    for word in ["garçon", "crème", "brûlée", "côté", "église", "niño", "piña", "montaña", "¿Dónde",
+                 "estación", "Größe", "Straße", "Übung", "Mädchen"]:
+        assert word in joined, (word, joined)
+
+
 @pytest.mark.slow
 def test_OCR_real_engine_korean(qt_app):
     from tests.render import render_text

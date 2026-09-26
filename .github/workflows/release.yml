@@ -25,7 +25,7 @@ jobs:
         run: python -m pip install -e .[dev]
 
       - name: Download OCR models (bundled into the installer)
-        run: python -c "from capture_tool.core.ocr import default_factory; default_factory()"
+        run: python -c "from capture_tool.core.ocr import default_factory, latin_factory; default_factory(); latin_factory()"
 
       - name: Tests (headless; desktop/PowerPoint tests run on a developer PC)
         env:
