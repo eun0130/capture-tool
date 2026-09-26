@@ -159,8 +159,7 @@ class Controller(QObject):
         for ov in self._pool.values():
             ov.deleteLater()
         self._pool.clear()
-        for p in list(self.pins):
-            p.close()
+        self.close_pins()
         if self.text_panel:
             self.text_panel.close()
 
@@ -275,8 +274,9 @@ class Controller(QObject):
                 self.settings.last_save_dir = str(target.parent)
                 self._persist()
         elif action == "pin":
-            pos = ov.local_rect(sel).topLeft().toPoint() + ov.geometry().topLeft()
-            self.pin(final, pos, ov.scale)
+            # mapToGlobal: Qt's own mapping is exact on mixed-DPI multi-monitor setups
+            pos = ov.mapToGlobal(ov.local_rect(sel).topLeft().toPoint())
+            self.pin(final, pos, ov.devicePixelRatioF() or ov.scale, ov.screen())
 
     def _copy_image(self, img) -> None:
         ok, png = cv2.imencode(".png", img, [cv2.IMWRITE_PNG_COMPRESSION, 1])  # fast; size is secondary
@@ -326,14 +326,23 @@ class Controller(QObject):
         if ok:
             self._set_clipboard(image_payload(png.tobytes(), dib_from_bgr(img)))
 
-    def pin(self, img, pos: QPoint, dpr: float = 1.0) -> PinWindow:
+    def pin(self, img, pos: QPoint, dpr: float = 1.0, screen=None) -> PinWindow:
         p = PinWindow(img, pos, dpr)
+        if screen is not None:
+            p.setScreen(screen)
+            p.move(pos)
         p.closed.connect(lambda w: self.pins.remove(w) if w in self.pins else None)
         p.copyRequested.connect(lambda w: self._copy_image(w.image))
         p.saveRequested.connect(lambda w: self._save(w.image))
-        p.show()
         self.pins.append(p)
+        p.show()
+        self.notify("화면에 고정했습니다. 닫기: Esc · ✕ · 더블클릭")
         return p
+
+    def close_pins(self) -> None:
+        for p in list(self.pins):
+            p.close()
+        self.pins = []
 
     # --- text & shapes -----------------------------------------------------------------
     def _run_recognition(self, kind: str) -> None:

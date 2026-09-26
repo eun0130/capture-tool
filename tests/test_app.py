@@ -364,6 +364,62 @@ def test_APP_22_pin_window(make):
     assert c.pins == []
 
 
+def _pinned(make):
+    c = make()
+    c.start_capture()
+    drag(c.overlays[0], (100, 100), (400, 300))
+    c.overlays[0].side_bar.trigger("pin")
+    assert len(c.pins) == 1
+    return c, c.pins[0]
+
+
+def test_APP_38_escape_closes_pin(make):
+    c, pin = _pinned(make)
+    QTest.keyClick(pin, Qt.Key_Escape)
+    assert c.pins == [] and not pin.isVisible()
+
+
+def test_APP_39_pin_takes_keyboard_focus(make):
+    c, pin = _pinned(make)
+    assert pin.focusPolicy() & Qt.StrongFocus
+    assert pin.hasFocus() or pin.isActiveWindow() or pin._focus_requested
+
+
+def test_APP_40_pin_close_button(make):
+    c, pin = _pinned(make)
+    btn = pin.close_button
+    QTest.mouseMove(pin, QPoint(pin.width() - 10, 10))
+    assert btn.isVisible()
+    btn.click()
+    assert c.pins == []
+
+
+def test_APP_41_pin_ctrl_c_copies_and_ctrl_s_saves(make, tmp_path):
+    c, pin = _pinned(make)
+    QTest.keyClick(pin, Qt.Key_C, Qt.ControlModifier)
+    assert PNG in c.clipboard.last
+    QTest.keyClick(pin, Qt.Key_S, Qt.ControlModifier)
+    assert len(list((tmp_path / "shots").iterdir())) == 1
+    assert len(c.pins) == 1
+
+
+def test_APP_42_close_all_pins(make):
+    c, _ = _pinned(make)
+    c.start_capture()
+    drag(c.overlays[0], (10, 10), (110, 60))
+    QTest.keyClick(c.overlays[0], Qt.Key_F3)
+    assert len(c.pins) == 2
+    c.close_pins()
+    assert c.pins == []
+
+
+def test_APP_43_pin_placed_over_the_captured_region(make):
+    c, pin = _pinned(make)
+    ov_geo = QPoint(0, 0)
+    assert pin.geometry().topLeft() == ov_geo + QPoint(100, 100)
+    assert (pin.width(), pin.height()) == (300, 200)
+
+
 def test_APP_23_pin_zoom_and_opacity(make):
     c = make()
     c.start_capture()
