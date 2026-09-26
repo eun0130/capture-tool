@@ -55,6 +55,13 @@ class OverlayWindow(QWidget):
         self._editor: QLineEdit | None = None
         self.hover_window = None
 
+    def release(self) -> None:
+        """Drop the frozen screenshot after a capture ends (a 4K frame is ~33 MB + its pixmap)."""
+        self.image = np.zeros((8, 8, 3), np.uint8)
+        self.pixmap = bgr_to_pixmap(self.image, self.scale)
+        self.windows = []
+        self._current = None
+
     def reset(self, monitor, image, windows=()) -> None:
         """Reuse a pre-created window for a new capture (much faster than creating one)."""
         self.monitor = monitor

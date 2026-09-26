@@ -18,6 +18,22 @@ FG_THRESHOLD = 48       # color distance from background that counts as foregrou
 MIN_AREA = 120          # px; smaller regions are noise
 MAX_LINE_THICK = 10     # px; median thickness of a line/arrow body
 LINK_DISTANCE = 14      # px; arrow endpoint to shape edge to count as connected
+MAX_COMPONENTS = 300    # a busy web page can hold thousands of blobs; keep the largest
+TIME_BUDGET = 3.0       # seconds; never keep the CPU busy longer than this
+
+
+class _Budget:
+    def __init__(self, seconds: float, count: int):
+        import time
+        self._now = time.perf_counter
+        self.deadline = self._now() + seconds
+        self.left = count
+
+    def take(self) -> bool:
+        if self.left <= 0 or self._now() > self.deadline:
+            return False
+        self.left -= 1
+        return True
 
 
 @dataclass
@@ -70,8 +86,8 @@ def detect(img: np.ndarray, text_boxes=None) -> list[Detected]:
     for (x, y, w, h) in text_boxes or []:
         region[max(0, int(y)):int(y + h), max(0, int(x)):int(x + w)] = 0
     out: list[Detected] = []
-    _detect_in(img, region, _background(img), out, depth=0)
-    out = _dedupe(out)
+    _detect_in(img, region, _background(img), out, depth=0, budget=_Budget(TIME_BUDGET, MAX_COMPONENTS))
+    out = _dedupe(out)[:MAX_COMPONENTS]
     out.sort(key=lambda d: (d.y, d.x))
     return out
 
@@ -94,7 +110,7 @@ def _dedupe(found: list[Detected]) -> list[Detected]:
     return keep
 
 
-def _detect_in(img, region, bg, out, depth):
+def _detect_in(img, region, bg, out, depth, budget: _Budget):
     fg = ((_dist(img, bg) > FG_THRESHOLD) & (region > 0)).astype(np.uint8) * 255
     fg = cv2.morphologyEx(fg, cv2.MORPH_CLOSE, np.ones((3, 3), np.uint8))
     contours, hier = cv2.findContours(fg, cv2.RETR_TREE, cv2.CHAIN_APPROX_NONE)
@@ -109,11 +125,18 @@ def _detect_in(img, region, bg, out, depth):
             n += 1
         return n
 
+    regions = []
     for i, c in enumerate(contours):
         if level(i) % 2:          # hole boundary, not a region
             continue
-        if cv2.contourArea(c) < MIN_AREA and cv2.arcLength(c, True) < 60:
+        area = cv2.contourArea(c)
+        if area < MIN_AREA and cv2.arcLength(c, True) < 60:
             continue
+        regions.append((area, i, c))
+    regions.sort(key=lambda r: -r[0])  # largest first, so a budget cut drops only small noise
+    for _, i, c in regions:
+        if not budget.take():
+            return
         has_hole = hier[i][2] >= 0
         split = _split_attached_lines(img, c, fg)
         if split is not None:
@@ -128,7 +151,7 @@ def _detect_in(img, region, bg, out, depth):
                 continue
             out.append(d)
             if d.fill and depth < 3 and d.kind not in ("line", "arrow"):
-                _recurse(img, contour, d, region, out, depth)
+                _recurse(img, contour, d, region, out, depth, budget)
 
 
 SPLIT_KERNEL = 13  # px; shape bodies are thicker than this, connector lines are thinner
@@ -171,17 +194,29 @@ def _split_attached_lines(img, contour, fg):
     return bodies, lines
 
 
-def _recurse(img, contour, d, region, out, depth):
-    """Look for nested shapes inside a filled shape, using its fill as background."""
-    filled = np.zeros(img.shape[:2], np.uint8)
-    cv2.drawContours(filled, [contour], -1, 255, -1)
+def _recurse(img, contour, d, region, out, depth, budget: _Budget):
+    """Look for nested shapes inside a filled shape, using its fill as background.
+    Works on the shape's bounding box only (not the whole screenshot)."""
+    pad = 14  # margin so erosion treats the outside of the shape as outside
+    x0, y0, w0, h0 = cv2.boundingRect(contour)
+    x, y = max(0, x0 - pad), max(0, y0 - pad)
+    ex, ey = min(img.shape[1], x0 + w0 + pad), min(img.shape[0], y0 + h0 + pad)
+    sub = img[y:ey, x:ex]
+    filled = np.zeros((ey - y, ex - x), np.uint8)
+    cv2.drawContours(filled, [contour - [x, y]], -1, 255, -1)
     k = int(d.stroke_width) * 2 + 5
     inner = cv2.erode(filled, np.ones((k, k), np.uint8))
-    inner = cv2.bitwise_and(inner, region)
+    inner = cv2.bitwise_and(inner, region[y:ey, x:ex])
     fill_bgr = _parse(d.fill)
-    if np.count_nonzero((_dist(img, fill_bgr) > FG_THRESHOLD) & (inner > 0)) < MIN_AREA:
+    if np.count_nonzero((_dist(sub, fill_bgr) > FG_THRESHOLD) & (inner > 0)) < MIN_AREA:
         return
-    _detect_in(img, inner, fill_bgr, out, depth + 1)
+    nested: list[Detected] = []
+    _detect_in(sub, inner, fill_bgr, nested, depth + 1, budget)
+    for n in nested:
+        n.x += x
+        n.y += y
+        n.points = [(px + x, py + y) for px, py in n.points]
+    out.extend(nested)
 
 
 def _parse(hex_color):
@@ -248,18 +283,12 @@ def _line_from_points(img, pts: np.ndarray) -> Detected | None:
     start, end = p_min, p_max
     if is_arrow and head_a > head_b:
         start, end = p_max, p_min
-    color = _median_color(img, _full_mask(img, pts))
+    px = img[pts[:, 1], pts[:, 0]]  # sample the stroke pixels directly (no full-screen mask)
+    color = tuple(int(v) for v in np.median(px, axis=0)) if len(px) else None
     d = Detected("arrow" if is_arrow else "line", x, y, w, h,
                  fill=None, stroke=_hex(color) if color else None, stroke_width=float(max(1, round(body - 1))),
                  points=[(int(round(start[0])), int(round(start[1]))), (int(round(end[0])), int(round(end[1])))])
     return d
-
-
-def _full_mask(img, pts):
-    m = np.zeros(img.shape[:2], np.uint8)
-    m[pts[:, 1], pts[:, 0]] = 255
-    # core pixels only (avoid anti-aliased edge)
-    return m
 
 
 def _corner_gap(contour, x, y, w, h) -> float:
@@ -310,8 +339,14 @@ def _classify(img, contour, fg, has_hole, bg) -> Detected | None:
 
 
 def _colors(img, contour, bg, d: Detected) -> Detected:
-    filled = np.zeros(img.shape[:2], np.uint8)
-    cv2.drawContours(filled, [contour], -1, 255, -1)
+    # work on the shape's bounding box (+margin so erosion sees the outside), not the whole screenshot
+    pad = 14
+    x0, y0, w0, h0 = cv2.boundingRect(contour)
+    bx, by = max(0, x0 - pad), max(0, y0 - pad)
+    ex, ey = min(img.shape[1], x0 + w0 + pad), min(img.shape[0], y0 + h0 + pad)
+    img = img[by:ey, bx:ex]
+    filled = np.zeros((ey - by, ex - bx), np.uint8)
+    cv2.drawContours(filled, [contour - [bx, by]], -1, 255, -1)
     # stroke: thin band just inside the edge, skipping the anti-aliased outermost pixel
     e1 = cv2.erode(filled, np.ones((3, 3), np.uint8))
     e2 = cv2.erode(filled, np.ones((5, 5), np.uint8))

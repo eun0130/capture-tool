@@ -57,11 +57,30 @@ def app_icon() -> QIcon:
     return icon
 
 
-def setup_logging() -> None:
-    d = log_dir()
+def setup_logging(directory: Path | None = None, max_bytes: int = 1_000_000, backups: int = 2) -> logging.Logger:
+    """Rotating log (≤ ~3 MB in total). Never logs recognized screen text."""
+    from logging.handlers import RotatingFileHandler
+    d = directory or log_dir()
     d.mkdir(parents=True, exist_ok=True)
-    logging.basicConfig(filename=d / "capture.log", level=logging.INFO, encoding="utf-8",
-                        format="%(asctime)s %(levelname)s %(message)s")
+    handler = RotatingFileHandler(d / "capture.log", maxBytes=max_bytes, backupCount=backups, encoding="utf-8")
+    handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
+    logger = logging.getLogger() if directory is None else logging.getLogger(f"capture_tool.{id(handler)}")
+    logger.setLevel(logging.INFO)
+    logger.addHandler(handler)
+    return logger
+
+
+INSTANCE_COMMANDS = {b"capture": "capture"}
+
+
+def handle_instance_message(data: bytes, trigger) -> bool:
+    """Second launch asks the running instance to capture. Accept only the exact command."""
+    action = INSTANCE_COMMANDS.get(bytes(data).strip())
+    if action is None:
+        logging.warning("ignored unexpected single-instance message (%d bytes)", len(data))
+        return False
+    trigger(action)
+    return True
 
 
 class TrayApp:
@@ -163,6 +182,8 @@ class TrayApp:
         from ..core.naming import SaveDirError, resolve_save_dir
         try:
             d, _ = resolve_save_dir(self.settings.save_dir, fallback_dir())
+            if not Path(d).is_dir():  # never "open" a file path taken from settings
+                raise OSError(f"폴더가 아닙니다: {d}")
             os.startfile(d)  # noqa: S606 - opening the user's own folder in Explorer
         except (SaveDirError, OSError) as e:
             self.toast(str(e))
@@ -279,6 +300,8 @@ def main(argv=None) -> int:
             return 0  # already running: ask it to capture instead
         QLocalServer.removeServer(name)
         server = QLocalServer()
+        server.setSocketOptions(QLocalServer.UserAccessOption)  # only this Windows user may connect
+        server.setMaxPendingConnections(2)
         server.listen(name)
 
     tray = TrayApp(app, selftest=is_selftest)
@@ -287,7 +310,13 @@ def main(argv=None) -> int:
 
     def on_conn():
         s = server.nextPendingConnection()
-        s.readyRead.connect(lambda: tray.on_hotkey("capture"))
+        if s is None:
+            return
+
+        def read():
+            handle_instance_message(s.read(64).data(), tray.on_hotkey)  # read at most 64 bytes
+            s.disconnectFromServer()
+        s.readyRead.connect(read)
     server.newConnection.connect(on_conn)
     logging.info("started %s", __version__)
     return app.exec()

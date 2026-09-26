@@ -54,6 +54,16 @@ def test_OCR_02b_warmup_in_background():
     assert len(calls) == 1 and eng.ready
 
 
+def test_OCR_02c_latin_model_loaded_only_when_needed():
+    loads = []
+    eng = OcrEngine(make_factory([("요청 접수", quad(0, 0, 50, 20), 0.9)]),
+                    secondary_factory=lambda: loads.append(1) or FakeLatin({}),
+                    secondary_call=lambda e, crop, text: None)
+    eng.warmup().join(5)
+    eng.recognize(IMG)
+    assert loads == []            # Korean-only screens never pay for the Latin model
+
+
 def test_OCR_03_load_failure():
     def bad():
         raise RuntimeError("model file missing")

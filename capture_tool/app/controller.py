@@ -153,6 +153,7 @@ class Controller(QObject):
     def close_overlays(self) -> None:
         for ov in self.overlays:
             ov.hide()
+            ov.release()
         self.overlays = []
         self.active_overlay = None
 

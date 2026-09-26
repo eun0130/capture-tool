@@ -81,4 +81,11 @@ class PowerPointSender:
     """Controller-facing wrapper; returns the number of shapes added."""
 
     def paste(self) -> int:
-        return paste().added
+        import pythoncom
+        try:
+            result = paste()
+            added = result.added
+            del result  # release COM references before leaving this thread's apartment
+            return added
+        finally:
+            pythoncom.CoUninitialize()

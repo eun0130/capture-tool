@@ -2,9 +2,12 @@
 background at startup so the first recognition does not wait for model loading."""
 from __future__ import annotations
 
+import importlib.util
+import os
 import re
 import threading
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Callable
 
 import numpy as np
@@ -23,34 +26,68 @@ class OcrLine:
     score: float
 
 
-def default_factory():
-    from rapidocr import LangRec, ModelType, OCRVersion, RapidOCR
+# Model files that must ship with the app. RapidOCR silently downloads any that are missing
+# from the internet; we refuse instead (the app promises to work offline).
+REQUIRED_MODELS = ["ch_PP-OCRv5_det_mobile.onnx", "ch_ppocr_mobile_v2.0_cls_mobile.onnx",
+                   "korean_PP-OCRv5_rec_mobile.onnx"]
+LATIN_MODELS = ["latin_PP-OCRv5_rec_mobile.onnx"]
+# ONNX Runtime defaults to one thread per core per model (≈45 threads per engine on 32 cores).
+OCR_THREADS = max(1, min(4, (os.cpu_count() or 4) // 2))
 
-    return RapidOCR(params={
+
+def model_dir() -> Path:
+    spec = importlib.util.find_spec("rapidocr")
+    if spec is None or spec.origin is None:
+        return Path("__missing__")
+    return Path(spec.origin).parent / "models"
+
+
+def missing_models(names: list[str]) -> list[str]:
+    d = model_dir()
+    return [n for n in names if not (d / n).is_file()]
+
+
+def ocr_params(lang: str) -> dict:
+    from rapidocr import LangRec, ModelType, OCRVersion
+
+    return {
         "Global.log_level": "error",
         "Global.use_cls": False,  # screenshots are upright; the classifier flips digit lines
         "Det.ocr_version": OCRVersion.PPOCRV5,
         "Det.model_type": ModelType.MOBILE,
-        "Rec.lang_type": LangRec.KOREAN,  # Korean dictionary also covers Latin letters/digits
+        # Korean dictionary also covers plain Latin letters/digits; LATIN covers é ç ñ ß ¿ ...
+        "Rec.lang_type": LangRec.KOREAN if lang == "korean" else LangRec.LATIN,
         "Rec.ocr_version": OCRVersion.PPOCRV5,
         "Rec.model_type": ModelType.MOBILE,
-    })
+        "EngineConfig.onnxruntime.intra_op_num_threads": OCR_THREADS,
+        "EngineConfig.onnxruntime.inter_op_num_threads": 1,
+    }
+
+
+def _build_rapidocr(params: dict):
+    from rapidocr import RapidOCR
+    return RapidOCR(params=params)
+
+
+def _require(names: list[str]) -> None:
+    missing = missing_models(names)
+    if missing:
+        raise OcrUnavailable("텍스트 인식 모델 파일이 없습니다(다시 설치해 주세요): " + ", ".join(missing))
+
+
+def default_factory():
+    _require(REQUIRED_MODELS)
+    return _build_rapidocr(ocr_params("korean"))
 
 
 def latin_factory():
     """Recognizer for Latin-script languages (French, Spanish, German, Italian, Portuguese, ...).
-    The Korean dictionary lacks accented letters (ç, é, ñ, ß, ¿ ...)."""
-    from rapidocr import LangRec, ModelType, OCRVersion, RapidOCR
-
-    return RapidOCR(params={
-        "Global.log_level": "error",
-        "Global.use_cls": False,
-        "Det.ocr_version": OCRVersion.PPOCRV5,
-        "Det.model_type": ModelType.MOBILE,
-        "Rec.lang_type": LangRec.LATIN,
-        "Rec.ocr_version": OCRVersion.PPOCRV5,
-        "Rec.model_type": ModelType.MOBILE,
-    })
+    Used for recognition only, so its detector/classifier sessions are released right away."""
+    _require(REQUIRED_MODELS + LATIN_MODELS)
+    eng = _build_rapidocr(ocr_params("latin"))
+    eng.text_det = None  # never used: we call it with use_det=False on line crops
+    eng.text_cls = None
+    return eng
 
 
 def latin_recognize(engine, crop, _primary_text):
@@ -111,12 +148,13 @@ class OcrEngine:
             return self._secondary
 
     def warmup(self) -> threading.Thread:
+        """Load the main (Korean/English) model in the background. The Latin model is loaded
+        only the first time a Latin-script line shows up, so it costs nothing until needed."""
         def run():
             try:
                 self._load()
             except OcrUnavailable:
                 pass
-            self._load_secondary()
         t = threading.Thread(target=run, name="ocr-warmup", daemon=True)
         t.start()
         return t
