@@ -10,7 +10,9 @@ from pathlib import Path
 from .color import normalize_hex
 from .hotkey import HotkeyError, parse
 
-DEFAULT_HOTKEYS = {"capture": "Win + ~", "ocr": "", "shapes": "", "fullscreen": ""}
+DEFAULT_HOTKEYS = {"capture": "Alt + ~", "ocr": "", "shapes": "", "fullscreen": ""}
+SETTINGS_VERSION = 2
+OLD_DEFAULT_CAPTURE = "Win + ~"  # v1 default; Windows Terminal's quake mode owns it on many PCs
 TOOLS = {"select", "rect", "ellipse", "line", "arrow", "curve", "pen", "text", "step", "highlight", "mosaic"}
 
 
@@ -28,6 +30,8 @@ class Settings:
     last_tool: str = "rect"
     last_color: str = "#E03131"
     last_width: int = 4
+    last_save_dir: str = ""
+    version: int = SETTINGS_VERSION
 
 
 def _is_int(v) -> bool:
@@ -58,7 +62,11 @@ def _apply(s: Settings, data: dict, warnings: list[str]) -> None:
                     except (HotkeyError, AttributeError, TypeError):
                         warnings.append(f"단축키 '{action}' 값이 잘못되어 기본값으로 되돌렸습니다: {text!r}")
                 s.hotkeys = hk
-            elif name in ("save_dir", "filename_pattern"):
+            elif name == "version":
+                if not _is_int(v):
+                    raise TypeError
+                s.version = SETTINGS_VERSION
+            elif name in ("save_dir", "filename_pattern", "last_save_dir"):
                 if not isinstance(v, str):
                     raise TypeError
                 setattr(s, name, v)
@@ -117,6 +125,11 @@ def load(path) -> tuple[Settings, list[str]]:
         warnings.append(f"설정 파일이 손상되어 기본값으로 시작합니다. 원본: {bak.name} ({e})")
         return s, warnings
     _apply(s, data, warnings)
+    old = data.get("version", 1)
+    if _is_int(old) and old < 2 and s.hotkeys.get("capture") == OLD_DEFAULT_CAPTURE:
+        s.hotkeys["capture"] = DEFAULT_HOTKEYS["capture"]
+        warnings.append(f"기본 캡처 단축키가 {DEFAULT_HOTKEYS['capture']} 로 바뀌었습니다. "
+                        "(Win + ~ 는 Windows Terminal과 겹칩니다. 설정에서 다시 바꿀 수 있습니다.)")
     return s, warnings
 
 

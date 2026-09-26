@@ -42,6 +42,7 @@ class _Job(QRunnable):
 
 class Controller(QObject):
     _job_done = Signal(object)
+    _ppt_done = Signal(object)
 
     def __init__(self, screen, clipboard, ocr, settings, settings_path, fallback_dir, sync=False, notify=None):
         super().__init__()
@@ -62,6 +63,10 @@ class Controller(QObject):
         self.now = datetime.now
         self._pending = None
         self._job_done.connect(self._on_job_done)
+        self._ppt_done.connect(self._on_ppt_done)
+        self.ask_save_path = self._ask_save_path_dialog
+        from ..platform.powerpoint import PowerPointSender
+        self.powerpoint = PowerPointSender()
 
     # --- helpers -----------------------------------------------------------------
     def notify(self, msg: str) -> None:
@@ -214,7 +219,7 @@ class Controller(QObject):
             getattr(self.session.document, name)()
             if self.active_overlay:
                 self.active_overlay.update()
-        elif name in ("text", "shapes"):
+        elif name in ("text", "shapes", "ppt"):
             self._run_recognition(name)
 
     def _take(self):
@@ -232,20 +237,43 @@ class Controller(QObject):
         s = self.settings
         s.last_tool, s.last_color, s.last_width = tb.tool, tb.color, int(tb.line_width)
         s.recent_colors = push_recent(s.recent_colors, tb.color)
-        try:
-            settings_io.save(s, self.settings_path)
-        except OSError:
-            pass
+        self._persist()
+
+    def _save_dialog_start(self) -> Path:
+        s = self.settings
+        for d in (s.last_save_dir, s.save_dir):
+            if d and Path(d).is_dir():
+                return Path(d)
+        return Path(s.last_save_dir or s.save_dir or self.fallback_dir)
+
+    def _ask_save_path_dialog(self, default: Path, parent=None) -> Path | None:
+        from PySide6.QtWidgets import QFileDialog
+        chosen, _ = QFileDialog.getSaveFileName(parent, "저장할 위치 선택", str(default),
+                                                "PNG 이미지 (*.png);;JPG 이미지 (*.jpg)")
+        return Path(chosen) if chosen else None
 
     def finish(self, action: str) -> None:
         if self.session.state is not State.EDITING:
             return
+        target = None
+        if action == "save_as":
+            ext = ".jpg" if self.settings.image_format == "jpg" else ".png"
+            default = unique_path(self._save_dialog_start(), render(self.settings.filename_pattern, self.now()), ext)
+            target = self.ask_save_path(default, self.active_overlay)
+            if target is None:
+                return  # cancelled: keep the capture and the drawing
+            if target.suffix.lower() not in (".png", ".jpg", ".jpeg"):
+                target = target.with_suffix(ext)
         ov, sel, doc, raw = self._take()
         final = compose(raw, doc)
         if action == "copy":
             self._copy_image(final)
-        elif action in ("save", "save_as"):
-            self._save(final, ask=action == "save_as")
+        elif action == "save":
+            self._save(final)
+        elif action == "save_as":
+            if self._write_image(final, target):
+                self.settings.last_save_dir = str(target.parent)
+                self._persist()
         elif action == "pin":
             pos = ov.local_rect(sel).topLeft().toPoint() + ov.geometry().topLeft()
             self.pin(final, pos, ov.scale)
@@ -269,24 +297,29 @@ class Controller(QObject):
         if used_fallback and s.save_dir:
             self.notify(f"지정한 폴더에 저장할 수 없어 대체 폴더에 저장합니다: {folder}")
         path = unique_path(folder, render(s.filename_pattern, self.now()), ext)
-        if ask:
-            from PySide6.QtWidgets import QFileDialog
-            chosen, _ = QFileDialog.getSaveFileName(None, "다른 이름으로 저장", str(path), "PNG (*.png);;JPG (*.jpg)")
-            if not chosen:
-                return None
-            path = Path(chosen)
-        params = [cv2.IMWRITE_JPEG_QUALITY, s.jpg_quality] if path.suffix.lower() == ".jpg" else []
-        ok, buf = cv2.imencode(path.suffix.lower() or ext, img, params)
+        return path if self._write_image(img, path) else None
+
+    def _write_image(self, img, path: Path) -> bool:
+        suffix = path.suffix.lower()
+        params = [cv2.IMWRITE_JPEG_QUALITY, self.settings.jpg_quality] if suffix in (".jpg", ".jpeg") else []
+        ok, buf = cv2.imencode(".jpg" if suffix in (".jpg", ".jpeg") else ".png", img, params)
         try:
             if not ok:
                 raise OSError("이미지 인코딩 실패")
+            path.parent.mkdir(parents=True, exist_ok=True)
             path.write_bytes(buf.tobytes())  # write_bytes: cv2.imwrite fails on non-ASCII paths
         except OSError as e:
             self.notify(f"저장하지 못했습니다 ({e}). 이미지는 클립보드에 남겨 둡니다.")
             self._copy_only(img)
-            return None
+            return False
         self.notify(f"저장했습니다: {path}")
-        return path
+        return True
+
+    def _persist(self) -> None:
+        try:
+            settings_io.save(self.settings, self.settings_path)
+        except OSError:
+            pass
 
     def _copy_only(self, img) -> None:
         ok, png = cv2.imencode(".png", img)
@@ -333,7 +366,6 @@ class Controller(QObject):
         if self.sync:
             self._on_job_done(work())
         else:
-            self.notify("인식 중…") if False else None
             QThreadPool.globalInstance().start(_Job(work, self._job_done))
 
     def _on_job_done(self, result) -> None:
@@ -345,7 +377,7 @@ class Controller(QObject):
         if kind == "text":
             self._finish_text(lines, err, qr, pos)
         else:
-            self._finish_shapes(det or [], user_shapes, final, err)
+            self._finish_shapes(det or [], user_shapes, final, err, send=kind == "ppt")
 
     def _finish_text(self, lines, err, qr, pos) -> None:
         if err:
@@ -369,15 +401,51 @@ class Controller(QObject):
         self.text_panel.move(pos + QPoint(0, 8))
         self.text_panel.show()
 
-    def _finish_shapes(self, det, user_shapes, final, err) -> None:
+    def _finish_shapes(self, det, user_shapes, final, err, send: bool = False) -> None:
         shapes, conns = to_drawing(det)
         us, uc = annotations_to_drawing(user_shapes)
         shapes, conns = shapes + us, conns + uc
         if not shapes and not conns:
-            self.notify("도형을 찾지 못했습니다. 사각형·원·삼각형·선·화살표를 인식합니다.")
+            if send:  # nothing to convert: still deliver the picture to PowerPoint
+                ok, png = cv2.imencode(".png", final, [cv2.IMWRITE_PNG_COMPRESSION, 1])
+                if self._set_clipboard(image_payload(png.tobytes(), dib_from_bgr(final))):
+                    self._send_to_powerpoint("도형이 없어 이미지로")
+            else:
+                self.notify("도형을 찾지 못했습니다. 사각형·원·삼각형·선·화살표를 인식합니다.")
             return
         ok, png = cv2.imencode(".png", final)
         payload = shapes_payload(gvml_package(shapes, conns), svg(shapes, conns), png.tobytes())
-        if self._set_clipboard(payload):
-            note = " (텍스트 인식 없이)" if err else ""
+        if not self._set_clipboard(payload):
+            return
+        note = " (텍스트 인식 없이)" if err else ""
+        if send:
+            self._send_to_powerpoint(f"도형 {len(shapes)}개, 연결선 {len(conns)}개를{note}")
+        else:
             self.notify(f"도형 {len(shapes)}개, 연결선 {len(conns)}개를 복사했습니다{note}. PowerPoint에서 Ctrl+V")
+
+    # --- PowerPoint -----------------------------------------------------------------
+    def _send_to_powerpoint(self, what: str) -> None:
+        def work():
+            from ..platform.powerpoint import PowerPointUnavailable
+            try:
+                return what, self.powerpoint.paste(), None
+            except PowerPointUnavailable as e:
+                return what, 0, str(e)
+
+        if self.sync:
+            self._on_ppt_done(work())
+        else:
+            self.notify("PowerPoint를 여는 중…")
+            QThreadPool.globalInstance().start(_Job(work, self._ppt_done))
+
+    def _on_ppt_done(self, result) -> None:
+        if isinstance(result, Exception):
+            self.notify(f"PowerPoint에 붙여넣지 못했습니다: {result} 클립보드에 있으니 Ctrl+V 하세요.")
+            return
+        what, added, err = result
+        if err:
+            self.notify(f"{err} 클립보드에 복사해 두었으니 원하는 곳에 Ctrl+V 하세요.")
+        elif added:
+            self.notify(f"{what} PowerPoint에 붙여넣었습니다.")
+        else:
+            self.notify("PowerPoint가 붙여넣기를 받지 않았습니다. 클립보드에 있으니 슬라이드에서 Ctrl+V 하세요.")

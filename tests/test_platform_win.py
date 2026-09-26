@@ -150,6 +150,28 @@ def test_WWIN_02_window_at_prefers_topmost():
     assert windows.window_at((900, 900), [a, b]) is None
 
 
+# --- PowerPoint automation ----------------------------------------------------
+
+@pytest.mark.slow
+def test_WPPT_01_paste_native_shapes_into_powerpoint():
+    pytest.importorskip("win32com.client")
+    from capture_tool.core.clipboard_payload import GVML
+    from capture_tool.core.drawingml import DConnector, DShape, gvml_package
+    from capture_tool.platform import powerpoint
+    if not powerpoint.installed():
+        pytest.skip("PowerPoint not installed")
+    shapes = [DShape("roundRect", 20, 40, 150, 64, text="요청 접수"), DShape("roundRect", 240, 40, 150, 64, text="검토")]
+    win_clipboard.set_formats({GVML: gvml_package(shapes, [DConnector(start=0, end=1)])})
+    result = powerpoint.paste(new_presentation=True)
+    try:
+        assert result.added == 3
+        texts = [s.TextFrame.TextRange.Text for s in result.slide.Shapes if s.HasTextFrame and s.TextFrame.HasText]
+        assert texts == ["요청 접수", "검토"]
+    finally:
+        result.presentation.Saved = True
+        result.presentation.Close()
+
+
 # --- startup (fake registry backend) -----------------------------------------
 
 class FakeRun(dict):

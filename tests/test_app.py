@@ -426,7 +426,7 @@ def test_APP_28_settings_dialog_records_and_validates(qt_app, tmp_path):
     QTest.keyClick(ed, Qt.Key_3, Qt.ControlModifier | Qt.ShiftModifier)
     assert ed.text() == "Ctrl + Shift + 3"
     dlg = SettingsDialog(Settings())
-    dlg.edits["ocr"].setText("Win + ~")
+    dlg.edits["ocr"].setText("Option + ~")   # same as default capture (Alt + ~)
     errors = dlg.validate()
     assert any("겹칩니다" in e for e in errors)          # duplicate of capture
     dlg.edits["ocr"].setText("Ctrl + C")
@@ -443,6 +443,105 @@ def test_APP_29_direct_text_hotkey_mode(make):
     c.start_capture(mode="text")
     drag(c.overlays[0], (100, 100), (400, 300))
     assert "바로 복사" in c.clipboard.last[UNICODE]
+
+
+# --- quick-action side bar ("이모티콘" next to the capture) ---------------------------
+
+class FakePpt:
+    def __init__(self, ok=True):
+        self.calls = 0
+        self.ok = ok
+
+    def paste(self):
+        from capture_tool.platform.powerpoint import PowerPointUnavailable
+        self.calls += 1
+        if not self.ok:
+            raise PowerPointUnavailable("PowerPoint가 설치되어 있지 않습니다.")
+        return 2
+
+
+def test_APP_31_side_bar_next_to_selection(make):
+    c = make()
+    c.start_capture()
+    ov = c.overlays[0]
+    drag(ov, (100, 100), (400, 300))
+    sb = ov.side_bar
+    assert sb.isVisible()
+    g = sb.geometry()
+    assert g.left() >= 400 and g.top() == 100 and g.right() <= 800
+    assert list(sb.buttons) == ["copy", "save_as", "text", "ppt", "pin"]
+
+
+def test_APP_32_save_icon_asks_location(make, tmp_path):
+    c = make()
+    target = tmp_path / "내 폴더" / "회의.png"
+    target.parent.mkdir()
+    asked = []
+    c.ask_save_path = lambda default, parent=None: (asked.append(default), target)[1]
+    c.start_capture()
+    drag(c.overlays[0], (10, 10), (110, 60))
+    c.overlays[0].side_bar.trigger("save_as")
+    assert target.exists() and cv2.imdecode(np.fromfile(str(target), np.uint8), 1).shape[:2] == (50, 100)
+    assert c.settings.last_save_dir == str(target.parent)
+    assert asked[0].name.startswith("Capture_")
+    assert c.overlays == []
+
+
+def test_APP_33_save_dialog_cancel_keeps_capture(make):
+    from capture_tool.core.session import State
+    c = make()
+    c.ask_save_path = lambda default, parent=None: None
+    c.start_capture()
+    ov = c.overlays[0]
+    drag(ov, (100, 100), (400, 300))
+    ov.set_tool("rect")
+    drag(ov, (150, 150), (250, 250))
+    ov.side_bar.trigger("save_as")
+    assert c.session.state is State.EDITING and len(c.session.document.shapes) == 1
+    assert c.overlays == [ov]
+
+
+def test_APP_34_save_dialog_starts_in_last_folder(make, tmp_path):
+    c = make(settings=Settings(last_save_dir=str(tmp_path / "last")))
+    asked = []
+    c.ask_save_path = lambda default, parent=None: (asked.append(default), None)[1]
+    c.start_capture()
+    drag(c.overlays[0], (10, 10), (110, 60))
+    QTest.keyClick(c.overlays[0], Qt.Key_S, Qt.ControlModifier | Qt.ShiftModifier)
+    assert asked[0].parent == tmp_path / "last"
+
+
+def test_APP_35_send_to_powerpoint_pastes_native_shapes(make):
+    lines = [OcrLine("요청 접수", (60, 60, 80, 20), 0.99), OcrLine("검토", (285, 60, 40, 20), 0.99)]
+    c = make(screen=FakeScreen(image=_flow_image()), ocr=FakeOcr(lines))
+    c.powerpoint = FakePpt()
+    c.start_capture()
+    drag(c.overlays[0], (100, 100), (520, 260))
+    c.overlays[0].side_bar.trigger("ppt")
+    assert GVML in c.clipboard.last
+    assert c.powerpoint.calls == 1
+    assert any("PowerPoint에 붙여넣었습니다" in m for m in c.messages)
+
+
+def test_APP_36_send_to_powerpoint_without_shapes_sends_image(make):
+    c = make()
+    c.powerpoint = FakePpt()
+    c.start_capture()
+    drag(c.overlays[0], (100, 100), (400, 300))
+    c.overlays[0].side_bar.trigger("ppt")
+    assert list(c.clipboard.last)[:2] == [PNG, DIB]
+    assert c.powerpoint.calls == 1
+    assert any("이미지" in m for m in c.messages)
+
+
+def test_APP_37_powerpoint_missing_keeps_clipboard(make):
+    c = make()
+    c.powerpoint = FakePpt(ok=False)
+    c.start_capture()
+    drag(c.overlays[0], (100, 100), (400, 300))
+    c.overlays[0].side_bar.trigger("ppt")
+    assert c.clipboard.payloads
+    assert any("설치" in m and "Ctrl+V" in m for m in c.messages)
 
 
 def test_APP_30_fullscreen_mode_copies_cursor_monitor(make):

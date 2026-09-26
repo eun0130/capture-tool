@@ -11,9 +11,10 @@ from PySide6.QtWidgets import QLineEdit, QWidget
 
 from ..core.annotations import Shape
 from ..core.color import pixel_color
-from ..core.geometry import Rect, toolbar_position
+from ..core.geometry import Rect, layout_bars
 from ..core.session import State
 from .render import FONT_FAMILY, apply_mosaic, bgr_to_pixmap, bgr_to_qimage, paint_document
+from .side_bar import SideBar
 from .toolbar import Toolbar
 
 DIM = QColor(15, 18, 24, 140)
@@ -42,6 +43,9 @@ class OverlayWindow(QWidget):
         self.toolbar.hide()
         self.toolbar.toolChanged.connect(self._tool_changed)
         self.toolbar.action.connect(controller.on_toolbar_action)
+        self.side_bar = SideBar(self)
+        self.side_bar.hide()
+        self.side_bar.action.connect(controller.on_toolbar_action)
         self.tool = self.toolbar.tool
         self._press = None        # local QPointF where the mouse went down
         self._cursor = None       # local QPointF
@@ -65,6 +69,7 @@ class OverlayWindow(QWidget):
             self._editor.deleteLater()
             self._editor = None
         self.toolbar.hide()
+        self.side_bar.hide()
         self.update()
 
     # --- geometry helpers ------------------------------------------------------
@@ -119,15 +124,21 @@ class OverlayWindow(QWidget):
         sel = self._selection_here()
         if sel is None:
             self.toolbar.hide()
+            self.side_bar.hide()
             return
         tb = self.toolbar
         tb.arrange(self.width() - 16)
         lr = self.local_rect(sel)
-        x, y = toolbar_position(Rect(int(lr.x()), int(lr.y()), int(lr.width()), int(lr.height())),
-                                Rect(0, 0, self.width(), self.height()), tb.width(), tb.height())
+        local = Rect(int(lr.x()), int(lr.y()), int(lr.width()), int(lr.height()))
+        screen = Rect(0, 0, self.width(), self.height())
+        sb = self.side_bar
+        (x, y), (sx, sy) = layout_bars(local, screen, (tb.width(), tb.height()), (sb.width(), sb.height()))
         tb.move(x, y)
         tb.show()
         tb.raise_()
+        sb.move(sx, sy)
+        sb.show()
+        sb.raise_()
 
     # --- mouse -----------------------------------------------------------------
     def mousePressEvent(self, e):
@@ -377,7 +388,7 @@ class OverlayWindow(QWidget):
         if st is State.SELECTING:
             text = "드래그로 영역 선택 · 클릭하면 창 선택 · C 색상 복사 · Esc 취소"
         elif self.active:
-            text = "Enter 복사 · Ctrl+S 저장 · F3 고정 · Ctrl+Z 되돌리기 · 방향키 1px 이동 · Esc 취소"
+            text = "Enter 복사 · Ctrl+S 바로 저장 · Ctrl+Shift+S 위치 골라 저장 · F3 고정 · Ctrl+Z 되돌리기 · Esc 취소"
         else:
             return
         f = QFont(FONT_FAMILY)

@@ -108,6 +108,53 @@ def toolbar_position(sel: Rect, monitor: Rect, tb_w: int, tb_h: int, gap: int = 
     return x, y
 
 
+def side_bar_position(sel: Rect, monitor: Rect, w: int, h: int, gap: int = 8) -> tuple[int, int]:
+    """Vertical quick-action bar: right of the selection, else left, else inside its right edge."""
+    if sel.right + gap + w <= monitor.right:
+        x = sel.right + gap
+    elif sel.x - gap - w >= monitor.x:
+        x = sel.x - gap - w
+    else:
+        x = min(sel.right, monitor.right) - w - gap
+    y = max(monitor.y, min(sel.y, monitor.bottom - h - gap))
+    return x, y
+
+
+def _overlaps(a: Rect, b: Rect) -> bool:
+    return a.x < b.right and b.x < a.right and a.y < b.bottom and b.y < a.bottom
+
+
+def layout_bars(sel: Rect, monitor: Rect, tb_size: tuple[int, int], sb_size: tuple[int, int],
+                gap: int = 8) -> tuple[tuple[int, int], tuple[int, int]]:
+    """Place the drawing toolbar and the quick-action side bar around the selection
+    so they never cover each other and stay on the monitor."""
+    tw, th = tb_size
+    sw, sh = sb_size
+    sx, sy = side_bar_position(sel, monitor, sw, sh, gap)
+    sb = Rect(sx, sy, sw, sh)
+    tx, ty = toolbar_position(sel, monitor, tw, th, gap)
+    if not _overlaps(Rect(tx, ty, tw, th), sb):
+        return (tx, ty), (sx, sy)
+    lo, hi = monitor.x + gap, monitor.right - tw - gap
+    # 1) slide the toolbar sideways, away from the side bar
+    for x in (sb.x - gap - tw, sb.right + gap):
+        if lo <= x <= hi and not _overlaps(Rect(x, ty, tw, th), sb):
+            return (x, ty), (sx, sy)
+    # 2) drop the toolbar below the side bar, or lift it above
+    x = min(max(sel.x, lo), hi)
+    for y in (max(sel.bottom, sb.bottom) + gap, min(sel.y, sb.y) - gap - th):
+        if monitor.y <= y <= monitor.bottom - th and not _overlaps(Rect(x, y, tw, th), sb):
+            return (x, y), (sx, sy)
+    # 3) crowded screen: move the side bar up/down beside the toolbar row
+    tb = Rect(tx, ty, tw, th)
+    for y in (tb.y - gap - sh, tb.bottom + gap):
+        if monitor.y <= y <= monitor.bottom - sh and not _overlaps(Rect(sx, y, sw, sh), tb):
+            return (tx, ty), (sx, y)
+    # 4) last resort: side bar at the screen corner away from the toolbar
+    corner_x = monitor.x + gap if tb.x > monitor.x + sw + 2 * gap else monitor.right - sw - gap
+    return (tx, ty), (corner_x, monitor.y + gap)
+
+
 def to_logical(r: Rect, scale: float) -> Rect:
     return Rect(round(r.x / scale), round(r.y / scale), round(r.w / scale), round(r.h / scale))
 

@@ -65,25 +65,11 @@ class Toolbar(QWidget):
         lay.addWidget(fill)
         self._split = len(self._items)
         lay.addWidget(self._sep())
-        for name, label, tip in [("text", "텍스트", "이미지 속 글자 복사"), ("shapes", "도형→PPT", "도형을 PowerPoint 도형으로 복사")]:
-            b = QPushButton(icons.icon("ocr" if name == "text" else "shapes"), label)
-            b.setObjectName("label")
-            b.setToolTip(tip)
-            b.clicked.connect(lambda _=False, n=name: self.action.emit(n))
-            self.buttons[f"act_{name}"] = b
-            lay.addWidget(b)
-        lay.addWidget(self._sep())
-        for name, tip in [("undo", "되돌리기 (Ctrl+Z)"), ("redo", "다시 실행 (Ctrl+Y)"), ("pin", "화면에 고정 (F3)"),
-                          ("save", "저장 (Ctrl+S)")]:
+        # copy / save / OCR / PowerPoint / pin live in the side bar next to the capture
+        for name, tip in [("undo", "되돌리기 (Ctrl+Z)"), ("redo", "다시 실행 (Ctrl+Y)")]:
             b = self._tool_button(name, tip)
             b.clicked.connect(lambda _=False, n=name: self.action.emit(n))
             lay.addWidget(b)
-        copy = QPushButton(icons.icon("copy", "#FFFFFF"), "복사")
-        copy.setObjectName("primary")
-        copy.setToolTip("클립보드에 복사 (Enter)")
-        copy.clicked.connect(lambda: self.action.emit("copy"))
-        self.buttons["copy"] = copy
-        lay.addWidget(copy)
         close = self._tool_button("close", "취소 (Esc)")
         close.clicked.connect(lambda: self.action.emit("cancel"))
         lay.addWidget(close)

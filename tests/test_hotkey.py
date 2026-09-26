@@ -30,6 +30,7 @@ def test_HK_01_win_tilde():
         ("Command+`", {"win"}, "`"),
         ("Windows + ~", {"win"}, "`"),
         ("Control+Option+1", {"ctrl", "alt"}, "1"),
+        ("Option+~", {"alt"}, "`"),
         ("SHIFT+f3", {"shift"}, "F3"),
     ],
 )

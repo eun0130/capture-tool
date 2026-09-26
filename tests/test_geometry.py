@@ -4,10 +4,12 @@ from capture_tool.core.geometry import (
     Monitor,
     Rect,
     clamp_rect,
+    layout_bars,
     monitor_at,
     nudge,
     order_cursor_first,
     selection_from_drag,
+    side_bar_position,
     to_logical,
     to_physical,
     toolbar_position,
@@ -117,6 +119,46 @@ def test_toolbar_on_negative_monitor():
     left = Rect(-1920, 0, 1920, 1080)
     x, y = toolbar_position(Rect(-1900, 100, 200, 200), left, 600, 52)
     assert x == -1900 and y == 308
+
+
+def test_GEO_18_side_bar_right_of_selection():
+    assert side_bar_position(Rect(100, 100, 400, 300), MON, 64, 300) == (508, 100)
+
+
+def test_GEO_19_side_bar_left_when_no_room_right():
+    assert side_bar_position(Rect(1500, 100, 400, 300), MON, 64, 300) == (1500 - 8 - 64, 100)
+
+
+def test_GEO_20_side_bar_inside_when_fullscreen():
+    x, y = side_bar_position(Rect(0, 0, 1920, 1080), MON, 64, 300)
+    assert x == 1920 - 64 - 8 and 0 <= y <= 1080 - 300
+
+
+def test_GEO_21_side_bar_kept_on_screen_vertically():
+    _, y = side_bar_position(Rect(100, 950, 400, 100), MON, 64, 300)
+    assert y == 1080 - 300 - 8
+
+
+def _overlap(a, b):
+    return a.x < b.right and b.x < a.right and a.y < b.bottom and b.y < a.bottom
+
+
+@pytest.mark.parametrize("sel", [
+    Rect(200, 160, 560, 170),    # narrower than the toolbar (the bug seen on screen)
+    Rect(100, 100, 400, 300),
+    Rect(1500, 100, 300, 200),   # near right edge -> side bar on the left
+    Rect(10, 900, 300, 150),     # near bottom
+    Rect(0, 0, 1920, 1080),      # full screen
+    Rect(900, 500, 40, 30),      # tiny
+    Rect(1700, 950, 200, 120),   # bottom-right corner
+])
+def test_GEO_22_bars_never_overlap_and_stay_on_screen(sel):
+    tb_w, tb_h, sb_w, sb_h = 660, 52, 68, 300
+    (tx, ty), (sx, sy) = layout_bars(sel, MON, (tb_w, tb_h), (sb_w, sb_h))
+    tb, sb = Rect(tx, ty, tb_w, tb_h), Rect(sx, sy, sb_w, sb_h)
+    assert not _overlap(tb, sb), (tb, sb)
+    for r in (tb, sb):
+        assert MON.x <= r.x and r.right <= MON.right and MON.y <= r.y and r.bottom <= MON.bottom, r
 
 
 @pytest.mark.parametrize("scale", [1.0, 1.25, 1.5, 1.75])
