@@ -66,7 +66,9 @@ class Controller(QObject):
         self._ppt_done.connect(self._on_ppt_done)
         self.ask_save_path = self._ask_save_path_dialog
         from ..platform.powerpoint import PowerPointSender
+        from ..platform.security_software import detect_drm
         self.powerpoint = PowerPointSender()
+        self.drm = detect_drm()
 
     # --- helpers -----------------------------------------------------------------
     def notify(self, msg: str) -> None:
@@ -434,6 +436,15 @@ class Controller(QObject):
 
     # --- PowerPoint -----------------------------------------------------------------
     def _send_to_powerpoint(self, what: str) -> None:
+        if self.drm and not self.settings.drm_notice_shown:
+            self.notify(
+                f"이 PC에는 {self.drm}(문서 보안 프로그램)가 설치되어 있습니다. PowerPoint가 켜질 때 "
+                "'ai.exe - Bad Image' 창이 뜰 수 있는데, Office AI 기능(ai.exe)과 보안 프로그램의 충돌이며 "
+                "캡처 도구·PowerPoint 사용에는 지장이 없습니다. OK를 누르고 계속 사용하세요. "
+                "완전히 없애려면 IT 담당자에게 보안 프로그램 업데이트를 요청하세요.")
+            self.settings.drm_notice_shown = True
+            self._persist()
+
         def work():
             from ..platform.powerpoint import PowerPointUnavailable
             try:

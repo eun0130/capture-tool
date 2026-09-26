@@ -31,6 +31,7 @@ class Settings:
     last_color: str = "#E03131"
     last_width: int = 4
     last_save_dir: str = ""
+    drm_notice_shown: bool = False
     version: int = SETTINGS_VERSION
 
 
@@ -78,7 +79,7 @@ def _apply(s: Settings, data: dict, warnings: list[str]) -> None:
                 if not _is_int(v):
                     raise TypeError
                 s.jpg_quality = min(100, max(1, v))
-            elif name in ("auto_save", "launch_at_startup", "redact_pii"):
+            elif name in ("auto_save", "launch_at_startup", "redact_pii", "drm_notice_shown"):
                 if not isinstance(v, bool):
                     raise TypeError
                 setattr(s, name, v)

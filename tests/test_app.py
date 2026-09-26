@@ -600,6 +600,31 @@ def test_APP_37_powerpoint_missing_keeps_clipboard(make):
     assert any("설치" in m and "Ctrl+V" in m for m in c.messages)
 
 
+def test_APP_44_drm_pc_explains_office_ai_error_once(make):
+    c = make()
+    c.powerpoint = FakePpt()
+    c.drm = "Fasoo DRM"
+    for _ in range(2):
+        c.start_capture()
+        drag(c.overlays[0], (100, 100), (400, 300))
+        c.overlays[0].side_bar.trigger("ppt")
+    notes = [m for m in c.messages if "Fasoo DRM" in m]
+    assert len(notes) == 1
+    assert "ai.exe" in notes[0] and "OK" in notes[0]
+    assert c.settings.drm_notice_shown is True
+    assert c.powerpoint.calls == 2          # still pastes; the Office dialog is harmless
+
+
+def test_APP_45_no_drm_no_notice(make):
+    c = make()
+    c.powerpoint = FakePpt()
+    c.drm = None
+    c.start_capture()
+    drag(c.overlays[0], (100, 100), (400, 300))
+    c.overlays[0].side_bar.trigger("ppt")
+    assert not any("DRM" in m for m in c.messages)
+
+
 def test_APP_30_fullscreen_mode_copies_cursor_monitor(make):
     c = make(FakeScreen(cursor=(900, 10), monitors=[MON_A, MON_B]))
     c.start_capture(mode="fullscreen")

@@ -282,6 +282,23 @@
 - 파워포인트가 설치되어 있어야 합니다. 없으면 복사만 되니 원하는 곳에 Ctrl + V 하세요.
 - 파워포인트에 "저장하시겠습니까?" 같은 창이 떠 있으면 먼저 닫아 주세요.
 
+**Q. 회사 PC에서 "ai.exe - Bad Image … Fasoo DRM\f_nxa.dll … 0xc0000428" 창이 떠요.**
+
+![ai.exe Bad Image 예시 문구](https://img.shields.io/badge/ai.exe-Bad%20Image%20%C2%B7%20f__nxa.dll%20%C2%B7%200xc0000428-red)
+
+- **캡처 도구의 오류가 아닙니다.** `ai.exe`는 **Microsoft Office의 AI 기능 프로그램**이고, `f_nxa.dll`은 회사 문서 보안 프로그램(**Fasoo DRM**)의 파일입니다.
+- PowerPoint는 켜질 때 몇 초 안에 `ai.exe`를 실행합니다. 이 프로그램은 Microsoft가 서명한 파일만 받아들이는데, Fasoo DRM이 자기 파일을 끼워 넣으려다 거부당하면서 이 창이 뜹니다. 캡처 도구의 "PPT로"가 PowerPoint를 열 때도 뜰 수 있지만, **PowerPoint를 직접 켜도 똑같이 뜹니다.**
+- **OK를 누르면 됩니다.** PowerPoint와 캡처 도구는 그대로 정상 동작합니다. 캡처 도구는 Fasoo DRM을 감지하면 처음 한 번 이 내용을 알림으로 알려 줍니다.
+- **완전히 없애려면** 회사 IT 담당자에게 아래 문구를 그대로 보내세요.
+
+  > Office(Microsoft 365)의 ai.exe 실행 시 "Bad Image" 오류(0xc0000428)가 발생합니다.
+  > 대상 파일: C:\Program Files\Fasoo DRM\f_nxa.dll
+  > Office AI 호스트(ai.exe)가 Microsoft 서명 DLL만 허용하여 Fasoo DRM 주입 DLL 로드가 차단되는 것으로 보입니다.
+  > Fasoo DRM 에이전트를 Office AI(ai.exe)와 호환되는 버전으로 업데이트하거나, ai.exe를 DLL 주입 예외로 등록해 주세요.
+
+**Q. 회사 보안 문서를 캡처하면 검게 나와요.**
+문서 보안 프로그램(DRM)이 보호 문서의 화면 캡처를 막는 정책일 수 있습니다. 회사 보안 정책이므로 캡처 도구에서 바꿀 수 없습니다.
+
 **Q. 도형이 인식되지 않거나 일부만 들어가요.**
 - 네모, 동그라미, 세모, 선, 화살표만 알아봅니다. 사진이나 복잡한 그림은 이미지로 넣어 주세요.
 - 배경과 색 차이가 거의 없는 도형은 놓칠 수 있습니다.
