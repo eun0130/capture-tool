@@ -48,6 +48,19 @@ def find_pii(text: str) -> list[Match]:
     return out
 
 
+def char_boxes(text: str, box: tuple, spans: list[tuple[int, int]]) -> list[tuple]:
+    """Approximate sub-boxes of a text line for character spans (proportional width)."""
+    if not text:
+        return []
+    x, y, w, h = box
+    per = w / len(text)
+    return [(int(round(x + s * per)), y, int(round((e - s) * per)), h) for s, e in spans]
+
+
+def line_pii_boxes(text: str, box: tuple) -> list[tuple]:
+    return char_boxes(text, box, [(m.start, m.end) for m in find_pii(text)])
+
+
 def mask_word_boxes(words: list[tuple[str, tuple]]) -> list[tuple]:
     """words: OCR words of one line in reading order -> boxes of words that hold PII."""
     if not words:
