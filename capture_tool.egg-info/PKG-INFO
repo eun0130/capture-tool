@@ -1,0 +1,18 @@
+Metadata-Version: 2.4
+Name: capture-tool
+Version: 0.1.0
+Summary: Windows capture tool: annotate, OCR, and copy shapes to PowerPoint as native shapes
+License: MIT
+Requires-Python: >=3.12
+License-File: LICENSE
+Requires-Dist: PySide6>=6.8
+Requires-Dist: numpy>=2.0
+Requires-Dist: opencv-python-headless>=4.10
+Requires-Dist: onnxruntime>=1.20
+Requires-Dist: rapidocr>=3.0
+Requires-Dist: mss>=9.0
+Requires-Dist: pywin32>=306
+Provides-Extra: dev
+Requires-Dist: pytest>=8; extra == "dev"
+Requires-Dist: pyinstaller>=6.10; extra == "dev"
+Dynamic: license-file

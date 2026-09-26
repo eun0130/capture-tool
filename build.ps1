@@ -2,7 +2,7 @@
 param([switch]$SkipTests)
 $ErrorActionPreference = "Stop"
 Set-Location $PSScriptRoot
-$py = ".\.venv\Scripts\python.exe"
+$py = if (Test-Path ".\.venv\Scripts\python.exe") { ".\.venv\Scripts\python.exe" } else { "python" }  # CI has no venv
 
 if (-not $SkipTests) {
     & $py -m pytest -q
