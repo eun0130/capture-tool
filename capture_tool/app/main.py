@@ -87,7 +87,6 @@ class TrayApp:
             self.toast(w)
         if not selftest:
             self.apply_hotkeys(first_run=not self.settings_path.exists())
-            self._sync_startup()
 
     # --- ui ------------------------------------------------------------------------
     def toast(self, msg: str) -> None:
@@ -140,6 +139,9 @@ class TrayApp:
             logging.warning("startup registration failed: %s", e)
 
     def open_settings(self) -> None:
+        if getattr(sys, "frozen", False):  # show the real state (the installer may have set it)
+            from ..platform import startup
+            self.settings.launch_at_startup = startup.is_enabled()
         dlg = SettingsDialog(self.settings)
         dlg.setWindowIcon(app_icon())
         dlg.setWindowFlag(Qt.WindowStaysOnTopHint, True)
@@ -198,12 +200,51 @@ def selftest(tray: TrayApp) -> int:
     c.finish("copy")
     t_copy = (time.perf_counter() - t1) * 1000
     png = win_clipboard.get_format(PNG)
-    tray.ocr._load()
-    print(f"monitors={len(c.screen.monitors())} overlay_ms={t_overlay:.0f} copy_ms={t_copy:.0f} "
-          f"png_bytes={len(png or b'')} ocr_ready={tray.ocr.ready}")
-    ok = bool(png) and t_overlay < 150 and t_copy < 150
+    ocr_ok, shapes_ok = _selftest_recognition(tray)
+    line = (f"monitors={len(c.screen.monitors())} overlay_ms={t_overlay:.0f} copy_ms={t_copy:.0f} "
+            f"png_bytes={len(png or b'')} ocr_korean={ocr_ok} shapes={shapes_ok}")
+    ok = bool(png) and t_overlay < 150 and t_copy < 150 and ocr_ok and shapes_ok
+    print(line)
     print("SELFTEST", "OK" if ok else "FAIL")
+    logging.info("selftest %s %s", "OK" if ok else "FAIL", line)
     return 0 if ok else 1
+
+
+def _selftest_recognition(tray: TrayApp) -> tuple[bool, bool]:
+    """Korean OCR and shape detection on images drawn here (proves models are bundled)."""
+    from PySide6.QtCore import QRect
+    from PySide6.QtGui import QColor, QImage, QPen
+    from ..core.shapes import detect
+    from .render import qimage_to_bgr
+
+    img = QImage(900, 300, QImage.Format_RGB888)
+    img.fill(QColor("white"))
+    p = QPainter(img)
+    p.setRenderHint(QPainter.Antialiasing)
+    f = QFont("Malgun Gothic")
+    f.setPixelSize(26)
+    p.setFont(f)
+    p.setPen(QColor("black"))
+    p.drawText(20, 40, "요청 접수 검토 승인 010-1234-5678")
+    p.setPen(QPen(QColor("#343A40"), 2))
+    p.setBrush(QColor("#F1F3F5"))
+    p.drawRect(QRect(40, 120, 180, 80))
+    p.drawRect(QRect(420, 120, 180, 80))
+    p.drawLine(222, 160, 400, 160)
+    p.setBrush(QColor("#343A40"))
+    from PySide6.QtCore import QPointF
+    from PySide6.QtGui import QPolygonF
+    p.drawPolygon(QPolygonF([QPointF(418, 160), QPointF(400, 150), QPointF(400, 170)]))
+    p.end()
+    bgr = qimage_to_bgr(img)
+    try:
+        text = "".join(l.text for l in tray.ocr.recognize(bgr[:80])).replace(" ", "")
+    except Exception as e:  # noqa: BLE001
+        logging.error("selftest ocr failed: %s", e)
+        text = ""
+    kinds = sorted(d.kind for d in detect(bgr[90:]))
+    logging.info("selftest ocr=%r shapes=%s", text, kinds)
+    return ("요청접수" in text and "010-1234-5678" in text), kinds == ["arrow", "rect", "rect"]
 
 
 def main(argv=None) -> int:
