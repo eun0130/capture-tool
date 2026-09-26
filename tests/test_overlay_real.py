@@ -35,7 +35,10 @@ for m in rs.monitors():
     a = 140 / 255.0
     expected = ov.image[:, :, :3].astype(np.float32) * (1 - a) + np.array([24, 18, 15], np.float32) * a
     band = (slice(80, m.rect.h - 80), slice(0, m.rect.w))  # skip the hint bar and the taskbar
-    print(f"{m.name} diff={float(np.abs(shown[band] - expected[band]).mean()):.2f}")
+    d = np.abs(shown - expected).mean(axis=2)
+    ys, xs = np.nonzero(d[band] > 40)
+    where = f" big={len(ys)} x={xs.min()}..{xs.max()} y={ys.min() + 80}..{ys.max() + 80}" if len(ys) else ""
+    print(f"{m.name} diff={float(d[band].mean()):.2f}{where}")
     c.close_all()
     app.processEvents()
 '''
@@ -48,4 +51,4 @@ def test_OVL_REAL_01_overlay_is_one_to_one_on_every_monitor(tmp_path):
     lines = [l for l in r.stdout.splitlines() if "diff=" in l]
     assert lines, r.stdout + r.stderr
     for l in lines:
-        assert float(l.split("diff=")[1]) < 3.0, l
+        assert float(l.split("diff=")[1].split()[0]) < 3.0, l
