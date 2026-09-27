@@ -75,3 +75,53 @@ def test_two_words_same_cell_joined():
     items = [("New", 100, 50, 40, 20), ("York", 145, 50, 40, 20), ("10", 400, 50, 20, 20),
              ("Seoul", 100, 90, 60, 20), ("20", 400, 90, 20, 20)]
     assert to_grid(items) == [["New York", "10"], ["Seoul", "20"]]
+
+
+# --- false positives: ordinary screens must not become huge "tables" (PPT hang, v0.3.4) ----
+
+def test_TBL_10_dark_screen_is_not_a_table():
+    import numpy as np
+    img = np.full((600, 900, 3), 40, np.uint8)          # dark-mode app: everything "non-white"
+    img[100:110, 50:850] = 200
+    assert detect_grid(img) is None
+
+
+def test_TBL_11_filled_panels_are_not_grid_lines():
+    import numpy as np
+    img = np.full((600, 900, 3), 255, np.uint8)
+    img[0:60, :] = 230                                   # title bar
+    img[60:600, 0:220] = 243                             # side panel
+    img[200:400, 300:800] = 180                          # picture / button block
+    for y in range(80, 600, 3):                          # text-like stripes
+        img[y, 240:880:2] = 90
+    assert detect_grid(img) is None
+
+
+def test_TBL_12_lines_packed_tighter_than_text_are_rejected():
+    import numpy as np
+    img = np.full((400, 400, 3), 255, np.uint8)
+    for k in range(0, 400, 4):                           # hatch pattern: lines every 4 px
+        img[k, :] = 200
+        img[:, k] = 200
+    assert detect_grid(img) is None
+
+
+def test_TBL_13_grid_size_is_capped():
+    img, _ = excel_like(rows=4, cols=3)
+    assert detect_grid(img) is not None
+    from capture_tool.core.table import MAX_ROWS, MAX_COLS
+    assert MAX_ROWS <= 500 and MAX_COLS <= 60
+
+
+def test_TBL_14_real_table_with_thick_header_border_still_found():
+    img, (x0, y0, cw, rh) = excel_like(rows=5, cols=4)
+    img[y0 + rh - 1:y0 + rh + 2, x0:x0 + 4 * cw + 1] = (120, 120, 120)   # 3 px header rule
+    xs, ys = detect_grid(img)
+    assert len(xs) == 5 and len(ys) == 6
+
+
+def test_TBL_15_sparse_table_rejected():
+    from capture_tool.core.table import table_is_plausible
+    grid = [["a"] + [""] * 30] + [[""] * 31 for _ in range(40)]
+    assert not table_is_plausible(grid)
+    assert table_is_plausible([["품목", "수량"], ["사과", "3"], ["배", ""]])

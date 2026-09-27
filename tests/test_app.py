@@ -987,3 +987,34 @@ def test_APP_30_fullscreen_mode_copies_cursor_monitor(make):
     img = decode_png(c.clipboard.last[PNG])
     assert img.shape[:2] == (600, 800)
     assert c.overlays == []
+
+
+def test_APP_70_ordinary_screen_in_text_mode_is_text_not_a_huge_table(make):
+    """User bug v0.3.3: Alt+~ -> 텍스트 -> PPT로 froze PowerPoint. A dark UI screen was taken
+    for a 233x316 spreadsheet and ~70k tab cells were sent to PowerPoint."""
+    import numpy as np
+    from capture_tool.platform.powerpoint import TextItem
+    lines = [OcrLine(f"메뉴 항목 {i}", (10 + (i % 3) * 120, 10 + i * 40, 100, 20), 0.99) for i in range(7)]
+    lines[0] = OcrLine("파일 편집 보기", (10, 10, 100, 20), 0.99)
+    c, ov = _editing(make, ocr=FakeOcr(lines))
+    ov.image[:] = 40                                   # dark-mode screen: every pixel "non-white"
+    ov.image[150:160, :] = 200
+    c.powerpoint = FakePpt()
+    ov.side_bar.trigger("text")
+    assert c._text_grid is None
+    assert not any("표 " in m for m in c.messages)
+    ov.side_bar.trigger("ppt")
+    item = c.powerpoint.items[0]
+    assert isinstance(item, TextItem) and "	" not in item.text and "파일 편집 보기" in item.text
+
+
+def test_APP_71_huge_text_to_ppt_is_cut_and_user_is_told(make):
+    from capture_tool.platform.powerpoint import MAX_TEXT_CHARS, TextItem
+    lines = [OcrLine("가" * 80, (10, 10 + i * 2, 300, 2), 0.99) for i in range(120)]
+    c, ov = _editing(make, ocr=FakeOcr(lines))
+    c.powerpoint = FakePpt()
+    ov.side_bar.trigger("text")
+    ov.side_bar.trigger("ppt")
+    item = c.powerpoint.items[0]
+    assert isinstance(item, TextItem) and len(item.text) <= MAX_TEXT_CHARS + 1
+    assert any("앞부분" in m for m in c.messages)

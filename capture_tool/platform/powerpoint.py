@@ -45,6 +45,22 @@ class TextItem:
     font_size: float = 18      # points
 
 
+# PowerPoint lays out a text box synchronously; tens of thousands of characters (a huge
+# tab-separated "table") keep it busy for minutes and it shows "응답 없음".
+MAX_TEXT_CHARS = 5000
+
+
+def clip_text(text: str, limit: int = MAX_TEXT_CHARS) -> tuple[str, bool]:
+    """(text cut at a line boundary to at most `limit` chars + "…", whether it was cut)."""
+    if len(text) <= limit:
+        return text, False
+    head = text[:limit - 2]
+    nl = head.rfind("\n")
+    if nl > 0:
+        head = head[:nl]
+    return head.rstrip() + "\n…", True
+
+
 @dataclass
 class ClipboardShapes:
     """Native shapes already on the clipboard (Art::GVML ClipFormat)."""
@@ -117,7 +133,8 @@ def _insert(app, item, new_presentation: bool, hook) -> SendResult:
                 pass
         added = 1
     elif isinstance(item, TextItem):
-        lines = item.text.replace("\r\n", "\n").split("\n")
+        text, _ = clip_text(item.text.replace("\r\n", "\n"))
+        lines = text.split("\n")
         tw = min(sw * FIT, max(200.0, max(len(l) for l in lines) * item.font_size * 1.05))
         th = min(sh * FIT, len(lines) * item.font_size * 1.6 + 10)
         left, top, tw, th = place(tw, th, sw, sh)

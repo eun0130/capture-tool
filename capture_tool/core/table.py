@@ -63,15 +63,32 @@ def to_grid(items: list[Item]) -> list[list[str]]:
     return grid
 
 
+# Guards against ordinary screens being read as a spreadsheet (v0.3.3 took a dark UI screen
+# for a 233x316 "table" and PowerPoint froze on the ~70k cells).
+MAX_LINE_THICK = 4    # px; a thicker dark band is a filled area (title bar, dark mode), not a rule
+MIN_CELL = 8          # px; rules packed tighter than this are a hatch/texture, not cells
+MAX_ROWS = 500
+MAX_COLS = 60
+MIN_FILL = 0.25       # share of cells that must hold text
+
+
 def _line_positions(profile: np.ndarray, min_len: int) -> list[int]:
-    """Indices where a long line runs (merging neighbours that belong to one thick line)."""
-    idx = [i for i, v in enumerate(profile) if v >= min_len]
+    """Centers of thin runs where a long line runs; thick runs (filled areas) are skipped."""
     out: list[int] = []
-    for i in idx:
-        if out and i - out[-1] <= 2:
-            continue
-        out.append(i)
+    start = None
+    for i, v in enumerate(list(profile) + [0]):
+        if v >= min_len:
+            if start is None:
+                start = i
+        elif start is not None:
+            if i - start <= MAX_LINE_THICK:
+                out.append(start + (i - 1 - start) // 2)
+            start = None
     return out
+
+
+def _regular(pos: list[int], limit: int) -> bool:
+    return 3 <= len(pos) <= limit + 1 and all(b - a >= MIN_CELL for a, b in zip(pos, pos[1:]))
 
 
 def detect_grid(img: np.ndarray) -> tuple[list[int], list[int]] | None:
@@ -88,9 +105,19 @@ def detect_grid(img: np.ndarray) -> tuple[list[int], list[int]] | None:
     vert = cv2.morphologyEx(dark, cv2.MORPH_OPEN, np.ones((max(12, h // 4), 1), np.uint8))
     ys = _line_positions(horiz.sum(axis=1), max(20, int(w * 0.25)))
     xs = _line_positions(vert.sum(axis=0), max(12, int(h * 0.25)))
-    if len(xs) < 3 or len(ys) < 3:   # at least 2 columns and 2 rows of cells
+    # at least 2 columns and 2 rows of cells, evenly readable, not absurdly many
+    if not (_regular(xs, MAX_COLS) and _regular(ys, MAX_ROWS)):
         return None
     return xs, ys
+
+
+def table_is_plausible(grid: list[list[str]]) -> bool:
+    """Enough cells hold text for this to be a table someone wants in Excel."""
+    if not grid or not grid[0] or len(grid) > MAX_ROWS or len(grid[0]) > MAX_COLS:
+        return False
+    total = len(grid) * len(grid[0])
+    filled = sum(1 for row in grid for c in row if c)
+    return filled >= 3 and filled / total >= MIN_FILL
 
 
 def grid_from_cells(items: list[Item], xs: list[int], ys: list[int]) -> list[list[str]]:

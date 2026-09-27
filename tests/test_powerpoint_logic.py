@@ -235,3 +235,21 @@ def test_PPT_13_sender_allows_one_job_at_a_time():
     release.set()
     th.join(5)
     assert not sender.busy
+
+
+def test_PPT_14_huge_text_is_cut_so_powerpoint_cannot_freeze():
+    from capture_tool.platform.powerpoint import MAX_TEXT_CHARS
+    app = FakeApp(with_deck=True)
+    big = "\n".join("\t".join(["셀"] * 300) for _ in range(250))     # 233×316-like table text
+    send(TextItem(big), app_factory=lambda: app)
+    tb = app.ActivePresentation.Slides(2).Shapes.items[0]
+    assert len(tb.TextFrame.TextRange.Text) <= MAX_TEXT_CHARS + 1
+    assert tb.Width > 0 and tb.Height > 0
+
+
+def test_PPT_15_clip_text_keeps_whole_lines_and_reports_cut():
+    from capture_tool.platform.powerpoint import MAX_TEXT_CHARS, clip_text
+    assert clip_text("짧은 글") == ("짧은 글", False)
+    text, cut = clip_text("\n".join(["가" * 100] * 200))
+    assert cut and len(text) <= MAX_TEXT_CHARS + 1 and text.endswith("…")
+    assert all(l in ("가" * 100, "…") for l in text.split("\n"))

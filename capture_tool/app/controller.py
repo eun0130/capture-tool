@@ -21,8 +21,9 @@ from ..core.naming import SaveDirError, render, resolve_save_dir, unique_path
 from ..core.ocr import OcrUnavailable, full_text, select_text
 from ..core.session import CaptureSession, State
 from ..core.shapes import attach_text, detect, to_drawing
-from ..core.table import detect_grid, grid_from_cells
-from ..platform.powerpoint import (ClipboardShapes, Picture, PowerPointBusy, PowerPointUnavailable, TextItem)
+from ..core.table import detect_grid, grid_from_cells, table_is_plausible
+from ..platform.powerpoint import (ClipboardShapes, Picture, PowerPointBusy, PowerPointUnavailable, TextItem,
+                                   clip_text)
 from .overlay import OverlayWindow
 from .pin import PinWindow
 from .render import compose
@@ -248,8 +249,11 @@ class Controller(QObject):
             return
         ov = self.active_overlay
         if ov.ocr_lines is not None:
-            text = self._last_text or full_text(self._text_lines)
+            text, cut = clip_text(self._last_text or full_text(self._text_lines))
             self._take()   # the clipboard keeps the text, so Ctrl+V still pastes text
+            if cut:
+                self.notify(f"글자가 너무 많아 앞부분 {len(text) - 1}자만 PowerPoint에 넣습니다. "
+                            "전체는 Ctrl+V로 붙여넣으세요.")
             self._send_item_to_ppt(TextItem(text, font_family="Malgun Gothic", font_size=18), "글자를")
             return
         ov, sel, doc, raw = self._take(close=False)
@@ -309,8 +313,7 @@ class Controller(QObject):
         if not found:
             return None
         grid = grid_from_cells([(l.text, *l.box) for l in lines], *found)
-        filled = sum(1 for row in grid for c in row if c)
-        return grid if filled >= 3 else None
+        return grid if table_is_plausible(grid) else None
 
     def _copy_text(self, lines, grid=None, drag_hint=False) -> None:
         redact = self.settings.redact_pii
