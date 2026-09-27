@@ -11,7 +11,7 @@ from ..core.hotkey import HotkeyError, find_duplicates, is_reserved, known_confl
 from ..core.settings import Settings
 
 ACTIONS = [("capture", "캡처 + 그리기"), ("ocr", "텍스트 바로 복사"), ("shapes", "도형 바로 복사 (PPT)"),
-           ("fullscreen", "전체 화면 캡처")]
+           ("fullscreen", "전체 화면 캡처"), ("scroll", "스크롤 캡처")]
 _KEYNAMES = {Qt.Key_QuoteLeft: "`", Qt.Key_AsciiTilde: "`", Qt.Key_Print: "PrintScreen", Qt.Key_Space: "Space",
              Qt.Key_Tab: "Tab", Qt.Key_Insert: "Insert", Qt.Key_Delete: "Delete", Qt.Key_Home: "Home",
              Qt.Key_End: "End", Qt.Key_PageUp: "PageUp", Qt.Key_PageDown: "PageDown", Qt.Key_Left: "Left",

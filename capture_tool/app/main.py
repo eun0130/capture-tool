@@ -116,7 +116,8 @@ class TrayApp:
         m = QMenu()
         hk = self.settings.hotkeys
         for label, action in [("캡처 + 그리기", "capture"), ("텍스트 바로 복사", "ocr"),
-                              ("도형 바로 복사 (PPT)", "shapes"), ("전체 화면 캡처", "fullscreen")]:
+                              ("도형 바로 복사 (PPT)", "shapes"), ("전체 화면 캡처", "fullscreen"),
+                              ("스크롤 캡처", "scroll")]:
             key = hk.get(action) or ""
             a = QAction(f"{label}\t{key}" if key else label, m)
             a.triggered.connect(lambda _=False, x=action: QTimer.singleShot(250, lambda: self.on_hotkey(x)))
@@ -139,7 +140,8 @@ class TrayApp:
         self.tray.setContextMenu(m)
 
     def on_hotkey(self, action: str) -> None:
-        mode = {"capture": "draw", "ocr": "text", "shapes": "shapes", "fullscreen": "fullscreen"}[action]
+        mode = {"capture": "draw", "ocr": "text", "shapes": "shapes", "fullscreen": "fullscreen",
+                "scroll": "scroll"}[action]
         self.controller.start_capture(mode)
 
     def apply_hotkeys(self, first_run: bool = False) -> None:

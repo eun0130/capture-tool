@@ -16,6 +16,39 @@ class RealScreen:
     def grab(self, rect):
         return screen.grab(rect)
 
+    # scroll capture & capture-protection checks
+    def wheel(self, x, y, notches):
+        from ..platform import scroll
+        scroll.wheel(x, y, notches)
+
+    def set_cursor(self, x, y):
+        from ..platform import scroll
+        scroll.set_cursor(x, y)
+
+    def esc_pressed(self):
+        from ..platform import scroll
+        return scroll.esc_pressed()
+
+    def display_affinity(self, hwnd):
+        from ..platform import scroll
+        return scroll.display_affinity(hwnd)
+
+    def is_browser(self, hwnd):
+        from ..platform import scroll
+        return scroll.is_browser(hwnd)
+
+    def browser_viewport(self, hwnd):
+        from ..platform import scroll
+        return scroll.browser_viewport(hwnd)
+
+    def root_window_at(self, x, y):
+        from ..platform import scroll
+        return scroll.root_window_at(x, y)
+
+    def exclude_from_capture(self, hwnd):
+        from ..platform import scroll
+        return scroll.exclude_from_capture(hwnd)
+
     def windows(self):
         try:
             return windows.top_level_windows(exclude_pid=os.getpid())

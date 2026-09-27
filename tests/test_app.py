@@ -38,6 +38,7 @@ class FakeScreen:
         if self.image is not None:
             return self.image[r.y:r.y + r.h, r.x - (r.x // 800) * 800:][:, :r.w].copy()
         img = np.full((r.h, r.w, 3), 255, np.uint8)
+        img[0, 0] = 250          # not one flat color: a flat grab means "capture blocked"
         return img
 
     def windows(self):
@@ -542,7 +543,7 @@ def test_APP_31_side_bar_next_to_selection(make):
     assert sb.isVisible()
     g = sb.geometry()
     assert g.left() >= 400 and g.top() == 100 and g.right() <= 800
-    assert list(sb.buttons) == ["copy", "save_as", "text", "ppt", "ppt_shapes", "pin"]
+    assert list(sb.buttons) == ["copy", "save_as", "text", "ppt", "ppt_shapes", "scroll", "pin"]
 
 
 def test_APP_32_save_icon_asks_location(make, tmp_path):

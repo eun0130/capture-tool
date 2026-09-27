@@ -218,6 +218,16 @@ def main():
     pin.grab().save(str(OUT / "05-pin.png"))
     # 5b) how pinning is used: a pinned table floats over the window you are typing in
     pin_scene().save(str(OUT / "09-pin-usage.png"))
+    # 5c) scroll capture result window
+    from capture_tool.app.scroll_ui import ScrollIndicator, ScrollResult
+    from tests.scrollsim import make_page
+    res = ScrollResult(make_page(2600, w=900, seed=3))
+    res.show()
+    res.grab().save(str(OUT / "13-scroll-result.png"))
+    ind = ScrollIndicator()
+    ind.show_progress(7, 5320)
+    ind.show()
+    ind.grab().save(str(OUT / "14-scroll-progress.png"))
     # 6) settings
     dlg = SettingsDialog(Settings())
     dlg.show()

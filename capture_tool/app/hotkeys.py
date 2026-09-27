@@ -9,7 +9,7 @@ from PySide6.QtWidgets import QWidget
 
 from ..core.hotkey import HotkeyError, known_conflicts, parse
 
-IDS = {"capture": 0xA001, "ocr": 0xA002, "shapes": 0xA003, "fullscreen": 0xA004}
+IDS = {"capture": 0xA001, "ocr": 0xA002, "shapes": 0xA003, "fullscreen": 0xA004, "scroll": 0xA005}
 WM_HOTKEY = 0x0312
 
 

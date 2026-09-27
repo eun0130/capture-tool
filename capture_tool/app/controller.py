@@ -20,6 +20,7 @@ from ..core.drawingml import gvml_package, svg
 from ..core.geometry import Rect, clamp_rect, nudge, order_cursor_first, virtual_bounds
 from ..core.naming import SaveDirError, render, resolve_save_dir, unique_path
 from ..core.ocr import OcrUnavailable, full_text, select_text
+from ..core.scroll_session import ScrollCapture, looks_blocked
 from ..core.session import CaptureSession, State
 from ..core.shapes import attach_text, detect, to_drawing
 from ..core.table import detect_grid, grid_from_cells, table_is_plausible
@@ -77,6 +78,11 @@ class Controller(QObject):
         self._text_lines: list = []
         self._text_grid = None
         self._last_text = ""        # what the text mode last put on the clipboard
+        self.scrolling = False
+        self._scroll_stop = False
+        self.scroll_indicator = None
+        self.scroll_result = None
+        self.scroll_limits: dict = {}   # tests: max_height / max_pixels / max_steps
         self.ask_save_path = self._ask_save_path_dialog
         from ..platform.powerpoint import PowerPointSender
         from ..platform.security_software import detect_drm
@@ -84,6 +90,16 @@ class Controller(QObject):
         self.drm = detect_drm()
 
     # --- helpers -----------------------------------------------------------------
+    def _screen(self, name: str, *args, default=None):
+        """Optional screen services (scrolling, window checks); absent in simple fakes."""
+        fn = getattr(self.screen, name, None)
+        if fn is None:
+            return default
+        try:
+            return fn(*args)
+        except OSError:
+            return default
+
     def notify(self, msg: str) -> None:
         self.messages.append(msg)
         log.info(msg)
@@ -146,6 +162,9 @@ class Controller(QObject):
 
     def _open_overlay(self, monitor, wins, focus=False) -> None:
         img = self.screen.grab(monitor.rect)
+        if focus and looks_blocked(img):
+            self.notify("화면 캡처가 막혔습니다: 화면 전체가 한 가지 색으로만 찍힙니다. 보안 프로그램이나 "
+                        "보호된 영상(DRM)이 캡처를 막는 중일 수 있습니다. 그 창을 닫거나 잠시 뒤 다시 해 보세요.")
         ov = self._overlay_for(monitor, img, wins)
         ov.place()
         ov.show()
@@ -200,11 +219,25 @@ class Controller(QObject):
         self.active_overlay = ov
         for o in self.overlays:
             o.update()
+        self._warn_protected(ov, self.session.selection)
+        if self.mode == "scroll":
+            self.on_toolbar_action("scroll")
+            return
         if self.mode in ("text", "shapes"):
             self.on_toolbar_action(self.mode)
             return
         ov.show_toolbar()
         ov.setFocus()
+
+    def _warn_protected(self, ov, sel) -> None:
+        """Windows that asked to be hidden from screenshots (banking, DRM video, secure apps)
+        come out black. That is their owner's security choice; it is explained, not bypassed."""
+        for w in getattr(ov, "windows", []):
+            if clamp_rect(w.rect, sel) is None:
+                continue
+            if self._screen("display_affinity", w.hwnd, default=0):
+                self.notify(f"'{w.title or '이름 없는 창'}' 창은 캡처 보호가 켜져 있어 검게 찍힙니다. "
+                            "그 프로그램이 보안을 위해 막아 둔 것이라 캡처 도구로는 풀 수 없습니다.")
 
     def nudge(self, dx: int, dy: int) -> None:
         ov = self.active_overlay
@@ -238,10 +271,164 @@ class Controller(QObject):
             self._start_text_mode()
         elif name == "ppt":
             self._send_capture_to_ppt()
+        elif name == "scroll":
+            self._start_scroll()
         elif name == "ppt_shapes":
             self._run_recognition("ppt")
         elif name in ("text", "shapes"):
             self._run_recognition(name)
+
+    # --- scroll capture ----------------------------------------------------------------------
+    def _scroll_target(self, ov, sel):
+        """(area, scroll to top first?, description). A whole browser window picked while
+        selecting means "the whole page": only the page area, from the top."""
+        for w in getattr(ov, "windows", []):
+            r = w.rect
+            if max(abs(r.x - sel.x), abs(r.y - sel.y), abs(r.right - sel.right), abs(r.bottom - sel.bottom)) > 12:
+                continue
+            if self._screen("is_browser", w.hwnd, default=False):
+                vp = self._screen("browser_viewport", w.hwnd)
+                vp = clamp_rect(vp, ov.monitor.rect) if vp else None
+                # without a known page view (e.g. Firefox) the whole window works too: tabs and
+                # the address bar don't move, so they are kept once at the top like a sticky header
+                return (vp or sel), True, "브라우저 페이지 전체"
+            break
+        return sel, False, "선택한 영역"
+
+    def _start_scroll(self) -> None:
+        if self.session.state is not State.EDITING:
+            return
+        if self.scrolling:
+            self.notify("스크롤 캡처가 이미 진행 중입니다.")
+            return
+        ov, sel = self.active_overlay, self.session.selection
+        if self.scroll_result is not None:     # an old result window must not sit over the page
+            self.scroll_result.close()
+        rect, to_top, what = self._scroll_target(ov, sel)
+        drew = bool(self.session.document and self.session.document.shapes)
+        dpi = 96 * ov.scale
+        local = ov.local_rect(rect)
+        anchor = (ov.mapToGlobal(local.bottomLeft().toPoint()), ov.mapToGlobal(local.topLeft().toPoint()),
+                  ov.geometry())
+        self._take()
+        if drew:
+            self.notify("스크롤 캡처에는 그린 내용이 들어가지 않습니다. 결과를 고정하거나 저장한 뒤 다시 캡처해서 그려 주세요.")
+        self._run_scroll(rect, to_top, what, dpi, anchor)
+
+    def _run_scroll(self, rect, to_top, what, dpi, anchor) -> None:
+        from .scroll_ui import ScrollIndicator
+        self.scrolling, self._scroll_stop = True, False
+        self._screen("esc_pressed")                       # forget an Esc pressed before this
+        cursor = self.screen.cursor_pos()
+        cx, cy = rect.x + rect.w // 2, rect.y + rect.h // 2
+        ind = ScrollIndicator()
+        below, above, screen_geo = anchor
+        ind.adjustSize()
+        pos = below + QPoint(0, 8)
+        if pos.y() + ind.height() > screen_geo.bottom():
+            pos = above - QPoint(0, ind.height() + 8)
+        if pos.y() < screen_geo.top():
+            pos = above + QPoint(8, 8)
+        ind.move(pos)
+        ind.show()
+        self._screen("exclude_from_capture", int(ind.winId()))
+        ind.stopRequested.connect(lambda: setattr(self, "_scroll_stop", True))
+        self.scroll_indicator = ind
+
+        def stop() -> bool:
+            return self._scroll_stop or bool(self._screen("esc_pressed", default=False))
+
+        owner = {}
+
+        def visible() -> bool:
+            """The window under the area is the one we started with (nothing popped up over it)."""
+            root = self._screen("root_window_at", cx, cy)
+            if root is None:
+                return True
+            return owner.setdefault("hwnd", root) == root
+
+        sc = ScrollCapture(grab=lambda: self.screen.grab(rect), wheel=lambda n: self.screen.wheel(cx, cy, n),
+                           to_top=to_top, stop_requested=stop, progress=ind.show_progress, still_visible=visible,
+                           **self.scroll_limits)
+        gen = sc.run()
+
+        def finish(error=None) -> None:
+            self.scrolling = False
+            ind.close()
+            self.scroll_indicator = None
+            self._screen("set_cursor", *cursor)
+            self._finish_scroll(sc, what, dpi, error, below)
+
+        if self.sync:
+            for _ in gen:
+                pass
+            finish()
+            return
+
+        def tick() -> None:
+            try:
+                ms = next(gen)
+            except StopIteration:
+                finish()
+                return
+            except Exception as e:  # noqa: BLE001 - keep what was captured, report
+                log.exception("scroll capture failed")
+                finish(e)
+                return
+            QTimer.singleShot(ms, tick)
+
+        QTimer.singleShot(250, tick)   # let the overlays disappear from the screen first
+
+    def _finish_scroll(self, sc, what, dpi, error, pos) -> None:
+        from .scroll_ui import ScrollResult
+        img = sc.result()
+        h, w = img.shape[:2]
+        payload = self._image_payload(img, dpi)
+        if payload:
+            self._set_clipboard(payload)
+        if error is not None:
+            self.notify(f"스크롤 캡처 중 오류가 났습니다({error}). 그때까지 찍은 {w}×{h}px를 복사했습니다.")
+        elif sc.reason == "noscroll":
+            self.notify("스크롤되지 않아 보이는 부분만 복사했습니다. 스크롤할 내용이 없거나, 관리자 권한으로 "
+                        "실행된 창이거나, 스크롤을 막아 둔 창일 수 있습니다.")
+        else:
+            note = {"stopped": "중지한 곳까지 ", "limit": f"너무 길어 {h}px까지만 ", "full": f"너무 길어 {h}px까지만 ",
+                    "nomatch": "화면이 크게 바뀌어 이어 붙일 곳을 찾지 못해 여기까지만 ",
+                    "covered": "다른 창이 캡처 영역을 가려서 여기까지만 ",
+                    "blocked": "화면 캡처가 막혔습니다(보안 프로그램이나 보호된 영상이 캡처를 막고 있을 수 "
+                               "있습니다). 막히기 전까지 "}.get(sc.reason, "")
+            self.notify(f"스크롤 캡처({what}) {w}×{h}px를 {note}복사했습니다. 원하는 곳에 Ctrl+V")
+        if self.settings.auto_save:
+            self._save(img)
+        if self.scroll_result is not None:
+            self.scroll_result.close()
+        win = ScrollResult(img)
+        win.action.connect(lambda name: self._scroll_result_action(name, img, dpi, win))
+        win.move(pos)
+        win.show()
+        self.scroll_result = win
+
+    def _scroll_result_action(self, name: str, img, dpi: float, win) -> None:
+        if name == "copy":
+            self._copy_image(img, dpi)
+        elif name == "save_as":
+            self._save_as(img, win)
+        elif name == "ppt":
+            self._send_item_to_ppt(Picture(img, dpi), "스크롤 캡처를")
+
+    def _save_as(self, img, parent=None) -> bool:
+        ext = ".jpg" if self.settings.image_format == "jpg" else ".png"
+        default = unique_path(self._save_dialog_start(), render(self.settings.filename_pattern, self.now()), ext)
+        target = self.ask_save_path(default, parent)
+        if target is None:
+            return False
+        if target.suffix.lower() not in (".png", ".jpg", ".jpeg"):
+            target = target.with_suffix(ext)
+        if self._write_image(img, target):
+            self.settings.last_save_dir = str(target.parent)
+            self._persist()
+            return True
+        return False
 
     # --- "PPT로": exactly what was captured -----------------------------------------------
     def _send_capture_to_ppt(self) -> None:
