@@ -381,8 +381,11 @@ class Controller(QObject):
         final = compose(raw, doc)
         dpi = 96 * ov.scale
         if action == "copy":
+            t0 = time.perf_counter()
             self._copy_image(final, dpi)   # clipboard first (what "Enter → copied" means) ...
+            t1 = time.perf_counter()
             self.close_overlays()          # ... then hide the full-screen windows
+            self.last_copy_ms = ((t1 - t0) * 1000, (time.perf_counter() - t0) * 1000)
         elif action == "save":
             self._save(final)
         elif action == "save_as":

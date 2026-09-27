@@ -226,7 +226,9 @@ def selftest(tray: TrayApp) -> int:
     t_copy = (time.perf_counter() - t1) * 1000
     png = win_clipboard.get_format(PNG)
     ocr_ok, shapes_ok = _selftest_recognition(tray)
+    clip_ms, close_ms = getattr(c, "last_copy_ms", (t_copy, t_copy))
     line = (f"monitors={len(c.screen.monitors())} overlay_ms={t_overlay:.0f} copy_ms={t_copy:.0f} "
+            f"(clipboard={clip_ms:.0f} +close windows={close_ms - clip_ms:.0f}) "
             f"png_bytes={len(png or b'')} ocr_korean={ocr_ok} shapes={shapes_ok}")
     ok = bool(png) and t_overlay < 150 and t_copy < 150 and ocr_ok and shapes_ok
     print(line)
