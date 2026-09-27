@@ -10,7 +10,8 @@ BOX_KINDS = {"rect", "ellipse", "highlight", "mosaic"}
 LINE_KINDS = {"line", "arrow"}
 PATH_KINDS = {"curve", "pen"}
 POINT_KINDS = {"text", "step"}
-KINDS = BOX_KINDS | LINE_KINDS | PATH_KINDS | POINT_KINDS
+CLIP_KINDS = {"clip"}      # freeform crop outline: not drawn, cuts the result
+KINDS = BOX_KINDS | LINE_KINDS | PATH_KINDS | POINT_KINDS | CLIP_KINDS
 HISTORY_LIMIT = 100
 MIN_BOX = 2
 MIN_LINE = 3
@@ -18,6 +19,7 @@ MAX_WIDTH = 60
 FONT_MIN, FONT_MAX = 8, 144
 DEFAULT_FONT = "Malgun Gothic"
 STEP_RADIUS = 14
+MIN_CLIP_AREA = 16
 
 
 @dataclass
@@ -37,11 +39,13 @@ class Shape:
     underline: bool = False
     strike: bool = False
     font_family: str | None = DEFAULT_FONT
+    bg: str | None = None          # text background color (None = transparent)
 
     def __post_init__(self):
         if self.kind not in KINDS:
             raise ValueError(f"unknown shape kind: {self.kind!r}")
         self.color = normalize_hex(self.color)
+        self.bg = normalize_hex(self.bg) if self.bg else None
         if not isinstance(self.width, (int, float)) or self.width <= 0:
             raise ValueError(f"width must be > 0: {self.width!r}")
         self.width = min(MAX_WIDTH, self.width)
@@ -85,6 +89,11 @@ def _valid(s: Shape) -> bool:
         return len(s.points) == 1 and bool(s.text and s.text.strip())
     if s.kind == "step":
         return len(s.points) == 1 and s.number is not None
+    if s.kind == "clip":
+        if len(s.points) < 3:
+            return False
+        x1, y1, x2, y2 = s.bbox()
+        return x2 - x1 >= MIN_LINE and y2 - y1 >= MIN_LINE and (x2 - x1) * (y2 - y1) >= MIN_CLIP_AREA
     return False
 
 
@@ -128,6 +137,14 @@ class Document:
             return False
         self._commit(self.shapes + [s])
         return True
+
+    @property
+    def clip(self) -> list | None:
+        """Outline of the latest freeform crop, or None."""
+        for s in reversed(self.shapes):
+            if s.kind == "clip":
+                return list(s.points)
+        return None
 
     def next_step_number(self) -> int:
         nums = [s.number for s in self.shapes if s.kind == "step" and s.number is not None]

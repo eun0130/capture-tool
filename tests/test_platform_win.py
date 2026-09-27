@@ -217,3 +217,59 @@ def test_WSTART_01_enable_disable():
     startup.set_enabled(False, "", backend=reg)
     assert not startup.is_enabled(backend=reg)
     startup.set_enabled(False, "", backend=reg)  # idempotent
+
+
+
+@pytest.mark.slow
+def test_WPPT_04_new_slide_after_the_viewed_slide_in_an_open_deck():
+    """Real PowerPoint: my own 3-slide deck, viewing slide 2 -> the picture lands on a new
+    slide 3, slides 1-3 before stay empty. Only the test's own deck is touched and closed."""
+    pytest.importorskip("win32com.client")
+    import pythoncom
+    import win32com.client
+    from capture_tool.platform import powerpoint
+    from capture_tool.platform.powerpoint import Picture
+    if not powerpoint.installed():
+        pytest.skip("PowerPoint not installed")
+    pythoncom.CoInitialize()
+    app = win32com.client.Dispatch("PowerPoint.Application")
+    app.Visible = True
+    mine = app.Presentations.Add()
+    my_name = mine.Name
+
+    class OnlyMyDeck:
+        """The real PowerPoint, but "active" deck/window are always the test's own deck, so a
+        document the person is working on in PowerPoint at the same time is never touched."""
+
+        def __init__(self):
+            pythoncom.CoInitialize()                 # send() runs this in its own worker thread
+            self._app = win32com.client.Dispatch("PowerPoint.Application")   # this thread's proxy
+            self.Presentations = self._app.Presentations
+            self.ActivePresentation = next(p for p in self._app.Presentations if p.Name == my_name)
+            self.ActiveWindow = self.ActivePresentation.Windows(1)
+
+        def __setattr__(self, k, v):
+            if k == "Visible":
+                return
+            object.__setattr__(self, k, v)
+
+        def Activate(self):
+            pass
+    try:
+        for i in range(3):
+            mine.Slides.Add(i + 1, 12)
+        mine.Windows(1).View.GotoSlide(2)
+        seen = {}
+
+        def hook(pres, slide, added):
+            seen["mine"] = pres.Name == my_name   # COM objects can't cross threads: compare names
+            seen["index"] = slide.SlideIndex
+        img = np.full((120, 200, 4), 200, np.uint8)
+        img[:40, :40] = (255, 255, 255, 0)            # a freeform-crop style transparent corner
+        r = powerpoint.send(Picture(img), app_factory=OnlyMyDeck, hook=hook, timeout=30, new_slide=True)
+        assert seen == {"mine": True, "index": 3} and r.added == 1
+        assert mine.Slides.Count == 4
+        assert [mine.Slides(i).Shapes.Count for i in (1, 2, 3, 4)] == [0, 0, 1, 0]
+    finally:
+        mine.Saved = True
+        mine.Close()

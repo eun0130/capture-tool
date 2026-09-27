@@ -9,6 +9,7 @@ from PySide6.QtCore import QPointF, QRectF, Qt
 from PySide6.QtGui import QBrush, QColor, QFont, QImage, QPainter, QPainterPath, QPen, QPixmap, QPolygonF
 
 from ..core.annotations import Document, Shape
+from ..core.clip import clip_image
 
 FONT_FAMILY = "Malgun Gothic"
 
@@ -109,8 +110,19 @@ def paint_shape(p: QPainter, s: Shape) -> None:
         f.setUnderline(s.underline)
         f.setStrikeOut(s.strike)
         p.setFont(f)
+        lines = (s.text or "").split("\n")
+        if s.bg:
+            px = f.pixelSize()
+            pad = max(3.0, px * 0.25)
+            tw = max(p.fontMetrics().horizontalAdvance(l) for l in lines)
+            box = QRectF(pts[0].x() - pad, pts[0].y() - pad * 0.4, tw + 2 * pad, len(lines) * px * 1.25 + pad * 0.8)
+            p.setPen(Qt.NoPen)
+            p.setBrush(QColor(s.bg))
+            p.drawRoundedRect(box, pad * 0.8, pad * 0.8)
+            p.setBrush(Qt.NoBrush)
+            p.setPen(pen)
         y = pts[0].y()
-        for line in (s.text or "").split("\n"):
+        for line in lines:
             y += f.pixelSize() * 1.25
             p.drawText(QPointF(pts[0].x(), y - f.pixelSize() * 0.25), line)
     elif s.kind == "step":
@@ -131,12 +143,13 @@ def paint_document(p: QPainter, shapes: list[Shape]) -> None:
     p.setRenderHint(QPainter.Antialiasing, True)
     p.setRenderHint(QPainter.TextAntialiasing, True)
     for s in shapes:
-        if s.kind != "mosaic":
+        if s.kind not in ("mosaic", "clip"):
             paint_shape(p, s)
 
 
 def compose(img: np.ndarray, doc: Document | None) -> np.ndarray:
-    """Final exported image: capture + mosaic + vector annotations."""
+    """Final exported image: capture + mosaic + vector annotations, cut to the freeform crop
+    (BGRA with a transparent outside) when there is one."""
     if doc is None or not doc.shapes:
         return img.copy()
     base = apply_mosaic(img, doc.shapes)
@@ -144,4 +157,9 @@ def compose(img: np.ndarray, doc: Document | None) -> np.ndarray:
     p = QPainter(q)
     paint_document(p, doc.shapes)
     p.end()
-    return qimage_to_bgr(q)
+    out = qimage_to_bgr(q)
+    if doc.clip is not None:
+        cut = clip_image(out, doc.clip)
+        if cut is not None:
+            return cut
+    return out

@@ -13,7 +13,8 @@ from .hotkey import HotkeyError, parse
 DEFAULT_HOTKEYS = {"capture": "Alt + ~", "ocr": "", "shapes": "", "fullscreen": ""}
 SETTINGS_VERSION = 2
 OLD_DEFAULT_CAPTURE = "Win + ~"  # v1 default; Windows Terminal's quake mode owns it on many PCs
-TOOLS = {"select", "rect", "ellipse", "line", "arrow", "curve", "pen", "text", "step", "highlight", "mosaic"}
+TOOLS = {"select", "rect", "ellipse", "line", "arrow", "curve", "pen", "text", "step", "highlight", "mosaic",
+         "lasso"}
 
 
 @dataclass
@@ -33,6 +34,9 @@ class Settings:
     last_save_dir: str = ""
     last_font_family: str = "Malgun Gothic"
     drm_notice_shown: bool = False
+    ppt_new_slide: bool = True           # PPT: insert on a new slide after the current one
+    last_highlight_color: str = "#FFE066"
+    last_text_bg: str | None = None
     version: int = SETTINGS_VERSION
 
 
@@ -84,7 +88,7 @@ def _apply(s: Settings, data: dict, warnings: list[str]) -> None:
                 if not _is_int(v):
                     raise TypeError
                 s.jpg_quality = min(100, max(1, v))
-            elif name in ("auto_save", "launch_at_startup", "redact_pii", "drm_notice_shown"):
+            elif name in ("auto_save", "launch_at_startup", "redact_pii", "drm_notice_shown", "ppt_new_slide"):
                 if not isinstance(v, bool):
                     raise TypeError
                 setattr(s, name, v)
@@ -106,6 +110,10 @@ def _apply(s: Settings, data: dict, warnings: list[str]) -> None:
                 s.last_tool = v
             elif name == "last_color":
                 s.last_color = normalize_hex(v)
+            elif name == "last_highlight_color":
+                s.last_highlight_color = normalize_hex(v)
+            elif name == "last_text_bg":
+                s.last_text_bg = None if v is None else normalize_hex(v)
             elif name == "last_width":
                 if not _is_int(v):
                     raise TypeError

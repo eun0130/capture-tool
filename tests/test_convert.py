@@ -49,3 +49,15 @@ def test_CONV_06_font_family_carried_over():
 
 def test_CONV_04_empty():
     assert annotations_to_drawing([]) == ([], [])
+
+
+def test_CONV_07_text_background_becomes_text_box_fill():
+    shapes, _ = annotations_to_drawing([Shape("text", [(0, 0)], text="강조", bg="#FFEC99")])
+    assert shapes[0].fill == "#FFEC99"
+    shapes, _ = annotations_to_drawing([Shape("text", [(0, 0)], text="보통")])
+    assert shapes[0].fill is None
+
+
+def test_CONV_08_clip_outline_is_not_a_shape():
+    shapes, conns = annotations_to_drawing([Shape("clip", [(0, 0), (50, 0), (25, 40)])])
+    assert shapes == [] and conns == []

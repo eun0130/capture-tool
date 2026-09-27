@@ -99,22 +99,36 @@ def place(w: float, h: float, slide_w: float, slide_h: float) -> tuple[float, fl
     return (slide_w - w) / 2, (slide_h - h) / 2, w, h
 
 
-def _target_slide(app, new_presentation: bool):
+def _current_slide(app, pres):
+    """The slide the user is looking at, else the last one, else None (empty deck)."""
+    try:
+        return app.ActiveWindow.View.Slide
+    except Exception:  # noqa: BLE001 - slide sorter, slide show, no window …
+        return pres.Slides(pres.Slides.Count) if pres.Slides.Count else None
+
+
+def _target_slide(app, new_presentation: bool, new_slide: bool = False):
     app.Visible = True
     if new_presentation or app.Presentations.Count == 0:
         pres = app.Presentations.Add()
-        return pres, pres.Slides.Add(1, PP_LAYOUT_BLANK)
+        return pres, pres.Slides.Add(1, PP_LAYOUT_BLANK)   # fresh deck: its first slide is new already
     pres = app.ActivePresentation
-    try:
-        return pres, app.ActiveWindow.View.Slide       # the slide the user is looking at
-    except Exception:  # noqa: BLE001 - slide sorter, slide show, no window …
-        if pres.Slides.Count:
-            return pres, pres.Slides(pres.Slides.Count)
+    cur = _current_slide(app, pres)
+    if cur is None:
         return pres, pres.Slides.Add(1, PP_LAYOUT_BLANK)
+    if not new_slide:
+        return pres, cur
+    index = int(cur.SlideIndex) + 1                          # right after the one being viewed
+    slide = pres.Slides.Add(index, PP_LAYOUT_BLANK)
+    try:
+        app.ActiveWindow.View.GotoSlide(index)              # show it (best effort)
+    except Exception:  # noqa: BLE001
+        pass
+    return pres, slide
 
 
-def _insert(app, item, new_presentation: bool, hook) -> SendResult:
-    pres, slide = _target_slide(app, new_presentation)
+def _insert(app, item, new_presentation: bool, hook, new_slide: bool = False) -> SendResult:
+    pres, slide = _target_slide(app, new_presentation, new_slide)
     sw, sh = float(pres.PageSetup.SlideWidth), float(pres.PageSetup.SlideHeight)
     if isinstance(item, Picture):
         import cv2
@@ -159,7 +173,7 @@ def _insert(app, item, new_presentation: bool, hook) -> SendResult:
 
 
 def send(item, app_factory: Callable | None = None, timeout: float = DEFAULT_TIMEOUT,
-         new_presentation: bool = False, hook: Callable | None = None) -> SendResult:
+         new_presentation: bool = False, hook: Callable | None = None, new_slide: bool = False) -> SendResult:
     """Insert `item`; never blocks longer than `timeout` seconds."""
     real = app_factory is None
     if real and not installed():
@@ -172,7 +186,7 @@ def send(item, app_factory: Callable | None = None, timeout: float = DEFAULT_TIM
             import pythoncom
             pythoncom.CoInitialize()
         try:
-            box["result"] = _insert(factory(), item, new_presentation, hook)
+            box["result"] = _insert(factory(), item, new_presentation, hook, new_slide)
         except BaseException as e:  # noqa: BLE001 - reported to the caller
             box["error"] = e
         finally:
@@ -201,6 +215,7 @@ class PowerPointSender:
         self.timeout = timeout
         self._lock = threading.Lock()
         self._busy = False
+        self.new_slide = True      # each capture on its own new slide after the current one
 
     @property
     def busy(self) -> bool:
@@ -212,6 +227,6 @@ class PowerPointSender:
                 raise PowerPointBusy("PowerPoint로 보내는 중입니다.")
             self._busy = True
         try:
-            return send(item, self.app_factory, self.timeout).added
+            return send(item, self.app_factory, self.timeout, new_slide=self.new_slide).added
         finally:
             self._busy = False

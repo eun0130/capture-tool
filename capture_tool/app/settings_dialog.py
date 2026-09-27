@@ -117,7 +117,9 @@ class SettingsDialog(QDialog):
         self.redact.setChecked(settings.redact_pii)
         self.startup = QCheckBox("Windows 시작 시 자동 실행")
         self.startup.setChecked(settings.launch_at_startup)
-        for w in (self.auto_save, self.redact, self.startup):
+        self.ppt_new_slide = QCheckBox("PPT로 보낼 때 새 슬라이드에 넣기 (끄면 보고 있는 슬라이드에)")
+        self.ppt_new_slide.setChecked(settings.ppt_new_slide)
+        for w in (self.auto_save, self.redact, self.startup, self.ppt_new_slide):
             v.addWidget(w)
         buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel | QDialogButtonBox.RestoreDefaults)
         buttons.button(QDialogButtonBox.Ok).setText("저장")
@@ -138,6 +140,7 @@ class SettingsDialog(QDialog):
         d = Settings()
         for action, ed in self.edits.items():
             ed.setText(d.hotkeys.get(action, ""))
+        self.ppt_new_slide.setChecked(d.ppt_new_slide)
 
     def validate(self) -> list[str]:
         errors: list[str] = []
@@ -184,6 +187,7 @@ class SettingsDialog(QDialog):
         s.auto_save = self.auto_save.isChecked()
         s.redact_pii = self.redact.isChecked()
         s.launch_at_startup = self.startup.isChecked()
+        s.ppt_new_slide = self.ppt_new_slide.isChecked()
         return s
 
     def _accept(self):

@@ -102,6 +102,7 @@ class FakeApp:
         self.Presentations = Presentations(self)
         self.ActivePresentation = None
         self.view_fails = view_fails
+        self.goto, self.goto_fails = [], False
         if with_deck:
             p = self.Presentations.Add()
             for i in range(3):
@@ -118,6 +119,11 @@ class FakeApp:
                 if app.view_fails:
                     raise RuntimeError("slide sorter / slide show has no current slide")
                 return app._current
+
+            def GotoSlide(self, index):
+                if app.goto_fails:
+                    raise RuntimeError("no window")
+                app.goto.append(index)
         return type("W", (), {"View": View()})()
 
 
@@ -253,3 +259,63 @@ def test_PPT_15_clip_text_keeps_whole_lines_and_reports_cut():
     text, cut = clip_text("\n".join(["가" * 100] * 200))
     assert cut and len(text) <= MAX_TEXT_CHARS + 1 and text.endswith("…")
     assert all(l in ("가" * 100, "…") for l in text.split("\n"))
+
+
+# --- v0.3.5: put each capture on a NEW slide right after the one being viewed ----------------
+
+def test_PPT_16_new_slide_after_the_current_one_and_shown():
+    app = FakeApp(with_deck=True, current_slide=2)
+    before = list(app.ActivePresentation.Slides.items)
+    r = send(Picture(IMG), app_factory=lambda: app, new_slide=True)
+    slides = app.ActivePresentation.Slides
+    assert r.added == 1 and slides.Count == 4
+    new = slides(3)
+    assert new not in before and new.Shapes.Count == 1
+    assert all(s.Shapes.Count == 0 for s in before)            # existing slides untouched
+    assert app.goto == [3]                                     # PowerPoint shows the new slide
+
+
+def test_PPT_17_no_deck_uses_the_new_deck_first_slide_only():
+    app = FakeApp()
+    send(Picture(IMG), app_factory=lambda: app, new_slide=True)
+    assert app.ActivePresentation.Slides.Count == 1
+    assert app.ActivePresentation.Slides(1).Shapes.Count == 1
+
+
+def test_PPT_18_unknown_current_slide_appends_at_the_end():
+    app = FakeApp(with_deck=True, view_fails=True)
+    send(TextItem("가"), app_factory=lambda: app, new_slide=True)
+    slides = app.ActivePresentation.Slides
+    assert slides.Count == 4 and slides(4).Shapes.Count == 1
+
+
+def test_PPT_19_new_slide_off_keeps_current_slide_behavior():
+    app = FakeApp(with_deck=True, current_slide=2)
+    send(Picture(IMG), app_factory=lambda: app, new_slide=False)
+    assert app.ActivePresentation.Slides.Count == 3
+    assert app.ActivePresentation.Slides(2).Shapes.Count == 1
+
+
+def test_PPT_20_deck_without_slides_gets_one():
+    app = FakeApp()
+    app.Presentations.Add()
+    send(ClipboardShapes(), app_factory=lambda: app, new_slide=True)
+    assert app.ActivePresentation.Slides.Count == 1
+
+
+def test_PPT_21_goto_failure_is_harmless():
+    app = FakeApp(with_deck=True, current_slide=1)
+    app.goto_fails = True
+    r = send(Picture(IMG), app_factory=lambda: app, new_slide=True)
+    assert r.added == 1 and app.ActivePresentation.Slides(2).Shapes.Count == 1
+
+
+def test_PPT_22_sender_uses_its_new_slide_setting():
+    app = FakeApp(with_deck=True, current_slide=2)
+    sender = pp.PowerPointSender(app_factory=lambda: app, timeout=5)
+    assert sender.new_slide is True                            # default: new slide
+    sender.send(Picture(IMG))
+    assert app.ActivePresentation.Slides.Count == 4
+    sender.new_slide = False
+    sender.send(Picture(IMG))
+    assert app.ActivePresentation.Slides.Count == 4

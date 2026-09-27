@@ -144,3 +144,25 @@ def test_SET_11_creates_parent_dirs(tmp_path):
     p = tmp_path / "a" / "b" / "settings.json"
     save(Settings(), p)
     assert p.exists()
+
+
+# --- v0.3.5 --------------------------------------------------------------------------------
+
+def test_SET_12_new_fields_defaults_and_validation(tmp_path):
+    s = Settings()
+    assert s.ppt_new_slide is True and s.last_highlight_color == "#FFE066" and s.last_text_bg is None
+    p = tmp_path / "settings.json"
+    p.write_text(json.dumps({"ppt_new_slide": "yes", "last_highlight_color": "neon",
+                             "last_text_bg": 5, "last_tool": "lasso"}), encoding="utf-8")
+    s, warnings = load(p)
+    assert s.ppt_new_slide is True and s.last_highlight_color == "#FFE066" and s.last_text_bg is None
+    assert s.last_tool == "lasso"
+    assert len(warnings) == 3
+
+
+def test_SET_13_new_fields_round_trip(tmp_path):
+    p = tmp_path / "settings.json"
+    save(Settings(ppt_new_slide=False, last_highlight_color="#8ce99a", last_text_bg="#FFEC99"), p)
+    s, warnings = load(p)
+    assert (s.ppt_new_slide, s.last_highlight_color, s.last_text_bg) == (False, "#8CE99A", "#FFEC99")
+    assert not warnings

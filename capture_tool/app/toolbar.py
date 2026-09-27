@@ -14,11 +14,16 @@ TOOLS = [
     ("select", "선택/이동 (V) · 선택 후 색·두께·서식 변경, Delete 삭제"), ("rect", "사각형 (R)"),
     ("ellipse", "타원 (O)"), ("line", "직선 (L)"), ("arrow", "화살표 (A)"), ("curve", "곡선 (C)"),
     ("pen", "펜 (P)"), ("text", "텍스트 (T)"), ("step", "번호 스탬프 (N)"), ("highlight", "형광펜 (H)"),
-    ("mosaic", "모자이크 (M)"),
+    ("mosaic", "모자이크 (M)"), ("lasso", "자유형 자르기 (K) · 남길 부분을 따라 그리면 그 모양으로 잘립니다"),
 ]
 PALETTE = ["#E03131", "#F76707", "#FAB005", "#40C057", "#12B886", "#228BE6", "#4C6EF5", "#7950F2",
            "#E64980", "#862E9C", "#5C940D", "#0B7285", "#000000", "#495057", "#ADB5BD", "#FFFFFF"]
 WIDTH_PRESETS = [1, 2, 4, 6, 10, 20]
+# highlighter inks: yellow, green, pink, sky, orange, violet
+HIGHLIGHT_COLORS = ["#FFE066", "#8CE99A", "#F783AC", "#74C0FC", "#FFC078", "#B197FC"]
+HIGHLIGHT_NAMES = ["노랑", "연두", "분홍", "하늘", "주황", "보라"]
+# text background: light tints first (readable under dark text), then the drawing palette
+TEXT_BG_COLORS = ["#FFEC99", "#D3F9D8", "#D0EBFF", "#FFDEEB", "#F1F3F5", "#FFFFFF"] + PALETTE[:10] + ["#000000", "#495057"]
 TEXT_STYLES = [("bold", "B", "굵게 (Ctrl+B)"), ("italic", "I", "기울임 (Ctrl+I)"),
                ("underline", "U", "밑줄 (Ctrl+U)"), ("strike", "S", "취소선 (Ctrl+5)")]
 DEFAULT_FONT_SIZE = 22
@@ -37,9 +42,10 @@ class Toolbar(QWidget):
     toolChanged = Signal(str)
     action = Signal(str)          # text, shapes, undo, redo, cancel
     styleChanged = Signal(str)    # which attribute changed: color, width, fill, opacity, font_size, bold, ...
+    symbolChosen = Signal(str)
 
     def __init__(self, parent=None, tool="rect", color="#E03131", width=4, recent=None,
-                 font_family=DEFAULT_FONT):
+                 font_family=DEFAULT_FONT, highlight_color=None, text_bg=None):
         super().__init__(parent)
         self.setObjectName("toolbar")
         self.setAttribute(Qt.WA_StyledBackground, True)
@@ -49,11 +55,14 @@ class Toolbar(QWidget):
         self.font_size = DEFAULT_FONT_SIZE
         self.bold = self.italic = self.underline = self.strike = False
         self.font_family = font_family or DEFAULT_FONT
+        self.highlight_color = highlight_color or HIGHLIGHT_COLORS[0]
+        self.bg = text_bg
+        self.tool = tool
         self.recent = list(recent or [])
         self.buttons: dict[str, QWidget] = {}
         self._items: list[QWidget] = []
-        self._text_items: set[int] = set()
-        self._text_visible = False
+        self._group_of: dict[int, str] = {}     # item index -> "text" / "highlight" (shown on demand)
+        self._shown: set[str] = set()
         self._split = 0
         self._grid = QGridLayout(self)
         self._grid.setContentsMargins(6, 6, 6, 6)
@@ -104,6 +113,36 @@ class Toolbar(QWidget):
             b.clicked.connect(lambda on, n=name: self._set_style(n, on))
             self.buttons[name] = b
             self._add_text_item(b)
+        self.bg_btn = QToolButton()
+        self.bg_btn.setText("배경")
+        self.bg_btn.setFixedSize(QSize(44, 38))
+        self.bg_btn.setToolTip("글자 배경색")
+        self.bg_btn.setFocusPolicy(Qt.NoFocus)
+        self.bg_btn.clicked.connect(self.open_bg_palette)
+        self.buttons["bg"] = self.bg_btn
+        self._add_text_item(self.bg_btn)
+        sym = QToolButton()
+        sym.setText("※")
+        f = QFont()
+        f.setPixelSize(17)
+        sym.setFont(f)
+        sym.setFixedSize(QSize(34, 38))
+        sym.setToolTip("기호 넣기 (★ ✓ → ① ※ …)")
+        sym.setFocusPolicy(Qt.NoFocus)
+        sym.clicked.connect(self.open_symbols)
+        self.buttons["symbol"] = sym
+        self._add_text_item(sym)
+        for i, (c, n) in enumerate(zip(HIGHLIGHT_COLORS, HIGHLIGHT_NAMES)):
+            b = QToolButton()
+            b.setFixedSize(QSize(28, 38))
+            b.setCheckable(True)
+            b.setToolTip(f"형광펜 {n}")
+            b.setFocusPolicy(Qt.NoFocus)
+            b.setStyleSheet(f"QToolButton {{ background: {c}; border-radius: 6px; margin: 7px 2px; }}"
+                            f"QToolButton:checked {{ border: 2px solid #343A40; }}")
+            b.clicked.connect(lambda _=False, c=c: self.set_highlight_color(c))
+            self.buttons[f"hl_{i}"] = b
+            self._add_group_item(b, "highlight")
         self._split = len(self._items)
         self.addWidget(self._sep())
         # copy / save / OCR / PowerPoint / pin live in the side bar next to the capture
@@ -115,8 +154,11 @@ class Toolbar(QWidget):
         close.clicked.connect(lambda: self.action.emit("cancel"))
         self.addWidget(close)
         self.palette = PalettePopup(self)
+        self.bg_palette = BgPopup(self)
+        self.symbols = SymbolPopup(self)
         self.set_tool(tool)
         self._refresh_color()
+        self._refresh_bg()
         self.arrange(10_000)
 
     # --- layout -------------------------------------------------------------------------
@@ -125,23 +167,33 @@ class Toolbar(QWidget):
         w.setParent(self)
         self._items.append(w)
 
-    def _add_text_item(self, w: QWidget) -> None:
-        self._text_items.add(len(self._items))
+    def _add_group_item(self, w: QWidget, group: str) -> None:
+        self._group_of[len(self._items)] = group
         self.addWidget(w)
 
-    def show_text_style(self, on: bool) -> None:
-        if on != self._text_visible:
-            self._text_visible = on
+    def _add_text_item(self, w: QWidget) -> None:
+        self._add_group_item(w, "text")
+
+    def _show_group(self, group: str, on: bool) -> None:
+        if on != (group in self._shown):
+            self._shown.symmetric_difference_update({group})
             self.arrange(self._last_width if hasattr(self, "_last_width") else 10_000)
+
+    def show_text_style(self, on: bool) -> None:
+        self._show_group("text", on)
+
+    def _visible(self, i: int) -> bool:
+        g = self._group_of.get(i)
+        return g is None or g in self._shown
 
     def arrange(self, max_width: int) -> None:
         """One row if it fits, otherwise drawing tools on row 1 and the rest on row 2."""
         self._last_width = max_width
         for w in self._items:
             self._grid.removeWidget(w)
-        visible = [(i, w) for i, w in enumerate(self._items) if self._text_visible or i not in self._text_items]
+        visible = [(i, w) for i, w in enumerate(self._items) if self._visible(i)]
         for i, w in enumerate(self._items):
-            if not (self._text_visible or i not in self._text_items):
+            if not self._visible(i):
                 w.hide()
         one_row = sum(w.sizeHint().width() for _, w in visible) + 2 * len(visible) + 12
         split = len(self._items) if one_row <= max_width else self._split
@@ -185,6 +237,8 @@ class Toolbar(QWidget):
         for n, _ in TOOLS:
             self.buttons[n].setChecked(n == name)
         self.show_text_style(name == "text")
+        self._show_group("highlight", name == "highlight")
+        self._refresh_color()
         self.toolChanged.emit(name)
 
     # --- style -------------------------------------------------------------------------------
@@ -193,12 +247,29 @@ class Toolbar(QWidget):
         self.styleChanged.emit("fill")
 
     def set_color(self, color: str) -> None:
+        if self.tool == "highlight":   # the palette picks the highlighter's ink while it is active
+            self.set_highlight_color(color)
+            return
         self.color = color
         if color in self.recent:
             self.recent.remove(color)
         self.recent = ([color] + self.recent)[:8]
         self._refresh_color()
         self.styleChanged.emit("color")
+
+    def set_highlight_color(self, color: str) -> None:
+        self.highlight_color = color
+        self._refresh_color()
+        self.styleChanged.emit("highlight_color")
+
+    def set_bg(self, color: str | None) -> None:
+        self.bg = color or None
+        self._refresh_bg()
+        self.styleChanged.emit("bg")
+
+    def choose_symbol(self, ch: str) -> None:
+        self.symbols.hide()
+        self.symbolChosen.emit(ch)
 
     def set_width(self, w: float) -> None:
         w = round(min(MAX_WIDTH, max(1, w)))
@@ -254,15 +325,42 @@ class Toolbar(QWidget):
         self.blockSignals(True)
         self.set_font_size(shape.font_size)
         self.set_font_family(shape.font_family)
+        self.bg = shape.bg
+        self._refresh_bg()
         for name, _, _ in TEXT_STYLES:
             setattr(self, name, getattr(shape, name))
             self.buttons[name].setChecked(getattr(shape, name))
         self.blockSignals(False)
 
     def _refresh_color(self) -> None:
+        if not hasattr(self, "color_btn"):
+            return
+        c = self.highlight_color if self.tool == "highlight" else self.color
         self.color_btn.setStyleSheet(
             f"QToolButton {{ background: qradialgradient(cx:0.5, cy:0.5, radius:0.5, fx:0.5, fy:0.5,"
-            f" stop:0 {self.color}, stop:0.49 {self.color}, stop:0.5 transparent); border-radius: 8px; }}")
+            f" stop:0 {c}, stop:0.49 {c}, stop:0.5 transparent); border-radius: 8px; }}")
+        for i, hc in enumerate(HIGHLIGHT_COLORS):
+            b = self.buttons.get(f"hl_{i}")
+            if b is not None:
+                b.setChecked(hc == self.highlight_color)
+
+    def _refresh_bg(self) -> None:
+        if self.bg:
+            self.bg_btn.setStyleSheet(f"QToolButton {{ background: {self.bg}; border: 1px solid #ADB5BD;"
+                                      " border-radius: 6px; margin: 5px 1px; color: #212529; }")
+        else:
+            self.bg_btn.setStyleSheet("")
+
+    def _popup_under(self, popup: QWidget, anchor: QWidget) -> None:
+        popup.adjustSize()
+        popup.move(anchor.mapToGlobal(QPoint(0, anchor.height() + 6)))
+        popup.show()
+
+    def open_bg_palette(self) -> None:
+        self._popup_under(self.bg_palette, self.bg_btn)
+
+    def open_symbols(self) -> None:
+        self._popup_under(self.symbols, self.buttons["symbol"])
 
     def open_palette(self) -> None:
         self.palette.refresh()
@@ -408,3 +506,60 @@ class PalettePopup(QFrame):
         if c.isValid():
             self.bar.set_color(c.name().upper())
         self.hide()
+
+
+class _Popup(QFrame):
+    def __init__(self, bar: Toolbar):
+        super().__init__(bar, Qt.Popup)
+        self.bar = bar
+        self.setStyleSheet("QFrame { background: #FFFFFF; border: 1px solid #D9DCE1; border-radius: 12px; }"
+                           "QLabel { border: none; color: #5B616B; font-size: 12px; }"
+                           "QToolButton { border: none; border-radius: 6px; font-size: 17px;"
+                           " font-family: \"Malgun Gothic\"; }"
+                           "QToolButton:hover { background: #E6EEFB; }")
+
+
+class BgPopup(_Popup):
+    """Text background: none, light tints, palette colors."""
+
+    def __init__(self, bar: Toolbar):
+        super().__init__(bar)
+        v = QVBoxLayout(self)
+        v.setContentsMargins(12, 12, 12, 12)
+        none = QPushButton("배경 없음")
+        none.clicked.connect(lambda: (self.bar.set_bg(None), self.hide()))
+        v.addWidget(none)
+        grid = QGridLayout()
+        grid.setSpacing(6)
+        for i, c in enumerate(TEXT_BG_COLORS):
+            b = QPushButton()
+            b.setFixedSize(24, 24)
+            b.setToolTip(c)
+            b.setStyleSheet(f"QPushButton {{ background: {c}; border: 1px solid rgba(0,0,0,0.25); border-radius: 4px; }}")
+            b.clicked.connect(lambda _=False, c=c: (self.bar.set_bg(c), self.hide()))
+            grid.addWidget(b, i // 6, i % 6)
+        v.addLayout(grid)
+
+
+class SymbolPopup(_Popup):
+    """Grid of symbols by group; a click puts the symbol into the text."""
+
+    def __init__(self, bar: Toolbar):
+        super().__init__(bar)
+        from ..core.symbols import SYMBOLS
+        v = QVBoxLayout(self)
+        v.setContentsMargins(12, 10, 12, 12)
+        v.setSpacing(4)
+        for name, chars in SYMBOLS:
+            v.addWidget(QLabel(name))
+            grid = QGridLayout()
+            grid.setSpacing(2)
+            for i, ch in enumerate(chars):
+                b = QToolButton()
+                b.setText(ch)
+                b.setFont(QFont(DEFAULT_FONT))   # show the glyph the text will actually use
+                b.setFixedSize(QSize(30, 30))
+                b.setFocusPolicy(Qt.NoFocus)
+                b.clicked.connect(lambda _=False, ch=ch: self.bar.choose_symbol(ch))
+                grid.addWidget(b, i // 12, i % 12)
+            v.addLayout(grid)

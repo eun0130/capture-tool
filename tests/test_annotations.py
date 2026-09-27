@@ -182,3 +182,53 @@ def test_bad_index():
     d = Document(100, 100)
     with pytest.raises(IndexError):
         d.delete(0)
+
+
+# --- v0.3.5: text background, freeform clip -----------------------------------------------
+
+def test_ANN_21_text_background_color():
+    t = Shape(kind="text", points=[(5, 5)], text="a", bg="#ffec99")
+    assert t.bg == "#FFEC99"
+    assert Shape(kind="text", points=[(5, 5)], text="a").bg is None
+    assert Shape(kind="text", points=[(5, 5)], text="a", bg="").bg is None
+    with pytest.raises(ValueError):
+        Shape(kind="text", points=[(5, 5)], text="a", bg="yellowish")
+
+
+def test_ANN_22_text_background_is_undoable():
+    d = Document(400, 300)
+    d.add(Shape(kind="text", points=[(5, 5)], text="a"))
+    assert d.update(0, bg="#FFEC99") and d.shapes[0].bg == "#FFEC99"
+    d.undo()
+    assert d.shapes[0].bg is None
+
+
+def clip(*pts):
+    return Shape(kind="clip", points=list(pts))
+
+
+def test_ANN_23_clip_needs_three_points_and_area():
+    d = Document(400, 300)
+    assert not d.add(clip((0, 0), (50, 50)))
+    assert not d.add(clip((0, 0), (1, 0), (1, 1)))
+    assert d.add(clip((10, 10), (100, 10), (50, 90)))
+
+
+def test_ANN_24_last_clip_wins_and_undo_removes_it():
+    d = Document(400, 300)
+    assert d.clip is None
+    d.add(clip((10, 10), (100, 10), (50, 90)))
+    d.add(rect(1, 1, 30, 30))
+    d.add(clip((0, 0), (300, 0), (300, 200), (0, 200)))
+    assert d.clip == [(0, 0), (300, 0), (300, 200), (0, 200)]
+    d.undo()
+    d.undo()
+    assert d.clip == [(10, 10), (100, 10), (50, 90)]
+    d.undo()
+    assert d.clip is None
+
+
+def test_ANN_25_clip_points_clamped_to_capture():
+    d = Document(100, 100)
+    d.add(clip((-20, -20), (500, -5), (50, 300)))
+    assert all(0 <= x <= 100 and 0 <= y <= 100 for x, y in d.clip)

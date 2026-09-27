@@ -133,6 +133,17 @@ def drag(w, a, b):
     QTest.mouseRelease(w, Qt.LeftButton, Qt.NoModifier, QPoint(*b))
 
 
+def symbols_image(path) -> None:
+    import subprocess
+    code = ("import sys; sys.path.insert(0, %r)\n"
+            "from PySide6.QtWidgets import QApplication\n"
+            "app = QApplication([])\n"
+            "from capture_tool.app.toolbar import Toolbar\n"
+            "tb = Toolbar(); tb.symbols.adjustSize(); tb.symbols.grab().save(%r)\n") % (str(ROOT), str(path))
+    env = {k: v for k, v in os.environ.items() if k != "QT_QPA_PLATFORM"}
+    subprocess.run([sys.executable, "-c", code], env=env, check=True, timeout=60)
+
+
 def main():
     img = desktop()
     # 1) selecting
@@ -159,6 +170,28 @@ def main():
     tb.toggle_style("bold")
     tb.arrange(1280)
     tb.grab().save(str(OUT / "07-text-style.png"))
+    # 3d) symbol picker: drawn on the real desktop platform, because offscreen Qt has no font
+    # fallback for the check marks and shows boxes that users never see
+    symbols_image(OUT / "11-symbols.png")
+    # 3e) highlighter with its six inks
+    ov.set_tool("highlight")
+    tb.arrange(1280)
+    tb.grab().save(str(OUT / "12-highlight.png"))
+    c.close_all()
+    # 3f) freeform crop: the outline drawn around what to keep
+    c = controller(img)
+    c.start_capture()
+    ov = c.overlays[0]
+    ov.resize(1280, 720)
+    drag(ov, (200, 180), (760, 330))
+    ov.set_tool("lasso")
+    import math
+    pts = [(480 + 250 * math.cos(t / 20 * math.pi), 255 + 62 * math.sin(t / 20 * math.pi)) for t in range(41)]
+    QTest.mousePress(ov, Qt.LeftButton, Qt.NoModifier, QPoint(int(pts[0][0]), int(pts[0][1])))
+    for x, y in pts[1:]:
+        QTest.mouseMove(ov, QPoint(int(x), int(y)))
+    QTest.mouseRelease(ov, Qt.LeftButton, Qt.NoModifier, QPoint(int(pts[-1][0]), int(pts[-1][1])))
+    ov.grab().save(str(OUT / "10-lasso.png"))
     c.close_all()
     # 3c) text mode: drag over part of the recognized text
     lines = [OcrLine("업무 프로세스 개요", (90 - 200, 70 - 180, 280, 44), 0.99)]

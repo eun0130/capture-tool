@@ -515,6 +515,8 @@ class FakePpt:
         self.error = error
         self.added = added
         self.busy = False
+        self.new_slide = True
+        self.new_slide_seen = []
 
     @property
     def calls(self):
@@ -523,6 +525,7 @@ class FakePpt:
     def send(self, item):
         from capture_tool.platform.powerpoint import PowerPointUnavailable
         self.items.append(item)
+        self.new_slide_seen.append(self.new_slide)
         if self.error is not None:
             raise self.error
         if not self.ok:
@@ -1018,3 +1021,236 @@ def test_APP_71_huge_text_to_ppt_is_cut_and_user_is_told(make):
     item = c.powerpoint.items[0]
     assert isinstance(item, TextItem) and len(item.text) <= MAX_TEXT_CHARS + 1
     assert any("앞부분" in m for m in c.messages)
+
+
+# --- v0.3.5: text background, symbols, freeform crop, highlighter colors, PPT new slide -----
+
+def _type_text(ov, at, text):
+    QTest.mouseClick(ov, Qt.LeftButton, Qt.NoModifier, QPoint(*at))
+    ed = ov._editor
+    assert ed is not None
+    ed.insert(text)          # QTest.keyClicks crashes Qt on non-ASCII (Hangul) characters
+    QTest.keyClick(ed, Qt.Key_Return)
+
+
+def test_APP_72_text_background_color_is_applied_and_exported(make):
+    c, ov = _editing(make)
+    ov.set_tool("text")
+    tb = ov.toolbar
+    assert tb.buttons["bg"].isVisible()
+    tb.set_bg("#FFEC99")
+    _type_text(ov, (150, 150), "배경 글자")
+    s = c.session.document.shapes[-1]
+    assert s.kind == "text" and s.bg == "#FFEC99"
+    c.finish("copy")
+    img = decode_png(c.clipboard.last[PNG])
+    yellow = (np.abs(img.astype(int) - (0x99, 0xEC, 0xFF)).sum(axis=2) < 30)
+    assert yellow.sum() > 200
+    assert c.settings.last_text_bg == "#FFEC99"
+
+
+def test_APP_73_background_none_and_restyle_selected_text_undoable(make):
+    c, ov = _editing(make)
+    ov.set_tool("text")
+    ov.toolbar.set_bg(None)
+    _type_text(ov, (150, 150), "abc")
+    doc = c.session.document
+    assert doc.shapes[-1].bg is None
+    ov.set_tool("select")
+    QTest.mouseClick(ov, Qt.LeftButton, Qt.NoModifier, QPoint(155, 160))
+    assert ov.selected == 0
+    ov.toolbar.set_bg("#D0EBFF")
+    assert doc.shapes[0].bg == "#D0EBFF"
+    doc.undo()
+    assert doc.shapes[0].bg is None
+
+
+def test_APP_74_symbol_goes_in_at_the_cursor_of_the_open_text_box(make):
+    c, ov = _editing(make)
+    ov.set_tool("text")
+    QTest.mouseClick(ov, Qt.LeftButton, Qt.NoModifier, QPoint(150, 150))
+    ed = ov._editor
+    ed.insert("가다")
+    ed.setCursorPosition(1)
+    ov.toolbar.choose_symbol("★")
+    assert ov._editor is ed and ed.text() == "가★다" and ov.focusWidget() is ed
+    QTest.keyClick(ed, Qt.Key_Return)
+    assert c.session.document.shapes[-1].text == "가★다"
+
+
+def test_APP_75_symbol_without_a_text_box_waits_for_the_next_click(make):
+    c, ov = _editing(make)
+    ov.set_tool("rect")
+    ov.toolbar.choose_symbol("※")
+    assert ov.tool == "text"                        # picking a symbol switches to the text tool
+    assert c.session.document.shapes == []          # nothing added until the user clicks
+    QTest.mouseClick(ov, Qt.LeftButton, Qt.NoModifier, QPoint(200, 200))
+    assert ov._editor is not None and ov._editor.text() == "※"
+    QTest.keyClick(ov._editor, Qt.Key_Return)
+    assert c.session.document.shapes[-1].text == "※"
+    QTest.mouseClick(ov, Qt.LeftButton, Qt.NoModifier, QPoint(250, 300))
+    assert ov._editor.text() == ""                  # the symbol is used only once
+
+
+def test_APP_76_symbol_on_selected_text_appends_undoably(make):
+    c, ov = _editing(make)
+    ov.set_tool("text")
+    _type_text(ov, (150, 150), "완료")
+    ov.set_tool("select")
+    QTest.mouseClick(ov, Qt.LeftButton, Qt.NoModifier, QPoint(155, 160))
+    ov.toolbar.choose_symbol("✓")
+    doc = c.session.document
+    assert doc.shapes[0].text == "완료✓"
+    doc.undo()
+    assert doc.shapes[0].text == "완료"
+
+
+def lasso(ov, pts):
+    QTest.mousePress(ov, Qt.LeftButton, Qt.NoModifier, QPoint(*pts[0]))
+    for p in pts[1:]:
+        QTest.mouseMove(ov, QPoint(*p))
+    QTest.mouseRelease(ov, Qt.LeftButton, Qt.NoModifier, QPoint(*pts[-1]))
+
+
+TRIANGLE = [(150, 120), (350, 120), (250, 320), (152, 124)]
+
+
+def test_APP_77_freeform_crop_copies_a_transparent_cut_out(make):
+    c, ov = _editing(make)                             # selection 400x300 at (100,100)
+    ov.set_tool("lasso")
+    lasso(ov, TRIANGLE)
+    assert c.session.document.clip is not None
+    c.finish("copy")
+    png = cv2.imdecode(np.frombuffer(c.clipboard.last[PNG], np.uint8), cv2.IMREAD_UNCHANGED)
+    h, w = png.shape[:2]
+    assert png.shape[2] == 4 and 195 <= w <= 205 and 195 <= h <= 205   # cut to the outline
+    assert png[h - 3, 2, 3] == 0 and png[h // 3, w // 2, 3] == 255
+    dib = c.clipboard.last[DIB]
+    assert len(dib) == 40 + w * h * 4
+
+
+def test_APP_78_tiny_crop_ignored_new_crop_replaces_and_undo(make):
+    c, ov = _editing(make)
+    ov.set_tool("lasso")
+    lasso(ov, [(150, 150), (152, 151), (151, 153)])
+    doc = c.session.document
+    assert doc.clip is None and any("자를 모양" in m for m in c.messages)
+    lasso(ov, TRIANGLE)
+    first = doc.clip
+    lasso(ov, [(120, 120), (480, 120), (480, 380), (120, 380)])
+    assert doc.clip != first and len([s for s in doc.shapes if s.kind == "clip"]) == 2
+    doc.undo()
+    assert doc.clip == first
+
+
+def test_APP_79_freeform_crop_saved_as_jpg_is_white_outside(make, tmp_path):
+    c, ov = _editing(make)
+    c.settings.image_format = "jpg"
+    ov.set_tool("lasso")
+    lasso(ov, TRIANGLE)
+    c.finish("save")
+    f = next((tmp_path / "shots").glob("*.jpg"))
+    img = cv2.imdecode(np.frombuffer(f.read_bytes(), np.uint8), cv2.IMREAD_UNCHANGED)
+    assert img.ndim == 3 and img.shape[2] == 3
+    assert img[img.shape[0] - 3, 2].min() > 240
+
+
+def test_APP_80_freeform_crop_saved_as_png_keeps_transparency(make, tmp_path):
+    c, ov = _editing(make)
+    ov.set_tool("lasso")
+    lasso(ov, TRIANGLE)
+    c.finish("save")
+    f = next((tmp_path / "shots").glob("*.png"))
+    img = cv2.imdecode(np.frombuffer(f.read_bytes(), np.uint8), cv2.IMREAD_UNCHANGED)
+    assert img.shape[2] == 4 and img[img.shape[0] - 3, 2, 3] == 0
+
+
+def test_APP_81_freeform_crop_to_ppt_and_pin(make):
+    from capture_tool.platform.powerpoint import Picture
+    c, ov = _editing(make)
+    c.powerpoint = FakePpt()
+    ov.set_tool("lasso")
+    lasso(ov, TRIANGLE)
+    ov.side_bar.trigger("ppt")
+    item = c.powerpoint.items[0]
+    assert isinstance(item, Picture) and item.image.shape[2] == 4
+    c2, ov2 = _editing(make)
+    ov2.set_tool("lasso")
+    lasso(ov2, TRIANGLE)
+    c2.finish("pin")
+    assert c2.pins and c2.pins[-1].image.shape[2] == 4
+
+
+def test_APP_82_text_recognition_sees_only_the_inside_of_the_crop(make):
+    seen = []
+
+    class SpyOcr(FakeOcr):
+        def recognize(self, img):
+            seen.append(img.copy())
+            return []
+    c, ov = _editing(make, ocr=SpyOcr())
+    ov.image[:] = 30
+    ov.set_tool("lasso")
+    lasso(ov, TRIANGLE)
+    ov.side_bar.trigger("text")
+    img = seen[-1]
+    assert img[295, 5].min() == 255 and img[40, 150].max() == 30   # outside white, inside as is
+
+
+def test_APP_83_highlighter_has_its_own_fluorescent_colors(make):
+    from capture_tool.app.toolbar import HIGHLIGHT_COLORS
+    c, ov = _editing(make)
+    tb = ov.toolbar
+    tb.set_color("#E03131")                               # red pen
+    ov.set_tool("highlight")
+    assert len(HIGHLIGHT_COLORS) >= 6 and tb.buttons["hl_0"].isVisible()
+    drag(ov, (150, 150), (300, 180))
+    assert c.session.document.shapes[-1].color == "#FFE066"   # not the red pen color
+    tb.buttons["hl_2"].click()
+    drag(ov, (150, 200), (300, 230))
+    assert c.session.document.shapes[-1].color == HIGHLIGHT_COLORS[2]
+    assert tb.color == "#E03131"                          # pen color untouched
+    ov.set_tool("rect")
+    assert not tb.buttons["hl_0"].isVisible()
+    c.finish("copy")
+    assert c.settings.last_highlight_color == HIGHLIGHT_COLORS[2]
+
+
+def test_APP_84_palette_color_while_highlighter_sets_highlighter_color(make):
+    c, ov = _editing(make)
+    tb = ov.toolbar
+    tb.set_color("#228BE6")
+    ov.set_tool("highlight")
+    tb.set_color("#12B886")
+    assert tb.highlight_color == "#12B886" and tb.color == "#228BE6"
+
+
+def test_APP_85_ppt_new_slide_setting_is_passed_to_powerpoint(make):
+    c, ov = _editing(make)
+    c.powerpoint = FakePpt()
+    ov.side_bar.trigger("ppt")
+    assert c.powerpoint.new_slide_seen == [True]
+    c.settings.ppt_new_slide = False
+    c2, ov2 = _editing(make, settings=c.settings)
+    c2.powerpoint = FakePpt()
+    ov2.side_bar.trigger("ppt")
+    assert c2.powerpoint.new_slide_seen == [False]
+
+
+def test_APP_86_lasso_shortcut_and_undo_key(make):
+    c, ov = _editing(make)
+    QTest.keyClick(ov, Qt.Key_K)
+    assert ov.tool == "lasso"
+    lasso(ov, TRIANGLE)
+    QTest.keyClick(ov, Qt.Key_Z, Qt.ControlModifier)
+    assert c.session.document.clip is None
+
+
+def test_APP_87_settings_dialog_ppt_new_slide_option(qt_app):
+    from capture_tool.app.settings_dialog import SettingsDialog
+    dlg = SettingsDialog(Settings())
+    assert dlg.ppt_new_slide.isChecked()
+    dlg.ppt_new_slide.setChecked(False)
+    assert dlg.result_settings().ppt_new_slide is False
+    dlg._defaults()
+    assert dlg.ppt_new_slide.isChecked()

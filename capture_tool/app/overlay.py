@@ -7,10 +7,11 @@ from __future__ import annotations
 import numpy as np
 from PySide6.QtCore import QPointF, QRect, QRectF, Qt, QTimer
 from PySide6.QtCore import Signal
-from PySide6.QtGui import QColor, QCursor, QFont, QGuiApplication, QPainter, QPainterPath, QPen
+from PySide6.QtGui import QColor, QCursor, QFont, QGuiApplication, QPainter, QPainterPath, QPen, QPolygonF
 from PySide6.QtWidgets import QHBoxLayout, QLabel, QLineEdit, QPushButton, QWidget
 
 from ..core.annotations import Shape
+from ..core.clip import polygon
 from ..core.color import pixel_color
 from ..core.geometry import Rect, layout_bars, match_screen
 from ..core.session import State
@@ -22,7 +23,7 @@ DIM = QColor(15, 18, 24, 140)
 ACCENT = QColor("#4C8DFF")
 TOOL_KEYS = {Qt.Key_V: "select", Qt.Key_R: "rect", Qt.Key_O: "ellipse", Qt.Key_L: "line", Qt.Key_A: "arrow",
              Qt.Key_C: "curve", Qt.Key_P: "pen", Qt.Key_T: "text", Qt.Key_N: "step", Qt.Key_H: "highlight",
-             Qt.Key_M: "mosaic"}
+             Qt.Key_M: "mosaic", Qt.Key_K: "lasso"}
 BOX_TOOLS = {"rect", "ellipse", "highlight", "mosaic", "line", "arrow"}
 TEXT_STYLE_KEYS = {Qt.Key_B: "bold", Qt.Key_I: "italic", Qt.Key_U: "underline", Qt.Key_5: "strike"}
 
@@ -46,7 +47,8 @@ class TextEditor(QLineEdit):
         f.setUnderline(tb.underline)
         f.setStrikeOut(tb.strike)
         self.setFont(f)
-        self.setStyleSheet(f"QLineEdit {{ background: rgba(255,255,255,230); color: {tb.color};"
+        bg = tb.bg or "rgba(255,255,255,230)"
+        self.setStyleSheet(f"QLineEdit {{ background: {bg}; color: {tb.color};"
                            " border: 1px dashed #4C8DFF; }")
         self._fit()
 
@@ -122,11 +124,13 @@ class OverlayWindow(QWidget):
         self.setAttribute(Qt.WA_OpaquePaintEvent, True)
         s = controller.settings
         self.toolbar = Toolbar(self, tool=s.last_tool, color=s.last_color, width=s.last_width, recent=s.recent_colors,
-                               font_family=s.last_font_family)
+                               font_family=s.last_font_family, highlight_color=s.last_highlight_color,
+                               text_bg=s.last_text_bg)
         self.toolbar.hide()
         self.toolbar.toolChanged.connect(self._tool_changed)
         self.toolbar.action.connect(controller.on_toolbar_action)
         self.toolbar.styleChanged.connect(self._style_changed)
+        self.toolbar.symbolChosen.connect(self._symbol_chosen)
         self.side_bar = SideBar(self)
         self.side_bar.hide()
         self.side_bar.action.connect(controller.on_toolbar_action)
@@ -140,6 +144,7 @@ class OverlayWindow(QWidget):
         self._current: Shape | None = None
         self._move_index = None
         self._editor: QLineEdit | None = None
+        self._pending_symbol: str | None = None   # picked with no text box open: goes in the next one
         self.hover_window = None
         self.selected: int | None = None     # index of the shape picked with the select tool
         self.ocr_lines = None                # recognized lines (selection coords) while in text mode
@@ -173,18 +178,21 @@ class OverlayWindow(QWidget):
         self.side_bar.hide()
         self.ocr_bar.hide()
         self.selected = None
+        self._pending_symbol = None
         self.ocr_lines = self._ocr_sel = None
         self.update()
 
     # --- selected shape & style -------------------------------------------------
     _STYLE_ATTR = {"color": "color", "width": "line_width", "fill": "fill", "opacity": "opacity",
                    "font_size": "font_size", "bold": "bold", "italic": "italic",
-                   "underline": "underline", "strike": "strike", "font_family": "font_family"}
-    _TEXT_ONLY = {"font_size", "bold", "italic", "underline", "strike", "font_family"}
+                   "underline": "underline", "strike": "strike", "font_family": "font_family", "bg": "bg"}
+    _TEXT_ONLY = {"font_size", "bold", "italic", "underline", "strike", "font_family", "bg"}
 
     def _style_changed(self, name: str) -> None:
         if self._editor is not None:
             self._editor.apply_style()
+        if name not in self._STYLE_ATTR:   # e.g. the highlighter's own ink: used for new marks only
+            return
         doc = self.c.session.document
         if self.selected is None or doc is None or not 0 <= self.selected < len(doc.shapes):
             return
@@ -193,6 +201,24 @@ class OverlayWindow(QWidget):
             return
         value = getattr(self.toolbar, self._STYLE_ATTR[name])
         doc.update(self.selected, **{name: value})
+        self.update()
+
+    def _symbol_chosen(self, ch: str) -> None:
+        """Symbol picker: into the open text box at its cursor, else onto the selected text,
+        else into the next text box the user opens."""
+        doc = self.c.session.document
+        if self._editor is not None:
+            self._editor.insert(ch)
+            self._editor.setFocus()
+            self._editor._fit()
+        elif (self.selected is not None and doc is not None and 0 <= self.selected < len(doc.shapes)
+              and doc.shapes[self.selected].kind == "text"):
+            doc.update(self.selected, text=doc.shapes[self.selected].text + ch)
+        else:
+            self._pending_symbol = ch
+            if self.tool != "text":
+                self.set_tool("text")
+            self.c.notify(f"'{ch}' 을(를) 넣을 곳을 클릭하세요.")
         self.update()
 
     def _select(self, index: int | None) -> None:
@@ -349,13 +375,18 @@ class OverlayWindow(QWidget):
         elif self.tool == "select":
             self._move_index = None
             for i in range(len(doc.shapes) - 1, -1, -1):
+                if doc.shapes[i].kind == "clip":   # the crop outline is not an object to pick
+                    continue
                 x1, y1, x2, y2 = doc.shapes[i].bbox()
                 if x1 - 6 <= d[0] <= x2 + 6 and y1 - 6 <= d[1] <= y2 + 6:
                     self._move_index = i
                     break
             self._select(self._move_index)
+        elif self.tool == "lasso":
+            self._current = Shape(kind="clip", points=[d])
         else:
-            self._current = Shape(kind=self.tool, points=[d, d], color=tb.color, width=tb.line_width,
+            color = tb.highlight_color if self.tool == "highlight" else tb.color
+            self._current = Shape(kind=self.tool, points=[d, d], color=color, width=tb.line_width,
                                   fill=tb.fill, opacity=tb.opacity)
 
     def mouseMoveEvent(self, e):
@@ -372,7 +403,7 @@ class OverlayWindow(QWidget):
             d = self.to_doc(pos)
             sel = self.c.session.selection
             d = (min(max(d[0], 0), sel.w), min(max(d[1], 0), sel.h))
-            if self._current.kind in ("pen", "curve"):
+            if self._current.kind in ("pen", "curve", "clip"):
                 self._current.points.append(d)
             else:
                 self._current.points[1] = d
@@ -398,11 +429,14 @@ class OverlayWindow(QWidget):
                     self._ocr_sel = rect
                     self.c.copy_ocr_selection(rect)
             elif self._current is not None:
-                self._current.points[-1] = self.to_doc(pos) if self._current.kind not in ("pen", "curve") \
+                self._current.points[-1] = self.to_doc(pos) if self._current.kind not in ("pen", "curve", "clip") \
                     else self._current.points[-1]
                 sel = self.c.session.selection
                 self._current.points = [(min(max(x, 0), sel.w), min(max(y, 0), sel.h)) for x, y in self._current.points]
-                doc.add(self._current)
+                if self._current.kind == "clip" and polygon(self._current.points, sel.w, sel.h) is None:
+                    self.c.notify("자를 모양이 너무 작습니다. 남길 부분을 크게 따라 그려 주세요.")
+                else:
+                    doc.add(self._current)
                 self._current = None
             elif self._move_index is not None:
                 a, b = self.to_doc(press), self.to_doc(pos)
@@ -417,11 +451,23 @@ class OverlayWindow(QWidget):
         ed = TextEditor(self, self.toolbar, self.scale)
         ed.move(int(pos.x()), int(pos.y()))
         ed.doc_point = self.to_doc(pos)
+        if self._pending_symbol:
+            ed.setText(self._pending_symbol)
+            ed._fit()
+            self._pending_symbol = None
         ed.show()
         ed.setFocus()
         ed.returnPressed.connect(lambda: self.close_text_editor(ed))
-        ed.editingFinished.connect(lambda: self.close_text_editor(ed))
+        ed.editingFinished.connect(lambda: self._editor_left(ed))
         self._editor = ed
+
+    def _editor_left(self, ed) -> None:
+        """Focus left the text box. A toolbar popup (symbols, background, palette) takes focus
+        while it is open; the box must stay open for the symbol or color to go into it."""
+        from PySide6.QtWidgets import QApplication
+        if QApplication.activePopupWidget() is not None:
+            return
+        self.close_text_editor(ed)
 
     def close_text_editor(self, ed=None) -> None:
         """Finish the open text box: add its text if something was typed, then remove it.
@@ -436,7 +482,7 @@ class OverlayWindow(QWidget):
             tb = self.toolbar
             doc.add(Shape(kind="text", points=[cur.doc_point], text=text, color=tb.color, width=tb.line_width,
                           font_size=tb.font_size, bold=tb.bold, italic=tb.italic, underline=tb.underline,
-                          strike=tb.strike, font_family=tb.font_family))
+                          strike=tb.strike, font_family=tb.font_family, bg=tb.bg))
         cur.hide()
         cur.deleteLater()
         self.setFocus()
@@ -540,6 +586,7 @@ class OverlayWindow(QWidget):
         p.translate(lr.topLeft())
         p.scale(1 / self.scale, 1 / self.scale)
         paint_document(p, shapes)
+        self._paint_clip(p, sel, doc.clip, self._current)
         if self.selected is not None and 0 <= self.selected < len(doc.shapes):
             x1, y1, x2, y2 = doc.shapes[self.selected].bbox()
             pen = QPen(ACCENT, 1.5 * self.scale, Qt.DashLine)
@@ -561,6 +608,23 @@ class OverlayWindow(QWidget):
                 p.setPen(QPen(ACCENT, 1.5 * self.scale, Qt.DashLine))
                 p.drawRect(QRectF(min(a[0], b[0]), min(a[1], b[1]), abs(b[0] - a[0]), abs(b[1] - a[1])))
         p.restore()
+
+    def _paint_clip(self, p: QPainter, sel: Rect, clip, current) -> None:
+        """Freeform crop: darken what will be cut away; dashed outline while drawing."""
+        if clip is not None:
+            outline = QPainterPath()
+            outline.addPolygon(QPolygonF([QPointF(x, y) for x, y in clip]))
+            outline.closeSubpath()
+            outside = QPainterPath()
+            outside.addRect(QRectF(0, 0, sel.w, sel.h))
+            p.fillPath(outside.subtracted(outline), QColor(15, 18, 24, 150))
+            p.setPen(QPen(ACCENT, 2 * self.scale, Qt.DashLine))
+            p.setBrush(Qt.NoBrush)
+            p.drawPath(outline)
+        if current is not None and current.kind == "clip" and len(current.points) > 1:
+            p.setPen(QPen(ACCENT, 2 * self.scale, Qt.DashLine))
+            p.setBrush(Qt.NoBrush)
+            p.drawPolyline(QPolygonF([QPointF(x, y) for x, y in current.points]))
 
     def _label(self, p: QPainter, at: QPointF, text: str):
         f = QFont(FONT_FAMILY)
@@ -615,6 +679,8 @@ class OverlayWindow(QWidget):
             text = "드래그로 영역 선택 · 클릭하면 창 선택 · C 색상 복사 · Esc 취소"
         elif self.active and self.ocr_lines is not None:
             text = "글자 위를 드래그하면 그 부분만 복사 · Enter 전체 복사 · Esc 그리기로 돌아가기"
+        elif self.active and self.tool == "lasso":
+            text = "남길 부분의 테두리를 따라 그리세요 · 다시 그리면 새 모양 · Ctrl+Z 되돌리기 · Enter 복사"
         elif self.active:
             text = ("Enter 복사 · Ctrl+S 저장 · F3 고정 · [ ] 두께 · 선택 후 Delete 삭제 · "
                     "Ctrl+Z 되돌리기 · Esc 취소")

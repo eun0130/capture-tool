@@ -53,3 +53,54 @@ def test_OVL_REAL_01_overlay_is_one_to_one_on_every_monitor(tmp_path):
     from tests.conftest import run_on_desktop
     out = run_on_desktop(SCRIPT % (ROOT, tmp_path), _good)
     assert _good(out), out
+
+
+POPUP_SCRIPT = r"""
+import sys, time, tempfile
+sys.path.insert(0, r"%s")
+from PySide6.QtWidgets import QApplication, QPushButton, QToolButton
+from PySide6.QtCore import QPoint, Qt
+from PySide6.QtTest import QTest
+app = QApplication([])
+from capture_tool.app.controller import Controller
+from capture_tool.app.services import RealScreen
+from capture_tool.core.settings import Settings
+from tests.test_app import FakeClipboard, FakeOcr, drag
+def pump(n=10):
+    for _ in range(n):
+        app.processEvents(); time.sleep(0.02)
+tmp = tempfile.mkdtemp(dir=r"%s")
+c = Controller(RealScreen(), FakeClipboard(), FakeOcr(), Settings(), tmp + "/s.json", tmp, sync=True)
+c.start_capture(); pump()
+ov = c.active_overlay or c.overlays[0]
+ov.activateWindow(); pump()
+drag(ov, (200, 200), (700, 500)); pump()
+ov.set_tool("text")
+QTest.mouseClick(ov, Qt.LeftButton, Qt.NoModifier, QPoint(260, 260)); pump()
+ed = ov._editor
+ed.insert("A")
+tb = ov.toolbar
+tb.open_symbols(); pump()
+btn = next(b for b in tb.symbols.findChildren(QToolButton) if b.text() == "★")
+QTest.mouseClick(btn, Qt.LeftButton); pump()
+print("after_symbol", ov._editor is ed, repr(ed.text()) if ov._editor is ed else None)
+tb.open_bg_palette(); pump()
+sw = next(b for b in tb.bg_palette.findChildren(QPushButton) if b.toolTip() == "#FFEC99")
+QTest.mouseClick(sw, Qt.LeftButton); pump()
+print("after_bg", ov._editor is ed, tb.bg)
+QTest.keyClick(ed, Qt.Key_Return); pump()
+s = c.session.document.shapes[-1]
+print("shape", repr(s.text), s.bg)
+c.close_all(); pump()
+"""
+
+
+def _popup_ok(out: str) -> bool:
+    return ("after_symbol True 'A★'" in out and "after_bg True #FFEC99" in out
+            and "shape 'A★' #FFEC99" in out)
+
+
+def test_OVL_REAL_02_symbol_and_background_popups_keep_the_text_box_open(tmp_path):
+    from tests.conftest import run_on_desktop
+    out = run_on_desktop(POPUP_SCRIPT % (ROOT, tmp_path), _popup_ok)
+    assert _popup_ok(out), out

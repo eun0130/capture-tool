@@ -13,6 +13,7 @@ from PySide6.QtCore import QObject, QPoint, QRunnable, Qt, QThreadPool, QTimer, 
 from ..core import settings as settings_io
 from ..core.clipboard_payload import (UNICODE, dib_from_bgr, image_payload, png_with_dpi, shapes_payload,
                                       text_payload)
+from ..core.clip import flatten, mask_outside
 from ..core.color import pixel_color, push_recent
 from ..core.convert import annotations_to_drawing
 from ..core.drawingml import gvml_package, svg
@@ -271,7 +272,8 @@ class Controller(QObject):
             return
         ov, sel = self.active_overlay, self.session.selection
         ov.close_text_editor()
-        raw = ov.crop(sel)
+        doc = self.session.document
+        raw = mask_outside(ov.crop(sel), doc.clip if doc else None)
 
         def work():
             try:
@@ -382,6 +384,8 @@ class Controller(QObject):
         s = self.settings
         s.last_tool, s.last_color, s.last_width = tb.tool, tb.color, int(tb.line_width)
         s.last_font_family = tb.font_family
+        s.last_highlight_color = tb.highlight_color
+        s.last_text_bg = tb.bg
         s.recent_colors = push_recent(s.recent_colors, tb.color)
         self._persist()
 
@@ -462,6 +466,8 @@ class Controller(QObject):
     def _write_image(self, img, path: Path) -> bool:
         suffix = path.suffix.lower()
         params = [cv2.IMWRITE_JPEG_QUALITY, self.settings.jpg_quality] if suffix in (".jpg", ".jpeg") else []
+        if suffix in (".jpg", ".jpeg"):
+            img = flatten(img)   # JPG has no transparency: a freeform crop gets a white outside
         ok, buf = cv2.imencode(".jpg" if suffix in (".jpg", ".jpeg") else ".png", img, params)
         try:
             if not ok:
@@ -512,6 +518,7 @@ class Controller(QObject):
         ov, sel, doc, raw = self._take()
         user_shapes = list(doc.shapes) if doc else []
         final = compose(raw, doc)
+        raw = mask_outside(raw, doc.clip if doc else None)   # recognize only what is kept
         pos = ov.local_rect(sel).bottomLeft().toPoint() + ov.geometry().topLeft()
 
         def work():
@@ -603,6 +610,8 @@ class Controller(QObject):
                 "완전히 없애려면 IT 담당자에게 보안 프로그램 업데이트를 요청하세요.")
             self.settings.drm_notice_shown = True
             self._persist()
+
+        self.powerpoint.new_slide = self.settings.ppt_new_slide
 
         def work():
             try:
