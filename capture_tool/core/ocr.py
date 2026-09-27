@@ -48,7 +48,7 @@ def missing_models(names: list[str]) -> list[str]:
 
 
 def ocr_params(lang: str) -> dict:
-    from rapidocr import LangRec, ModelType, OCRVersion
+    LangRec, ModelType, OCRVersion = _rapidocr("LangRec", "ModelType", "OCRVersion")
 
     return {
         "Global.log_level": "error",
@@ -64,9 +64,31 @@ def ocr_params(lang: str) -> dict:
     }
 
 
+_import_lock = threading.Lock()
+
+
+def _rapidocr(*names: str):
+    """rapidocr names (default: the RapidOCR class), imported without touching the network.
+
+    rapidocr imports requests/urllib3 for model downloads (never used here: models ship with
+    the app). At import urllib3 probes IPv6 by creating a socket, and on PCs with online-banking
+    security software that socket call can hang for good — the OCR warm-up then holds the
+    import lock and every text feature (and the selftest) freezes. With `socket.has_ipv6`
+    False the probe is skipped; the flag is restored right after."""
+    import socket
+    with _import_lock:
+        saved = socket.has_ipv6
+        socket.has_ipv6 = False
+        try:
+            import rapidocr
+            found = [getattr(rapidocr, n) for n in (names or ("RapidOCR",))]
+        finally:
+            socket.has_ipv6 = saved
+    return found[0] if len(found) == 1 else found
+
+
 def _build_rapidocr(params: dict):
-    from rapidocr import RapidOCR
-    return RapidOCR(params=params)
+    return _rapidocr()(params=params)
 
 
 def _require(names: list[str]) -> None:
