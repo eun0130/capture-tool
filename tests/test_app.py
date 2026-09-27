@@ -507,16 +507,27 @@ def test_APP_29_direct_text_hotkey_mode(make):
 # --- quick-action side bar ("이모티콘" next to the capture) ---------------------------
 
 class FakePpt:
-    def __init__(self, ok=True):
-        self.calls = 0
-        self.ok = ok
+    """Stands in for PowerPointSender: records what would be inserted."""
 
-    def paste(self):
+    def __init__(self, ok=True, error=None, added=None):
+        self.items = []
+        self.ok = ok
+        self.error = error
+        self.added = added
+        self.busy = False
+
+    @property
+    def calls(self):
+        return len(self.items)
+
+    def send(self, item):
         from capture_tool.platform.powerpoint import PowerPointUnavailable
-        self.calls += 1
+        self.items.append(item)
+        if self.error is not None:
+            raise self.error
         if not self.ok:
             raise PowerPointUnavailable("PowerPoint가 설치되어 있지 않습니다.")
-        return 2
+        return self.added if self.added is not None else 1
 
 
 def test_APP_31_side_bar_next_to_selection(make):
@@ -528,7 +539,7 @@ def test_APP_31_side_bar_next_to_selection(make):
     assert sb.isVisible()
     g = sb.geometry()
     assert g.left() >= 400 and g.top() == 100 and g.right() <= 800
-    assert list(sb.buttons) == ["copy", "save_as", "text", "ppt", "pin"]
+    assert list(sb.buttons) == ["copy", "save_as", "text", "ppt", "ppt_shapes", "pin"]
 
 
 def test_APP_32_save_icon_asks_location(make, tmp_path):
@@ -570,27 +581,36 @@ def test_APP_34_save_dialog_starts_in_last_folder(make, tmp_path):
     assert asked[0].parent == tmp_path / "last"
 
 
-def test_APP_35_send_to_powerpoint_pastes_native_shapes(make):
+def test_APP_35_shapes_button_sends_native_shapes(make):
+    from capture_tool.platform.powerpoint import ClipboardShapes
     lines = [OcrLine("요청 접수", (60, 60, 80, 20), 0.99), OcrLine("검토", (285, 60, 40, 20), 0.99)]
     c = make(screen=FakeScreen(image=_flow_image()), ocr=FakeOcr(lines))
-    c.powerpoint = FakePpt()
+    c.powerpoint = FakePpt(added=3)
     c.start_capture()
     drag(c.overlays[0], (100, 100), (520, 260))
-    c.overlays[0].side_bar.trigger("ppt")
+    c.overlays[0].side_bar.trigger("ppt_shapes")
     assert GVML in c.clipboard.last
-    assert c.powerpoint.calls == 1
-    assert any("PowerPoint에 붙여넣었습니다" in m for m in c.messages)
+    assert isinstance(c.powerpoint.items[0], ClipboardShapes)
+    assert any("PowerPoint에 넣었습니다" in m for m in c.messages)
 
 
-def test_APP_36_send_to_powerpoint_without_shapes_sends_image(make):
+def test_APP_36_ppt_button_sends_the_capture_as_a_picture(make):
+    from capture_tool.platform.powerpoint import Picture
     c = make()
     c.powerpoint = FakePpt()
     c.start_capture()
-    drag(c.overlays[0], (100, 100), (400, 300))
-    c.overlays[0].side_bar.trigger("ppt")
-    assert list(c.clipboard.last)[:2] == [PNG, DIB]
-    assert c.powerpoint.calls == 1
-    assert any("이미지" in m for m in c.messages)
+    ov = c.overlays[0]
+    drag(ov, (100, 100), (400, 300))
+    ov.set_tool("rect")
+    drag(ov, (150, 150), (250, 250))                  # a drawing is part of "what I captured"
+    ov.side_bar.trigger("ppt")
+    item = c.powerpoint.items[0]
+    assert isinstance(item, Picture) and item.image.shape[:2] == (200, 300)
+    b, g, r = item.image[50, 60]
+    assert r > 180 and g < 100                        # the red rectangle is in the picture
+    assert list(c.clipboard.last)[:2] == [PNG, DIB]   # also on the clipboard for Ctrl+V
+    assert c.overlays == []
+    assert any("그림" in m and "PowerPoint에 넣었습니다" in m for m in c.messages)
 
 
 def test_APP_37_powerpoint_missing_keeps_clipboard(make):
@@ -601,6 +621,88 @@ def test_APP_37_powerpoint_missing_keeps_clipboard(make):
     c.overlays[0].side_bar.trigger("ppt")
     assert c.clipboard.payloads
     assert any("설치" in m and "Ctrl+V" in m for m in c.messages)
+
+
+def test_APP_63_ppt_in_text_mode_sends_text_and_keeps_text_on_clipboard(make):
+    from capture_tool.platform.powerpoint import TextItem
+    lines = [OcrLine("견적 요약", (10, 10, 100, 20), 0.99), OcrLine("담당 010-1234-5678", (10, 40, 180, 20), 0.98)]
+    c, ov = _editing(make, ocr=FakeOcr(lines))
+    c.powerpoint = FakePpt()
+    ov.side_bar.trigger("text")
+    QTest.keyClick(ov, Qt.Key_C, Qt.ControlModifier)          # the user's Ctrl+C in text mode
+    ov.side_bar.trigger("ppt")
+    item = c.powerpoint.items[0]
+    assert isinstance(item, TextItem)
+    assert item.text.startswith("견적 요약\n담당") and "010-1234-5678" not in item.text   # same as copied
+    assert UNICODE in c.clipboard.last and "견적 요약" in c.clipboard.last[UNICODE]      # Ctrl+V still text
+    assert GVML not in c.clipboard.last and PNG not in c.clipboard.last
+    assert any("글자" in m and "PowerPoint에 넣었습니다" in m for m in c.messages)
+
+
+def test_APP_64_ppt_in_text_mode_after_partial_drag_sends_that_part(make):
+    from capture_tool.platform.powerpoint import TextItem
+    lines = [OcrLine("0123456789", (100, 10, 200, 20), 0.95)]
+    c, ov = _editing(make, ocr=FakeOcr(lines))
+    c.powerpoint = FakePpt()
+    ov.side_bar.trigger("text")
+    drag(ov, (100 + 140, 100 + 5), (100 + 200, 100 + 35))    # copies "234"
+    ov.side_bar.trigger("ppt")
+    assert isinstance(c.powerpoint.items[0], TextItem) and c.powerpoint.items[0].text == "234"
+
+
+def test_APP_65_frozen_powerpoint_is_reported_and_nothing_hangs(make):
+    from capture_tool.platform.powerpoint import PowerPointTimeout
+    c, ov = _editing(make)
+    c.powerpoint = FakePpt(error=PowerPointTimeout("PowerPoint가 응답하지 않습니다."))
+    ov.side_bar.trigger("ppt")
+    assert c.overlays == []                                   # capture finished, UI free
+    assert PNG in c.clipboard.last                            # the picture is still on the clipboard
+    assert any("응답하지 않" in m and "Ctrl+V" in m for m in c.messages)
+
+
+def test_APP_66_second_click_while_sending_is_ignored(make):
+    c, ov = _editing(make)
+    ppt = FakePpt()
+    ppt.busy = True
+    c.powerpoint = ppt
+    ov.side_bar.trigger("ppt")
+    assert ppt.calls == 0
+    assert PNG in c.clipboard.last
+    assert any("보내는 중" in m for m in c.messages)
+
+
+def test_APP_67_nothing_inserted_is_reported(make):
+    c, ov = _editing(make)
+    c.powerpoint = FakePpt(added=0)
+    ov.side_bar.trigger("ppt")
+    assert any("Ctrl+V" in m for m in c.messages)
+
+
+def test_APP_68_shapes_button_without_shapes_falls_back_to_picture(make):
+    from capture_tool.platform.powerpoint import Picture
+    c, ov = _editing(make)
+    c.powerpoint = FakePpt()
+    ov.side_bar.trigger("ppt_shapes")
+    assert isinstance(c.powerpoint.items[0], Picture)
+    assert any("도형이 없어" in m for m in c.messages)
+
+
+def test_APP_69_font_box_lists_popular_korean_fonts_first(make):
+    from PySide6.QtGui import QFontDatabase
+    for f in ("malgun.ttf", "batang.ttc", "gulim.ttc", "arial.ttf"):
+        QFontDatabase.addApplicationFont(rf"C:\Windows\Fonts\{f}")
+    c, ov = _editing(make)
+    ov.set_tool("text")
+    box = ov.toolbar.buttons["font_family"]
+    labels = [box.itemText(i) for i in range(box.count())]
+    assert labels[0] == "맑은 고딕"
+    sep = next(i for i in range(box.count()) if box.itemText(i) == "" and box.itemData(i) is None)
+    assert all(box.itemData(i) for i in range(sep))                    # favorites before the separator
+    assert "Arial" in labels[sep + 1:]
+    ov.toolbar.set_font_family("Arial")
+    assert box.currentText() == "Arial"
+    box.setCurrentIndex(0)                                             # the user picks 맑은 고딕
+    assert ov.toolbar.font_family == box.itemData(0)
 
 
 def test_APP_44_drm_pc_explains_office_ai_error_once(make):
@@ -761,7 +863,7 @@ def test_APP_60_choose_font_for_new_text(make):
     c, ov = _editing(make)
     ov.set_tool("text")
     combo = ov.toolbar.buttons["font_family"]
-    assert combo.isVisible() and combo.currentFont().family()
+    assert combo.isVisible() and combo.currentText()
     fam = _some_other_font()
     ov.toolbar.set_font_family(fam)
     QTest.mouseClick(ov, Qt.LeftButton, Qt.NoModifier, QPoint(200, 200))

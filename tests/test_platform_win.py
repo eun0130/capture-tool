@@ -152,24 +152,48 @@ def test_WWIN_02_window_at_prefers_topmost():
 
 # --- PowerPoint automation ----------------------------------------------------
 
-@pytest.mark.slow
-def test_WPPT_01_paste_native_shapes_into_powerpoint():
+def _ppt_send(item):
+    """Send into a brand-new deck, read what landed there, then close that deck unsaved."""
     pytest.importorskip("win32com.client")
-    from capture_tool.core.clipboard_payload import GVML
-    from capture_tool.core.drawingml import DConnector, DShape, gvml_package
     from capture_tool.platform import powerpoint
     if not powerpoint.installed():
         pytest.skip("PowerPoint not installed")
+    seen = {}
+
+    def hook(pres, slide, added):
+        seen["shapes"] = [(s.Width, s.Height, s.TextFrame.TextRange.Text if s.HasTextFrame and s.TextFrame.HasText else "")
+                          for s in slide.Shapes]
+        pres.Saved = True
+        pres.Close()
+
+    r = powerpoint.send(item, new_presentation=True, hook=hook, timeout=30)
+    return r, seen["shapes"]
+
+
+@pytest.mark.slow
+def test_WPPT_01_native_shapes_into_powerpoint():
+    from capture_tool.core.clipboard_payload import GVML
+    from capture_tool.core.drawingml import DConnector, DShape, gvml_package
+    from capture_tool.platform.powerpoint import ClipboardShapes
     shapes = [DShape("roundRect", 20, 40, 150, 64, text="요청 접수"), DShape("roundRect", 240, 40, 150, 64, text="검토")]
     win_clipboard.set_formats({GVML: gvml_package(shapes, [DConnector(start=0, end=1)])})
-    result = powerpoint.paste(new_presentation=True)
-    try:
-        assert result.added == 3
-        texts = [s.TextFrame.TextRange.Text for s in result.slide.Shapes if s.HasTextFrame and s.TextFrame.HasText]
-        assert texts == ["요청 접수", "검토"]
-    finally:
-        result.presentation.Saved = True
-        result.presentation.Close()
+    r, landed = _ppt_send(ClipboardShapes())
+    assert r.added == 3
+    assert [t for _, _, t in landed if t] == ["요청 접수", "검토"]
+
+
+@pytest.mark.slow
+def test_WPPT_02_picture_at_screen_size():
+    from capture_tool.platform.powerpoint import Picture
+    r, landed = _ppt_send(Picture(np.full((180, 300, 3), 200, np.uint8), dpi=144))
+    assert r.added == 1 and [(round(w), round(h)) for w, h, _ in landed] == [(150, 90)]
+
+
+@pytest.mark.slow
+def test_WPPT_03_text_box():
+    from capture_tool.platform.powerpoint import TextItem
+    r, landed = _ppt_send(TextItem("견적 요약\n담당 홍길동"))
+    assert r.added == 1 and landed[0][2] == "견적 요약\r담당 홍길동"
 
 
 # --- startup (fake registry backend) -----------------------------------------

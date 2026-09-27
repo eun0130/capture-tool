@@ -10,7 +10,8 @@ ACTIONS = [
     ("copy", "copy", "복사", "클립보드에 복사 (Enter)"),
     ("save_as", "save_as", "저장", "저장 위치를 골라 저장 (Ctrl+Shift+S)"),
     ("text", "ocr", "텍스트", "이미지 속 글자를 인식해 복사"),
-    ("ppt", "ppt", "PPT로", "PowerPoint를 열어 도형으로 붙여넣기"),
+    ("ppt", "ppt", "PPT로", "캡처한 그대로 PowerPoint에 넣기 — 그림(그린 것 포함), 텍스트 모드에서는 글자"),
+    ("ppt_shapes", "shapes", "도형PPT", "도형을 알아봐서 PowerPoint에서 고칠 수 있는 도형으로 넣기"),
     ("pin", "pin", "고정", "캡처를 다른 모든 창 위에 계속 떠 있게 붙여 둡니다 — 자료를 보며 작업할 때 (F3)"),
 ]
 

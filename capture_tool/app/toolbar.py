@@ -2,11 +2,12 @@
 from __future__ import annotations
 
 from PySide6.QtCore import QPoint, QSize, Qt, Signal
-from PySide6.QtGui import QColor, QFont
-from PySide6.QtWidgets import (QColorDialog, QFontComboBox, QFrame, QGridLayout, QHBoxLayout, QLabel,
+from PySide6.QtGui import QColor, QFont, QFontDatabase
+from PySide6.QtWidgets import (QColorDialog, QComboBox, QCompleter, QFrame, QGridLayout, QHBoxLayout, QLabel,
                                QPushButton, QSlider, QSpinBox, QToolButton, QVBoxLayout, QWidget)
 
 from ..core.annotations import DEFAULT_FONT, FONT_MAX, FONT_MIN, MAX_WIDTH
+from ..core.fonts import SEPARATOR, build_font_list
 from . import icons
 
 TOOLS = [
@@ -72,12 +73,9 @@ class Toolbar(QWidget):
         fill.toggled.connect(self._set_fill)
         self.addWidget(fill)
         # text style group (shown for the text tool / a selected text)
-        self.font_combo = QFontComboBox()
-        self.font_combo.setToolTip("글씨체 — 목록에서 고르거나 이름을 입력하세요")
-        self.font_combo.setMaximumWidth(170)
-        self.font_combo.setFocusPolicy(Qt.ClickFocus)
-        self.font_combo.setCurrentFont(QFont(self.font_family))
-        self.font_combo.currentFontChanged.connect(self._font_combo_changed)
+        self.font_combo = FontPicker()
+        self.font_combo.select_family(self.font_family)
+        self.font_combo.familyChosen.connect(self._font_combo_changed)
         self.buttons["font_family"] = self.font_combo
         self._add_text_item(self.font_combo)
         self.font_spin = QSpinBox()
@@ -215,8 +213,7 @@ class Toolbar(QWidget):
         self.opacity = o
         self.styleChanged.emit("opacity")
 
-    def _font_combo_changed(self, font: QFont) -> None:
-        fam = font.family()
+    def _font_combo_changed(self, fam: str) -> None:
         if fam and fam != self.font_family:
             self.font_family = fam
             self.styleChanged.emit("font_family")
@@ -224,7 +221,7 @@ class Toolbar(QWidget):
     def set_font_family(self, family: str) -> None:
         self.font_family = family or DEFAULT_FONT
         self.font_combo.blockSignals(True)
-        self.font_combo.setCurrentFont(QFont(self.font_family))
+        self.font_combo.select_family(self.font_family)
         self.font_combo.blockSignals(False)
         self.styleChanged.emit("font_family")
 
@@ -273,6 +270,57 @@ class Toolbar(QWidget):
         pos = self.color_btn.mapToGlobal(QPoint(0, self.color_btn.height() + 6))
         self.palette.move(pos)
         self.palette.show()
+
+
+class FontPicker(QComboBox):
+    """Font box: popular Korean fonts (installed ones) on top, a separator, then every other
+    font A→Z. Type a name to jump to it."""
+    familyChosen = Signal(str)
+
+    def __init__(self, families: list[str] | None = None):
+        super().__init__()
+        self.setEditable(True)
+        self.setInsertPolicy(QComboBox.NoInsert)
+        self.setMaxVisibleItems(18)
+        self.setMaximumWidth(180)
+        self.setFocusPolicy(Qt.ClickFocus)
+        self.setToolTip("글씨체 — 위쪽은 자주 쓰는 한글 글꼴, 아래는 모든 글꼴. 이름을 입력해도 됩니다")
+        fams = families if families is not None else QFontDatabase.families()
+        for label, fam in build_font_list(fams):
+            if (label, fam) == SEPARATOR:
+                self.insertSeparator(self.count())
+                continue
+            self.addItem(label, fam)
+            if label != fam:  # show popular fonts in their own typeface
+                self.setItemData(self.count() - 1, QFont(fam), Qt.FontRole)
+        comp = QCompleter(self.model(), self)
+        comp.setFilterMode(Qt.MatchContains)
+        comp.setCaseSensitivity(Qt.CaseInsensitive)
+        self.setCompleter(comp)
+        self.currentIndexChanged.connect(self._index_changed)
+        self.lineEdit().editingFinished.connect(self._typed)
+
+    def _index_changed(self, i: int) -> None:
+        fam = self.itemData(i)
+        if fam:
+            self.familyChosen.emit(fam)
+
+    def _typed(self) -> None:
+        text = self.currentText().strip().casefold()
+        for i in range(self.count()):
+            if self.itemData(i) and text in (self.itemText(i).casefold(), str(self.itemData(i)).casefold()):
+                if i != self.currentIndex():
+                    self.setCurrentIndex(i)
+                return
+
+    def select_family(self, family: str) -> None:
+        i = self.findData(family)
+        if i < 0:
+            i = self.findText(family)
+        if i >= 0:
+            self.setCurrentIndex(i)
+        else:
+            self.setEditText(family)   # saved font not installed here: keep the name
 
 
 class PalettePopup(QFrame):

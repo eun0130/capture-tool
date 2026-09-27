@@ -22,6 +22,7 @@ from ..core.ocr import OcrUnavailable, full_text, select_text
 from ..core.session import CaptureSession, State
 from ..core.shapes import attach_text, detect, to_drawing
 from ..core.table import detect_grid, grid_from_cells
+from ..platform.powerpoint import (ClipboardShapes, Picture, PowerPointBusy, PowerPointUnavailable, TextItem)
 from .overlay import OverlayWindow
 from .pin import PinWindow
 from .render import compose
@@ -73,6 +74,7 @@ class Controller(QObject):
         self.last_document = None
         self._text_lines: list = []
         self._text_grid = None
+        self._last_text = ""        # what the text mode last put on the clipboard
         self.ask_save_path = self._ask_save_path_dialog
         from ..platform.powerpoint import PowerPointSender
         from ..platform.security_software import detect_drm
@@ -232,8 +234,32 @@ class Controller(QObject):
                 self.active_overlay.update()
         elif name == "text" and self.mode != "text":
             self._start_text_mode()
-        elif name in ("text", "shapes", "ppt"):
+        elif name == "ppt":
+            self._send_capture_to_ppt()
+        elif name == "ppt_shapes":
+            self._run_recognition("ppt")
+        elif name in ("text", "shapes"):
             self._run_recognition(name)
+
+    # --- "PPT로": exactly what was captured -----------------------------------------------
+    def _send_capture_to_ppt(self) -> None:
+        """Picture of the capture (with drawings); in text mode the recognized/copied text."""
+        if self.session.state is not State.EDITING:
+            return
+        ov = self.active_overlay
+        if ov.ocr_lines is not None:
+            text = self._last_text or full_text(self._text_lines)
+            self._take()   # the clipboard keeps the text, so Ctrl+V still pastes text
+            self._send_item_to_ppt(TextItem(text, font_family="Malgun Gothic", font_size=18), "글자를")
+            return
+        ov, sel, doc, raw = self._take(close=False)
+        final = compose(raw, doc)
+        dpi = 96 * ov.scale
+        payload = self._image_payload(final, dpi)
+        if payload:
+            self._set_clipboard(payload)   # fallback: Ctrl+V anywhere
+        self.close_overlays()
+        self._send_item_to_ppt(Picture(final, dpi), "캡처 그림을")
 
     # --- text mode: copy everything, then drag over the frozen image to copy a part -------
     def _start_text_mode(self) -> None:
@@ -272,6 +298,7 @@ class Controller(QObject):
             ov.unsetCursor()
             return
         self._text_lines, self._text_grid = lines, self._grid_for(raw, lines)
+        self._last_text = ""
         self._copy_text(lines, self._text_grid, drag_hint=True)
         ov.enter_ocr_mode(lines)
 
@@ -290,11 +317,13 @@ class Controller(QObject):
         if grid:
             cells = [[mask(c) if redact else c for c in row] for row in grid]
             if self._set_clipboard(text_payload("", table=cells)):
+                self._last_text = "\n".join("\t".join(row) for row in cells)
                 self.notify(f"표 {len(cells)}행×{len(cells[0])}열로 복사했습니다. Excel에 붙여넣으면 칸이 나뉩니다.")
             return
         raw_text = full_text(lines)
         text = mask(raw_text) if redact else raw_text
         if text.strip() and self._set_clipboard(text_payload(text)):
+            self._last_text = text
             note = " (개인정보 가림)" if text != raw_text else ""
             hint = " 글자 위를 드래그하면 그 부분만 복사합니다." if drag_hint else ""
             self.notify(f"텍스트 {len(lines)}줄을 복사했습니다{note}.{hint}")
@@ -307,6 +336,7 @@ class Controller(QObject):
         if self.settings.redact_pii:
             text = mask(text)
         if self._set_clipboard(text_payload(text)):
+            self._last_text = text
             n = len(text.replace("\n", "").replace(" ", ""))
             self.notify(f"선택한 글자 {n}자를 복사했습니다.")
 
@@ -538,8 +568,9 @@ class Controller(QObject):
         if not shapes and not conns:
             if send:  # nothing to convert: still deliver the picture to PowerPoint
                 payload = self._image_payload(final, dpi)
-                if payload and self._set_clipboard(payload):
-                    self._send_to_powerpoint("도형이 없어 이미지로")
+                if payload:
+                    self._set_clipboard(payload)
+                self._send_item_to_ppt(Picture(final, dpi), "도형이 없어 캡처 그림을")
             else:
                 self.notify("도형을 찾지 못했습니다. 사각형·원·삼각형·선·화살표를 인식합니다.")
             return
@@ -550,12 +581,17 @@ class Controller(QObject):
             return
         note = " (텍스트 인식 없이)" if err else ""
         if send:
-            self._send_to_powerpoint(f"도형 {len(shapes)}개, 연결선 {len(conns)}개를{note}")
+            self._send_item_to_ppt(ClipboardShapes(), f"도형 {len(shapes)}개, 연결선 {len(conns)}개를{note}")
         else:
             self.notify(f"도형 {len(shapes)}개, 연결선 {len(conns)}개를 복사했습니다{note}. PowerPoint에서 Ctrl+V")
 
     # --- PowerPoint -----------------------------------------------------------------
-    def _send_to_powerpoint(self, what: str) -> None:
+    def _send_item_to_ppt(self, item, what: str) -> None:
+        """Insert into PowerPoint in the background, time-limited; the clipboard already holds
+        the same content, so whatever happens the user can still Ctrl+V."""
+        if getattr(self.powerpoint, "busy", False):
+            self.notify("PowerPoint로 보내는 중입니다. 끝나면 다시 시도하세요. (클립보드에 있으니 Ctrl+V도 됩니다)")
+            return
         if self.drm and not self.settings.drm_notice_shown:
             self.notify(
                 f"이 PC에는 {self.drm}(문서 보안 프로그램)가 설치되어 있습니다. PowerPoint가 켜질 때 "
@@ -566,26 +602,25 @@ class Controller(QObject):
             self._persist()
 
         def work():
-            from ..platform.powerpoint import PowerPointUnavailable
             try:
-                return what, self.powerpoint.paste(), None
-            except PowerPointUnavailable as e:
+                return what, self.powerpoint.send(item), None
+            except (PowerPointUnavailable, PowerPointBusy) as e:
                 return what, 0, str(e)
 
         if self.sync:
             self._on_ppt_done(work())
         else:
-            self.notify("PowerPoint를 여는 중…")
+            self.notify("PowerPoint에 넣는 중…")
             QThreadPool.globalInstance().start(_Job(work, self._ppt_done))
 
     def _on_ppt_done(self, result) -> None:
         if isinstance(result, Exception):
-            self.notify(f"PowerPoint에 붙여넣지 못했습니다: {result} 클립보드에 있으니 Ctrl+V 하세요.")
+            self.notify(f"PowerPoint에 넣지 못했습니다: {result} 클립보드에 있으니 Ctrl+V 하세요.")
             return
         what, added, err = result
         if err:
             self.notify(f"{err} 클립보드에 복사해 두었으니 원하는 곳에 Ctrl+V 하세요.")
         elif added:
-            self.notify(f"{what} PowerPoint에 붙여넣었습니다.")
+            self.notify(f"{what} PowerPoint에 넣었습니다.")
         else:
-            self.notify("PowerPoint가 붙여넣기를 받지 않았습니다. 클립보드에 있으니 슬라이드에서 Ctrl+V 하세요.")
+            self.notify("PowerPoint에 들어가지 않았습니다. 클립보드에 있으니 슬라이드에서 Ctrl+V 하세요.")
