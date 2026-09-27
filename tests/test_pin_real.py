@@ -46,12 +46,13 @@ for m in rs.monitors():
 '''
 
 
+def _good(out: str) -> bool:
+    lines = [l for l in out.splitlines() if "diff=" in l]
+    # same pixels (only content moving on screen during the check could differ)
+    return bool(lines) and all(float(l.split("diff=")[1]) < 3.0 for l in lines)
+
+
 def test_PIN_REAL_01_pin_sits_exactly_over_capture(tmp_path):
-    env = {k: v for k, v in os.environ.items() if k != "QT_QPA_PLATFORM"}
-    code = SCRIPT % (ROOT, tmp_path)
-    r = subprocess.run([sys.executable, "-c", code], cwd=ROOT, capture_output=True, text=True,
-                       timeout=120, env=env)
-    lines = [l for l in r.stdout.splitlines() if "diff=" in l]
-    assert lines, r.stdout + r.stderr
-    for l in lines:
-        assert float(l.split("diff=")[1]) < 3.0, l  # same pixels (only moving content could differ)
+    from tests.conftest import run_on_desktop
+    out = run_on_desktop(SCRIPT % (ROOT, tmp_path), _good)
+    assert _good(out), out

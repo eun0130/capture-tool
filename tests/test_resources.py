@@ -144,10 +144,20 @@ time.sleep(1); app.processEvents()
 ws1, pv1, th1 = stat()
 print(f"RESULT ws0={ws0} pv0={pv0} th0={th0} ws1={ws1} pv1={pv1} th1={th1}")
 ''' % ROOT
-    env = {k: v for k, v in os.environ.items() if k != "QT_QPA_PLATFORM"}
-    r = subprocess.run([sys.executable, "-c", script], cwd=ROOT, capture_output=True, text=True, timeout=300, env=env)
-    line = next((l for l in r.stdout.splitlines() if l.startswith("RESULT")), None)
-    assert line, r.stdout + r.stderr
+    from tests.conftest import run_on_desktop
+
+    def values(out):
+        line = next((l for l in out.splitlines() if l.startswith("RESULT")), None)
+        return line, ({k: int(x) for k, x in (kv.split("=") for kv in line.split()[1:])} if line else None)
+
+    def ok(out):
+        _, v = values(out)
+        return bool(v) and v["pv0"] < 450 and v["th0"] < 60 and v["ws1"] - v["ws0"] < 40 \
+            and v["pv1"] - v["pv0"] < 40 and v["th1"] - v["th0"] < 5
+
+    out = run_on_desktop(script, ok, timeout=300)
+    line, _ = values(out)
+    assert line, out
     v = dict(kv.split("=") for kv in line.split()[1:])
     v = {k: int(x) for k, x in v.items()}
     print(line)

@@ -44,11 +44,12 @@ for m in rs.monitors():
 '''
 
 
+def _good(out: str) -> bool:
+    lines = [l for l in out.splitlines() if "diff=" in l]
+    return bool(lines) and all(float(l.split("diff=")[1].split()[0]) < 3.0 for l in lines)
+
+
 def test_OVL_REAL_01_overlay_is_one_to_one_on_every_monitor(tmp_path):
-    env = {k: v for k, v in os.environ.items() if k != "QT_QPA_PLATFORM"}
-    r = subprocess.run([sys.executable, "-c", SCRIPT % (ROOT, tmp_path)], cwd=ROOT, capture_output=True,
-                       text=True, timeout=120, env=env)
-    lines = [l for l in r.stdout.splitlines() if "diff=" in l]
-    assert lines, r.stdout + r.stderr
-    for l in lines:
-        assert float(l.split("diff=")[1].split()[0]) < 3.0, l
+    from tests.conftest import run_on_desktop
+    out = run_on_desktop(SCRIPT % (ROOT, tmp_path), _good)
+    assert _good(out), out
