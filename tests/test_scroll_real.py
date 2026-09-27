@@ -88,12 +88,14 @@ def _browser():
 
 def _runs(col: np.ndarray) -> list[tuple[int, int, int]]:
     """Distinct solid colors down a pixel column, in order (merging repeats)."""
-    out = []
+    runs: list[list] = []
     for px in col:
         c = tuple(int(v) for v in px)
-        if not out or max(abs(a - b) for a, b in zip(out[-1], c)) > 6:
-            out.append(c)
-    return out
+        if runs and max(abs(a - b) for a, b in zip(runs[-1][0], c)) <= 6:
+            runs[-1][1] += 1
+        else:
+            runs.append([c, 1])
+    return [c for c, n in runs if n >= 3]     # skip 1-2 px lines (the browser's view border)
 
 
 def test_WSCR_02_real_browser_whole_page_from_the_top(tmp_path):
