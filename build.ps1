@@ -8,6 +8,8 @@ if (-not $SkipTests) {
     & $py -m pytest -q
     if ($LASTEXITCODE -ne 0) { throw "tests failed" }
 }
+& $py tools\fetch_models.py
+if ($LASTEXITCODE -ne 0) { throw "OCR models missing" }
 & $py tools\make_icon.py
 & $py -m PyInstaller --noconfirm --clean --distpath dist --workpath build packaging\capture_tool.spec
 if ($LASTEXITCODE -ne 0) { throw "PyInstaller failed" }
