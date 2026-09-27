@@ -9,3 +9,4 @@ dist/
 installer/Output/
 assets/app.ico
 *.prof
+.pytest_tmp*/
