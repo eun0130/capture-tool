@@ -459,7 +459,8 @@ class Controller(QObject):
         p.saveRequested.connect(lambda w: self._save(w.image))
         self.pins.append(p)
         p.show()
-        self.notify("화면에 고정했습니다. 닫기: Esc · ✕ · 더블클릭")
+        self.notify("화면에 고정했습니다. 다른 창 위에 계속 떠 있습니다. "
+                    "끌어서 옮기기 · 휠로 확대 · 닫기: Esc, X 버튼, 더블클릭")
         return p
 
     def close_pins(self) -> None:

@@ -44,6 +44,82 @@ def desktop():
     return img
 
 
+def pin_scene():
+    """Illustration: a document window being edited, with a pinned table capture on top."""
+    from PySide6.QtCore import QRectF
+    from PySide6.QtGui import QColor, QFont, QImage, QPainter, QPen
+    from tests.test_table import excel_like
+    from tests.render import _font
+
+    W, H = 1100, 600
+    canvas = QImage(W, H, QImage.Format_RGB888)
+    canvas.fill(QColor("#E9ECF1"))
+    p = QPainter(canvas)
+    p.setRenderHint(QPainter.Antialiasing)
+    # the window the user is working in
+    p.setPen(QPen(QColor("#C9CED6"), 1))
+    p.setBrush(QColor("#FFFFFF"))
+    p.drawRoundedRect(QRectF(30, 30, 1040, 540), 8, 8)
+    p.setBrush(QColor("#F3F4F6"))
+    p.drawRect(QRectF(30, 30, 1040, 40))
+    p.setFont(_font(14))
+    p.setPen(QColor("#5B616B"))
+    p.drawText(50, 56, "월간 보고서 작성 중 (문서 편집 프로그램)")
+    p.setPen(QColor("#1F2328"))
+    p.setFont(_font(22))
+    p.drawText(70, 120, "9월 판매 보고")
+    p.setFont(_font(15))
+    for i, line in enumerate(["이번 달 사과 판매량은 3상자, 금액은 3,600원입니다.",
+                              "배는 재고가 없어 판매되지 않았습니다.",
+                              "합계 금액은 3,600원으로 지난달보다 …|"]):
+        p.drawText(70, 170 + i * 36, line)
+    for i in range(6):
+        p.fillRect(QRectF(70, 300 + i * 30, 440 - (i % 3) * 60, 10), QColor("#E4E7EB"))
+    # the pinned capture (a spreadsheet), floating on top
+    img, _ = excel_like(rows=4, cols=4, cw=110, rh=30)
+    tbl = QImage(img.data, img.shape[1], img.shape[0], img.strides[0], QImage.Format_BGR888).copy()
+    tp = QPainter(tbl)
+    tp.setFont(_font(13))
+    tp.setPen(QColor("black"))
+    rows = [["품목", "수량", "단가", "금액"], ["사과", "3", "1,200", "3,600"], ["배", "", "2,500", "0"],
+            ["합계", "", "", "3,600"]]
+    for r, row in enumerate(rows):
+        for c, t in enumerate(row):
+            tp.drawText(QRectF(10 + c * 110 + 6, 10 + r * 30, 98, 30), 0x0082 if c else 0x0081, t)
+    tp.end()
+    x, y = 590, 150
+    p.setPen(Qt.NoPen)
+    p.setBrush(QColor(0, 0, 0, 60))
+    p.drawRoundedRect(QRectF(x + 6, y + 8, tbl.width(), tbl.height()), 4, 4)   # shadow
+    p.drawImage(x, y, tbl)
+    p.setPen(QPen(QColor("#1F5FD1"), 2))
+    p.setBrush(Qt.NoBrush)
+    p.drawRect(QRectF(x, y, tbl.width(), tbl.height()))
+    cx, cy = x + tbl.width() - 16, y + 16
+    p.setBrush(QColor(15, 18, 24, 200))
+    p.setPen(Qt.NoPen)
+    p.drawEllipse(QRectF(cx - 12, cy - 12, 24, 24))
+    p.setPen(QPen(QColor("white"), 2))
+    p.drawLine(cx - 5, cy - 5, cx + 5, cy + 5)
+    p.drawLine(cx + 5, cy - 5, cx - 5, cy + 5)
+    # callouts
+    def note(tx, ty, text):
+        f = _font(14)
+        f.setBold(True)
+        p.setFont(f)
+        w = p.fontMetrics().horizontalAdvance(text) + 24
+        p.setPen(Qt.NoPen)
+        p.setBrush(QColor("#1F5FD1"))
+        p.drawRoundedRect(QRectF(tx, ty, w, 32), 16, 16)
+        p.setPen(QColor("white"))
+        p.drawText(QRectF(tx, ty, w, 32), 0x0084, text)
+    note(590, 100, "① 고정한 캡처: 항상 맨 위에 떠 있음")
+    note(590, 325, "② 끌어서 옮기기 · Esc나 X로 닫기")
+    note(70, 505, "③ 아래 창에서는 평소처럼 글을 쓰고 클릭할 수 있음")
+    p.end()
+    return canvas
+
+
 def controller(img):
     tmp = tempfile.mkdtemp()
     mon = Monitor(0, Rect(0, 0, 1280, 720), 1.0, True, "X")
@@ -107,6 +183,8 @@ def main():
     pin.show()
     QTest.mouseMove(pin, QPoint(pin.width() - 10, 10))
     pin.grab().save(str(OUT / "05-pin.png"))
+    # 5b) how pinning is used: a pinned table floats over the window you are typing in
+    pin_scene().save(str(OUT / "09-pin-usage.png"))
     # 6) settings
     dlg = SettingsDialog(Settings())
     dlg.show()
