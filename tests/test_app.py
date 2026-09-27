@@ -697,6 +697,59 @@ def test_APP_48b_escape_in_text_input_cancels_only_the_text(make):
     assert c.overlays == [ov] and c.session.document.shapes == []
 
 
+def _open_editors(ov):
+    from capture_tool.app.overlay import TextEditor
+    return [e for e in ov.findChildren(TextEditor) if e.isVisible()]
+
+
+def test_APP_55_click_elsewhere_removes_empty_text_box(make):
+    c, ov = _editing(make)
+    ov.set_tool("text")
+    QTest.mouseClick(ov, Qt.LeftButton, Qt.NoModifier, QPoint(200, 200))
+    assert len(_open_editors(ov)) == 1
+    QTest.mouseClick(ov, Qt.LeftButton, Qt.NoModifier, QPoint(350, 300))   # nothing typed
+    assert _open_editors(ov) == []                                         # it disappears...
+    assert c.session.document.shapes == []                                 # ...and adds nothing
+
+
+def test_APP_56_click_elsewhere_commits_typed_text(make):
+    c, ov = _editing(make)
+    ov.set_tool("text")
+    QTest.mouseClick(ov, Qt.LeftButton, Qt.NoModifier, QPoint(200, 200))
+    ov._editor.insert("메모")
+    QTest.mouseClick(ov, Qt.LeftButton, Qt.NoModifier, QPoint(350, 300))
+    assert _open_editors(ov) == []
+    assert [s.text for s in c.session.document.shapes] == ["메모"]
+
+
+def test_APP_57_never_more_than_one_text_box(make):
+    c, ov = _editing(make)
+    ov.set_tool("text")
+    for i in range(6):
+        QTest.mouseClick(ov, Qt.LeftButton, Qt.NoModifier, QPoint(150 + i * 40, 150 + i * 30))
+        assert len(_open_editors(ov)) <= 1
+    assert c.session.document.shapes == []
+
+
+def test_APP_58_switching_tool_closes_text_box(make):
+    c, ov = _editing(make)
+    ov.set_tool("text")
+    QTest.mouseClick(ov, Qt.LeftButton, Qt.NoModifier, QPoint(200, 200))
+    ov._editor.insert("남김")
+    ov.set_tool("rect")
+    assert _open_editors(ov) == [] and [s.text for s in c.session.document.shapes] == ["남김"]
+
+
+def test_APP_59_copy_while_typing_keeps_the_text(make):
+    c, ov = _editing(make)
+    ov.set_tool("text")
+    QTest.mouseClick(ov, Qt.LeftButton, Qt.NoModifier, QPoint(200, 200))
+    ov._editor.insert("포함")
+    ov.side_bar.trigger("copy")
+    assert c.last_document.shapes[-1].text == "포함"
+    assert c.clipboard.last  # and the image (with the text) was copied
+
+
 def test_APP_49_text_style_on_selected_text_and_delete_key(make):
     c, ov = _editing(make)
     c.session.document.add(__import__("capture_tool.core.annotations", fromlist=["Shape"]).Shape(

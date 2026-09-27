@@ -70,6 +70,7 @@ class Controller(QObject):
         self._ppt_done.connect(self._on_ppt_done)
         self._text_ready.connect(self._on_text_ready)
         self._text_ctx = None
+        self.last_document = None
         self._text_lines: list = []
         self._text_grid = None
         self.ask_save_path = self._ask_save_path_dialog
@@ -239,6 +240,7 @@ class Controller(QObject):
         if self.session.state is not State.EDITING:
             return
         ov, sel = self.active_overlay, self.session.selection
+        ov.close_text_editor()
         raw = ov.crop(sel)
 
         def work():
@@ -332,7 +334,9 @@ class Controller(QObject):
         """Grab selection + document + pixels and end the session. close=False lets the caller
         put the result on the clipboard first and hide the (large) overlay windows afterwards."""
         ov = self.active_overlay
+        ov.close_text_editor()        # keep what is being typed
         sel, doc = self.session.selection, self.session.document
+        self.last_document = doc      # what the finished capture contained (drawings)
         raw = ov.crop(sel)
         self._remember_style(ov)
         self.session.key("Escape")

@@ -165,6 +165,7 @@ class OverlayWindow(QWidget):
         self._moved = False
         self.hover_window = None
         if self._editor is not None:
+            self._editor.hide()
             self._editor.deleteLater()
             self._editor = None
         self.toolbar.hide()
@@ -280,6 +281,7 @@ class OverlayWindow(QWidget):
         self.toolbar.set_color(color)
 
     def _tool_changed(self, name: str) -> None:
+        self.close_text_editor()
         self.tool = name
         self.setCursor(Qt.ArrowCursor if name == "select" else Qt.CrossCursor)
 
@@ -324,6 +326,12 @@ class OverlayWindow(QWidget):
 
     def _begin_edit(self, pos):
         doc = self.c.session.document
+        if self._editor is not None:
+            # a click anywhere else finishes the open text box (empty -> it just disappears);
+            # this click does not start anything new
+            self.close_text_editor()
+            self._press = None
+            return
         if not self._inside_selection(pos):
             self._press = None
             return
@@ -404,28 +412,34 @@ class OverlayWindow(QWidget):
 
     # --- text tool ---------------------------------------------------------------
     def _open_text_editor(self, pos):
+        self.close_text_editor()   # there is never more than one text box
         ed = TextEditor(self, self.toolbar, self.scale)
         ed.move(int(pos.x()), int(pos.y()))
+        ed.doc_point = self.to_doc(pos)
         ed.show()
         ed.setFocus()
-        doc_point = self.to_doc(pos)
-        tb = self.toolbar
-
-        def done():
-            if self._editor is not ed:
-                return
-            self._editor = None
-            if ed.text().strip():
-                self.c.session.document.add(Shape(
-                    kind="text", points=[doc_point], text=ed.text(), color=tb.color, width=tb.line_width,
-                    font_size=tb.font_size, bold=tb.bold, italic=tb.italic, underline=tb.underline, strike=tb.strike))
-            ed.deleteLater()
-            self.setFocus()
-            self.update()
-
-        ed.returnPressed.connect(done)
-        ed.editingFinished.connect(done)
+        ed.returnPressed.connect(lambda: self.close_text_editor(ed))
+        ed.editingFinished.connect(lambda: self.close_text_editor(ed))
         self._editor = ed
+
+    def close_text_editor(self, ed=None) -> None:
+        """Finish the open text box: add its text if something was typed, then remove it.
+        `ed` (from the box's own signals) is ignored unless it is still the open box."""
+        cur = self._editor
+        if cur is None or (ed is not None and ed is not cur):
+            return
+        self._editor = None
+        text = cur.text()
+        doc = self.c.session.document
+        if text.strip() and doc is not None:
+            tb = self.toolbar
+            doc.add(Shape(kind="text", points=[cur.doc_point], text=text, color=tb.color, width=tb.line_width,
+                          font_size=tb.font_size, bold=tb.bold, italic=tb.italic, underline=tb.underline,
+                          strike=tb.strike))
+        cur.hide()
+        cur.deleteLater()
+        self.setFocus()
+        self.update()
 
     # --- keyboard ------------------------------------------------------------------
     def keyPressEvent(self, e):
