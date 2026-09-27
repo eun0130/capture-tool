@@ -14,6 +14,9 @@ KINDS = BOX_KINDS | LINE_KINDS | PATH_KINDS | POINT_KINDS
 HISTORY_LIMIT = 100
 MIN_BOX = 2
 MIN_LINE = 3
+MAX_WIDTH = 60
+FONT_MIN, FONT_MAX = 8, 144
+STEP_RADIUS = 14
 
 
 @dataclass
@@ -26,6 +29,12 @@ class Shape:
     opacity: float = 1.0
     text: str | None = None
     number: int | None = None
+    # text style (physical px; used by the text tool)
+    font_size: int = 22
+    bold: bool = False
+    italic: bool = False
+    underline: bool = False
+    strike: bool = False
 
     def __post_init__(self):
         if self.kind not in KINDS:
@@ -33,13 +42,22 @@ class Shape:
         self.color = normalize_hex(self.color)
         if not isinstance(self.width, (int, float)) or self.width <= 0:
             raise ValueError(f"width must be > 0: {self.width!r}")
+        self.width = min(MAX_WIDTH, self.width)
         self.opacity = min(1.0, max(0.1, float(self.opacity)))
+        self.font_size = int(min(FONT_MAX, max(FONT_MIN, self.font_size)))
         self.points = [(p[0], p[1]) for p in self.points]
 
     def bbox(self) -> tuple[float, float, float, float]:
         xs = [p[0] for p in self.points]
         ys = [p[1] for p in self.points]
-        return min(xs), min(ys), max(xs), max(ys)
+        x1, y1, x2, y2 = min(xs), min(ys), max(xs), max(ys)
+        if self.kind == "text" and self.text:  # estimated text extent, for click-to-select
+            lines = self.text.split("\n")
+            x2 = x1 + max(len(l) for l in lines) * self.font_size * 0.9
+            y2 = y1 + len(lines) * self.font_size * 1.3
+        elif self.kind == "step":
+            x1, y1, x2, y2 = x1 - STEP_RADIUS, y1 - STEP_RADIUS, x1 + STEP_RADIUS, y1 + STEP_RADIUS
+        return x1, y1, x2, y2
 
 
 def _valid(s: Shape) -> bool:
@@ -121,6 +139,17 @@ class Document:
         if not 0 <= index < len(self.shapes):
             raise IndexError(index)
 
+    def update(self, index: int, **changes) -> bool:
+        """Restyle one shape (color, width, fill, text style …) as an undoable step."""
+        self._check(index)
+        s = self.shapes[index]
+        changes = {k: v for k, v in changes.items() if getattr(s, k) != v}
+        if not changes:
+            return False
+        new = replace(s, **changes)  # re-validates (color, width, font size)
+        self._commit(self.shapes[:index] + [new] + self.shapes[index + 1:])
+        return True
+
     def delete(self, index: int) -> None:
         self._check(index)
         self._commit(self.shapes[:index] + self.shapes[index + 1:])
@@ -128,9 +157,10 @@ class Document:
     def move(self, index: int, dx: float, dy: float) -> None:
         self._check(index)
         s = self.shapes[index]
-        x1, y1, x2, y2 = s.bbox()
-        dx = min(max(dx, -x1), self.width - x2)
-        dy = min(max(dy, -y1), self.height - y2)
+        xs = [p[0] for p in s.points]
+        ys = [p[1] for p in s.points]
+        dx = min(max(dx, -min(xs)), self.width - max(xs))
+        dy = min(max(dy, -min(ys)), self.height - max(ys))
         moved = replace(s, points=[(p[0] + dx, p[1] + dy) for p in s.points])
         self._commit(self.shapes[:index] + [moved] + self.shapes[index + 1:])
 

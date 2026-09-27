@@ -43,8 +43,11 @@ class DShape:
     stroke_width: float = 2
     text: str | None = None
     text_color: str = "#000000"
-    font_size: float = 14
+    font_size: float = 14   # points
     bold: bool = False
+    italic: bool = False
+    underline: bool = False
+    strike: bool = False
 
     def __post_init__(self):
         if self.kind not in KINDS:
@@ -146,11 +149,11 @@ def _fill(color):
     return f'<a:solidFill><a:srgbClr val="{color[1:]}"/></a:solidFill>' if color else "<a:noFill/>"
 
 
-def _ln(color, width_px, arrow=False):
+def _ln(color, width_px, arrow=False, dpi: float = 96):
     if not color:
         return "<a:ln><a:noFill/></a:ln>"
     tail = '<a:tailEnd type="triangle"/>' if arrow else ""
-    return f'<a:ln w="{px_to_emu(width_px)}">{_fill(color)}{tail}</a:ln>'
+    return f'<a:ln w="{px_to_emu(width_px, dpi)}">{_fill(color)}{tail}</a:ln>'
 
 
 def _txbody(s: DShape) -> str:
@@ -158,29 +161,33 @@ def _txbody(s: DShape) -> str:
         return ""
     paras = []
     for line in _clean(s.text).split("\n"):
-        b = ' b="1"' if s.bold else ""
+        style = ((' b="1"' if s.bold else "") + (' i="1"' if s.italic else "")
+                 + (' u="sng"' if s.underline else "") + (' strike="sngStrike"' if s.strike else ""))
         paras.append(
-            f'<a:p><a:pPr algn="ctr"/><a:r><a:rPr lang="ko-KR" sz="{round(s.font_size * 100)}"{b}>'
+            f'<a:p><a:pPr algn="ctr"/><a:r><a:rPr lang="ko-KR" sz="{round(s.font_size * 100)}"{style}>'
             f'{_fill(s.text_color)}</a:rPr><a:t>{escape(line)}</a:t></a:r></a:p>'
         )
     return (f'<a:txSp><a:txBody><a:bodyPr anchor="ctr" wrap="square"/><a:lstStyle/>{"".join(paras)}'
             f"</a:txBody><a:useSpRect/></a:txSp>")
 
 
-def drawing_xml(shapes: list[DShape], connectors: list[DConnector]) -> str:
+def drawing_xml(shapes: list[DShape], connectors: list[DConnector], dpi: float = 96) -> str:
+    """dpi: physical pixels per inch of the captured screen (96 × Windows scale), so shapes
+    land in PowerPoint at the size they had on screen."""
     if not shapes and not connectors:
         raise ValueError("nothing to draw")
     lines = _resolve(shapes, connectors)
     minx, miny, maxx, maxy = _bounds(shapes, lines)
-    e = lambda v, o: px_to_emu(v - o)  # noqa: E731
+    emu = lambda v: px_to_emu(v, dpi)  # noqa: E731
+    e = lambda v, o: emu(v - o)  # noqa: E731
     ids = {i: i + 2 for i in range(len(shapes))}
     parts = []
     for i, s in enumerate(shapes):
         parts.append(
             f'<a:sp><a:nvSpPr><a:cNvPr id="{ids[i]}" name="{s.kind} {i + 1}"/><a:cNvSpPr/></a:nvSpPr>'
             f'<a:spPr><a:xfrm><a:off x="{e(s.x, minx)}" y="{e(s.y, miny)}"/>'
-            f'<a:ext cx="{px_to_emu(s.w)}" cy="{px_to_emu(s.h)}"/></a:xfrm>'
-            f'<a:prstGeom prst="{s.kind}"><a:avLst/></a:prstGeom>{_fill(s.fill)}{_ln(s.stroke, s.stroke_width)}</a:spPr>'
+            f'<a:ext cx="{emu(s.w)}" cy="{emu(s.h)}"/></a:xfrm>'
+            f'<a:prstGeom prst="{s.kind}"><a:avLst/></a:prstGeom>{_fill(s.fill)}{_ln(s.stroke, s.stroke_width, dpi=dpi)}</a:spPr>'
             f"{_txbody(s)}</a:sp>"
         )
     next_id = len(shapes) + 2
@@ -194,11 +201,11 @@ def drawing_xml(shapes: list[DShape], connectors: list[DConnector]) -> str:
             f'<a:cxnSp><a:nvCxnSpPr><a:cNvPr id="{cid}" name="connector {j + 1}"/>'
             f"<a:cNvCxnSpPr>{cx}</a:cNvCxnSpPr></a:nvCxnSpPr>"
             f'<a:spPr><a:xfrm{flip}><a:off x="{e(min(l.x1, l.x2), minx)}" y="{e(min(l.y1, l.y2), miny)}"/>'
-            f'<a:ext cx="{px_to_emu(abs(l.x2 - l.x1))}" cy="{px_to_emu(abs(l.y2 - l.y1))}"/></a:xfrm>'
+            f'<a:ext cx="{emu(abs(l.x2 - l.x1))}" cy="{emu(abs(l.y2 - l.y1))}"/></a:xfrm>'
             f'<a:prstGeom prst="straightConnector1"><a:avLst/></a:prstGeom>'
-            f"{_ln(normalize_hex(l.c.color), l.c.width, l.c.arrow)}</a:spPr></a:cxnSp>"
+            f"{_ln(normalize_hex(l.c.color), l.c.width, l.c.arrow, dpi=dpi)}</a:spPr></a:cxnSp>"
         )
-    W, H = px_to_emu(maxx - minx), px_to_emu(maxy - miny)
+    W, H = emu(maxx - minx), emu(maxy - miny)
     return (
         '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
         f'<a:graphic xmlns:a="{A_NS}"><a:graphicData uri="{LC_NS}"><lc:lockedCanvas xmlns:lc="{LC_NS}">'
@@ -222,16 +229,17 @@ _RELS = ('<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
          'Target="clipboard/drawings/drawing1.xml"/></Relationships>')
 
 
-def gvml_package(shapes: list[DShape], connectors: list[DConnector]) -> bytes:
+def gvml_package(shapes: list[DShape], connectors: list[DConnector], dpi: float = 96) -> bytes:
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
         z.writestr("[Content_Types].xml", _CT)
         z.writestr("_rels/.rels", _RELS)
-        z.writestr("clipboard/drawings/drawing1.xml", drawing_xml(shapes, connectors))
+        z.writestr("clipboard/drawings/drawing1.xml", drawing_xml(shapes, connectors, dpi))
     return buf.getvalue()
 
 
-def svg(shapes: list[DShape], connectors: list[DConnector]) -> str:
+def svg(shapes: list[DShape], connectors: list[DConnector], dpi: float = 96) -> str:
+    """Coordinates stay in pixels (viewBox); width/height declare the on-screen size in points."""
     if not shapes and not connectors:
         raise ValueError("nothing to draw")
     lines = _resolve(shapes, connectors)
@@ -240,7 +248,9 @@ def svg(shapes: list[DShape], connectors: list[DConnector]) -> str:
     ox, oy = minx - pad, miny - pad
     W, H = maxx - minx + 2 * pad, maxy - miny + 2 * pad
     f = lambda v: f"{v:.1f}".rstrip("0").rstrip(".")  # noqa: E731
-    out = [f'<svg xmlns="http://www.w3.org/2000/svg" width="{f(W)}" height="{f(H)}" viewBox="0 0 {f(W)} {f(H)}">']
+    pt = 72 / dpi
+    out = [f'<svg xmlns="http://www.w3.org/2000/svg" width="{f(W * pt)}pt" height="{f(H * pt)}pt" '
+           f'viewBox="0 0 {f(W)} {f(H)}">']
     for s in shapes:
         x, y = s.x - ox, s.y - oy
         style = f'fill="{s.fill or "none"}" stroke="{s.stroke or "none"}" stroke-width="{f(s.stroke_width)}"'
@@ -254,9 +264,12 @@ def svg(shapes: list[DShape], connectors: list[DConnector]) -> str:
             out.append(f'<polygon points="{pts}" {style}/>')
         if s.text:
             weight = ' font-weight="bold"' if s.bold else ""
+            italic = ' font-style="italic"' if s.italic else ""
+            deco = " ".join(d for d, on in (("underline", s.underline), ("line-through", s.strike)) if on)
+            deco = f' text-decoration="{deco}"' if deco else ""
             out.append(
                 f'<text x="{f(x + s.w / 2)}" y="{f(y + s.h / 2)}" text-anchor="middle" dominant-baseline="central" '
-                f'font-family="Malgun Gothic, sans-serif" font-size="{f(s.font_size * 96 / 72)}"{weight} '
+                f'font-family="Malgun Gothic, sans-serif" font-size="{f(s.font_size * dpi / 72)}"{weight}{italic}{deco} '
                 f'fill="{s.text_color}">{escape(_clean(s.text))}</text>'
             )
     for l in lines:

@@ -73,11 +73,28 @@ def main():
     ov.set_tool("step")
     QTest.mouseClick(ov, Qt.LeftButton, Qt.NoModifier, QPoint(240, 220))
     ov.grab().save(str(OUT / "02-draw.png"))
-    # 3) palette
+    # 3) palette (color + thickness slider)
     tb = ov.toolbar
     tb.palette.refresh()
     tb.palette.adjustSize()
     tb.palette.grab().save(str(OUT / "03-palette.png"))
+    # 3b) text tool with its style controls
+    ov.set_tool("text")
+    tb.toggle_style("bold")
+    tb.arrange(1280)
+    tb.grab().save(str(OUT / "07-text-style.png"))
+    c.close_all()
+    # 3c) text mode: drag over part of the recognized text
+    lines = [OcrLine("업무 프로세스 개요", (90 - 200, 70 - 180, 280, 44), 0.99)]
+    c = controller(img)
+    c.ocr = FakeOcr([OcrLine("요청 접수", (85, 55, 110, 30), 0.99), OcrLine("검토", (385, 55, 60, 30), 0.99)])
+    c.start_capture()
+    ov = c.overlays[0]
+    ov.resize(1280, 720)
+    drag(ov, (200, 180), (760, 330))
+    ov.side_bar.trigger("text")
+    drag(ov, (280, 230), (400, 270))
+    ov.grab().save(str(OUT / "08-text-mode.png"))
     c.close_all()
     # 4) text panel
     lines = [OcrLine("업무 프로세스 개요", (0, 0, 200, 20), 0.99), OcrLine("담당: 홍길동 010-1234-5678", (0, 30, 300, 20), 0.98)]

@@ -1,13 +1,12 @@
 """User-drawn annotations -> native PowerPoint shapes (exact, no recognition needed)."""
 from __future__ import annotations
 
-from .annotations import Shape
+from .annotations import STEP_RADIUS, Shape
 from .drawingml import DConnector, DShape
 
-STEP_SIZE = 28
 
-
-def annotations_to_drawing(anns: list[Shape], offset=(0, 0)) -> tuple[list[DShape], list[DConnector]]:
+def annotations_to_drawing(anns: list[Shape], offset=(0, 0), scale: float = 1.0) -> tuple[list[DShape], list[DConnector]]:
+    """Coordinates are physical px; `scale` (Windows display scale) turns font sizes into points."""
     ox, oy = offset
     shapes: list[DShape] = []
     conns: list[DConnector] = []
@@ -23,15 +22,15 @@ def annotations_to_drawing(anns: list[Shape], offset=(0, 0)) -> tuple[list[DShap
             conns.append(DConnector(x1=x1 + ox, y1=y1 + oy, x2=x2 + ox, y2=y2 + oy, color=a.color,
                                     width=a.width, arrow=a.kind == "arrow"))
         elif a.kind == "text" and a.text:
-            (x, y), = a.points
-            lines = a.text.split("\n")
-            w = max(len(l) for l in lines) * 16 + 16
-            h = len(lines) * 24 + 8
-            shapes.append(DShape("rect", x + ox, y + oy, w, h, fill=None, stroke=None, text=a.text,
-                                 text_color=a.color, font_size=14))
+            bx1, by1, bx2, by2 = a.bbox()
+            pt = round(a.font_size / scale * 0.75)  # px on screen -> points
+            shapes.append(DShape("rect", bx1 + ox, by1 + oy, max(8, bx2 - bx1), max(8, by2 - by1),
+                                 fill=None, stroke=None, text=a.text, text_color=a.color, font_size=pt,
+                                 bold=a.bold, italic=a.italic, underline=a.underline, strike=a.strike))
         elif a.kind == "step" and a.number is not None:
             (cx, cy), = a.points
-            r = STEP_SIZE / 2
-            shapes.append(DShape("ellipse", cx - r + ox, cy - r + oy, STEP_SIZE, STEP_SIZE, fill=a.color,
-                                 stroke=None, text=str(a.number), text_color="#FFFFFF", font_size=11, bold=True))
+            d = STEP_RADIUS * 2
+            shapes.append(DShape("ellipse", cx - STEP_RADIUS + ox, cy - STEP_RADIUS + oy, d, d, fill=a.color,
+                                 stroke=None, text=str(a.number), text_color="#FFFFFF",
+                                 font_size=round(15 / scale * 0.75), bold=True))
     return shapes, conns

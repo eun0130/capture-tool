@@ -33,5 +33,14 @@ def test_CONV_03_reversed_points_normalized():
     assert (shapes[0].x, shapes[0].y, shapes[0].w, shapes[0].h) == (10, 20, 40, 40)
 
 
+def test_CONV_05_text_style_carried_over():
+    anns = [Shape("text", [(10, 10)], text="굵게", color="#000000", font_size=30, bold=True,
+                  italic=True, underline=True, strike=True)]
+    shapes, _ = annotations_to_drawing(anns, scale=1.5)
+    s = shapes[0]
+    assert (s.bold, s.italic, s.underline, s.strike) == (True, True, True, True)
+    assert s.font_size == 15  # 30 physical px at 150% = 20 logical px = 15 pt
+
+
 def test_CONV_04_empty():
     assert annotations_to_drawing([]) == ([], [])

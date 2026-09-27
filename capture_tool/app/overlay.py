@@ -6,8 +6,9 @@ from __future__ import annotations
 
 import numpy as np
 from PySide6.QtCore import QPointF, QRect, QRectF, Qt, QTimer
+from PySide6.QtCore import Signal
 from PySide6.QtGui import QColor, QCursor, QFont, QGuiApplication, QPainter, QPainterPath, QPen
-from PySide6.QtWidgets import QLineEdit, QWidget
+from PySide6.QtWidgets import QHBoxLayout, QLabel, QLineEdit, QPushButton, QWidget
 
 from ..core.annotations import Shape
 from ..core.color import pixel_color
@@ -23,6 +24,87 @@ TOOL_KEYS = {Qt.Key_V: "select", Qt.Key_R: "rect", Qt.Key_O: "ellipse", Qt.Key_L
              Qt.Key_C: "curve", Qt.Key_P: "pen", Qt.Key_T: "text", Qt.Key_N: "step", Qt.Key_H: "highlight",
              Qt.Key_M: "mosaic"}
 BOX_TOOLS = {"rect", "ellipse", "highlight", "mosaic", "line", "arrow"}
+TEXT_STYLE_KEYS = {Qt.Key_B: "bold", Qt.Key_I: "italic", Qt.Key_U: "underline", Qt.Key_5: "strike"}
+
+
+class TextEditor(QLineEdit):
+    """Inline text input that previews the text style and handles the style shortcuts."""
+
+    def __init__(self, parent, toolbar, scale: float):
+        super().__init__(parent)
+        self.tb = toolbar
+        self.scale = scale
+        self.setPlaceholderText("텍스트 입력 후 Enter · Ctrl+B/I/U/5 서식 · Ctrl+]/[ 크기")
+        self.apply_style()
+
+    def apply_style(self) -> None:
+        tb = self.tb
+        f = QFont(FONT_FAMILY)
+        f.setPixelSize(max(8, round(tb.font_size / self.scale)))
+        f.setBold(tb.bold)
+        f.setItalic(tb.italic)
+        f.setUnderline(tb.underline)
+        f.setStrikeOut(tb.strike)
+        self.setFont(f)
+        self.setStyleSheet(f"QLineEdit {{ background: rgba(255,255,255,230); color: {tb.color};"
+                           " border: 1px dashed #4C8DFF; }")
+        self._fit()
+
+    def keyPressEvent(self, e):
+        k, ctrl = e.key(), bool(e.modifiers() & Qt.ControlModifier)
+        if k in (Qt.Key_Return, Qt.Key_Enter):
+            super().keyPressEvent(e)   # emits returnPressed -> the text is added
+            e.accept()                 # ...and Enter must NOT reach the capture (it would copy & close)
+            return
+        if k == Qt.Key_Escape:
+            self.clear()               # cancel just this text, keep the capture
+            self.clearFocus()
+            e.accept()
+            return
+        if ctrl and k in TEXT_STYLE_KEYS:
+            self.tb.toggle_style(TEXT_STYLE_KEYS[k])
+        elif ctrl and k in (Qt.Key_BracketRight, Qt.Key_BracketLeft):
+            self.tb.bump_font(1 if k == Qt.Key_BracketRight else -1)
+        else:
+            super().keyPressEvent(e)
+            self._fit()
+            return
+        e.accept()
+        self.apply_style()
+
+    def _fit(self) -> None:
+        fm = self.fontMetrics()
+        self.resize(max(220, fm.horizontalAdvance(self.text() or self.placeholderText()[:12]) + 24), fm.height() + 12)
+
+
+class OcrBar(QWidget):
+    """Replaces the drawing toolbar while in text mode."""
+    action = Signal(str)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setAttribute(Qt.WA_StyledBackground, True)
+        self.setObjectName("ocrbar")
+        self.setStyleSheet("QWidget#ocrbar { background: #FFFFFF; border: 1px solid #D9DCE1; border-radius: 12px; }"
+                           "QLabel { color: #343A40; padding: 0 6px; }"
+                           "QPushButton { min-height: 34px; padding: 0 12px; border: none; border-radius: 8px;"
+                           " background: #F1F3F5; color: #343A40; }"
+                           "QPushButton:hover { background: #E6EEFB; color: #1F5FD1; }")
+        lay = QHBoxLayout(self)
+        lay.setContentsMargins(8, 6, 8, 6)
+        lay.setSpacing(6)
+        lay.addWidget(QLabel("드래그한 부분의 글자를 바로 복사합니다"))
+        self.buttons = {}
+        for name, label in [("all", "전체 복사 (Enter)"), ("window", "창으로 보기"), ("back", "그리기로 돌아가기 (Esc)")]:
+            b = QPushButton(label, self)
+            b.setFocusPolicy(Qt.NoFocus)
+            b.clicked.connect(lambda _=False, n=name: self.action.emit(n))
+            lay.addWidget(b)
+            self.buttons[name] = b
+        self.adjustSize()
+
+    def trigger(self, name: str) -> None:
+        self.action.emit(name)
 
 
 class OverlayWindow(QWidget):
@@ -43,9 +125,13 @@ class OverlayWindow(QWidget):
         self.toolbar.hide()
         self.toolbar.toolChanged.connect(self._tool_changed)
         self.toolbar.action.connect(controller.on_toolbar_action)
+        self.toolbar.styleChanged.connect(self._style_changed)
         self.side_bar = SideBar(self)
         self.side_bar.hide()
         self.side_bar.action.connect(controller.on_toolbar_action)
+        self.ocr_bar = OcrBar(self)
+        self.ocr_bar.hide()
+        self.ocr_bar.action.connect(controller.on_ocr_action)
         self.tool = self.toolbar.tool
         self._press = None        # local QPointF where the mouse went down
         self._cursor = None       # local QPointF
@@ -54,6 +140,9 @@ class OverlayWindow(QWidget):
         self._move_index = None
         self._editor: QLineEdit | None = None
         self.hover_window = None
+        self.selected: int | None = None     # index of the shape picked with the select tool
+        self.ocr_lines = None                # recognized lines (selection coords) while in text mode
+        self._ocr_sel = None                 # last dragged text rectangle (selection coords)
 
     def release(self) -> None:
         """Drop the frozen screenshot after a capture ends (a 4K frame is ~33 MB + its pixmap)."""
@@ -61,6 +150,9 @@ class OverlayWindow(QWidget):
         self.pixmap = bgr_to_pixmap(self.image, self.scale)
         self.windows = []
         self._current = None
+        self.selected = None
+        self.ocr_lines = self._ocr_sel = None
+        self.ocr_bar.hide()
 
     def reset(self, monitor, image, windows=()) -> None:
         """Reuse a pre-created window for a new capture (much faster than creating one)."""
@@ -77,6 +169,58 @@ class OverlayWindow(QWidget):
             self._editor = None
         self.toolbar.hide()
         self.side_bar.hide()
+        self.ocr_bar.hide()
+        self.selected = None
+        self.ocr_lines = self._ocr_sel = None
+        self.update()
+
+    # --- selected shape & style -------------------------------------------------
+    _STYLE_ATTR = {"color": "color", "width": "line_width", "fill": "fill", "opacity": "opacity",
+                   "font_size": "font_size", "bold": "bold", "italic": "italic",
+                   "underline": "underline", "strike": "strike"}
+    _TEXT_ONLY = {"font_size", "bold", "italic", "underline", "strike"}
+
+    def _style_changed(self, name: str) -> None:
+        if self._editor is not None:
+            self._editor.apply_style()
+        doc = self.c.session.document
+        if self.selected is None or doc is None or not 0 <= self.selected < len(doc.shapes):
+            return
+        shape = doc.shapes[self.selected]
+        if name in self._TEXT_ONLY and shape.kind != "text":
+            return
+        value = getattr(self.toolbar, self._STYLE_ATTR[name])
+        doc.update(self.selected, **{name: value})
+        self.update()
+
+    def _select(self, index: int | None) -> None:
+        self.selected = index
+        doc = self.c.session.document
+        is_text = index is not None and doc.shapes[index].kind == "text"
+        if is_text:
+            self.toolbar.load_text_style(doc.shapes[index])
+        self.toolbar.show_text_style(is_text or self.tool == "text")
+        self.update()
+
+    # --- text mode (drag to copy part of the recognized text) ----------------------
+    def enter_ocr_mode(self, lines) -> None:
+        self.ocr_lines = list(lines)
+        self._ocr_sel = None
+        self.toolbar.hide()
+        tb = self.toolbar
+        self.ocr_bar.adjustSize()
+        self.ocr_bar.move(tb.pos())
+        self.ocr_bar.show()
+        self.ocr_bar.raise_()
+        self.setCursor(Qt.IBeamCursor)
+        self.setFocus()
+        self.update()
+
+    def exit_ocr_mode(self) -> None:
+        self.ocr_lines = self._ocr_sel = None
+        self.ocr_bar.hide()
+        self.setCursor(Qt.ArrowCursor if self.tool == "select" else Qt.CrossCursor)
+        self.show_toolbar()
         self.update()
 
     # --- geometry helpers ------------------------------------------------------
@@ -145,6 +289,8 @@ class OverlayWindow(QWidget):
             self.toolbar.hide()
             self.side_bar.hide()
             return
+        if self.ocr_lines is not None:  # text mode: the text bar takes the toolbar's place
+            self.enter_ocr_mode(self.ocr_lines)
         tb = self.toolbar
         tb.arrange(self.width() - 16)
         lr = self.local_rect(sel)
@@ -153,8 +299,11 @@ class OverlayWindow(QWidget):
         sb = self.side_bar
         (x, y), (sx, sy) = layout_bars(local, screen, (tb.width(), tb.height()), (sb.width(), sb.height()))
         tb.move(x, y)
-        tb.show()
-        tb.raise_()
+        if self.ocr_lines is None:
+            tb.show()
+            tb.raise_()
+        else:
+            self.ocr_bar.move(x, y)
         sb.move(sx, sy)
         sb.show()
         sb.raise_()
@@ -180,6 +329,8 @@ class OverlayWindow(QWidget):
             return
         d = self.to_doc(pos)
         tb = self.toolbar
+        if self.ocr_lines is not None:   # text mode: this drag selects text
+            return
         if self.tool == "step":
             doc.add_step(d, tb.color)
             self._press = None
@@ -193,6 +344,7 @@ class OverlayWindow(QWidget):
                 if x1 - 6 <= d[0] <= x2 + 6 and y1 - 6 <= d[1] <= y2 + 6:
                     self._move_index = i
                     break
+            self._select(self._move_index)
         else:
             self._current = Shape(kind=self.tool, points=[d, d], color=tb.color, width=tb.line_width,
                                   fill=tb.fill, opacity=tb.opacity)
@@ -230,7 +382,13 @@ class OverlayWindow(QWidget):
                 self.c.on_select_rect(self.hover_window.rect, self)
         elif st is State.EDITING:
             doc = self.c.session.document
-            if self._current is not None:
+            if self.ocr_lines is not None:
+                a, b = self.to_doc(press), self.to_doc(pos)
+                rect = (min(a[0], b[0]), min(a[1], b[1]), abs(b[0] - a[0]), abs(b[1] - a[1]))
+                if rect[2] > 2 and rect[3] > 2:
+                    self._ocr_sel = rect
+                    self.c.copy_ocr_selection(rect)
+            elif self._current is not None:
                 self._current.points[-1] = self.to_doc(pos) if self._current.kind not in ("pen", "curve") \
                     else self._current.points[-1]
                 sel = self.c.session.selection
@@ -246,23 +404,21 @@ class OverlayWindow(QWidget):
 
     # --- text tool ---------------------------------------------------------------
     def _open_text_editor(self, pos):
-        ed = QLineEdit(self)
-        ed.setPlaceholderText("텍스트 입력 후 Enter")
-        ed.setStyleSheet(f"QLineEdit {{ background: rgba(255,255,255,230); color: {self.toolbar.color};"
-                         " border: 1px dashed #4C8DFF; font-weight: bold; }")
+        ed = TextEditor(self, self.toolbar, self.scale)
         ed.move(int(pos.x()), int(pos.y()))
-        ed.resize(220, 30)
         ed.show()
         ed.setFocus()
         doc_point = self.to_doc(pos)
+        tb = self.toolbar
 
         def done():
             if self._editor is not ed:
                 return
             self._editor = None
             if ed.text().strip():
-                self.c.session.document.add(Shape(kind="text", points=[doc_point], text=ed.text(),
-                                                  color=self.toolbar.color, width=self.toolbar.line_width))
+                self.c.session.document.add(Shape(
+                    kind="text", points=[doc_point], text=ed.text(), color=tb.color, width=tb.line_width,
+                    font_size=tb.font_size, bold=tb.bold, italic=tb.italic, underline=tb.underline, strike=tb.strike))
             ed.deleteLater()
             self.setFocus()
             self.update()
@@ -277,7 +433,10 @@ class OverlayWindow(QWidget):
         ctrl, shift = bool(mods & Qt.ControlModifier), bool(mods & Qt.ShiftModifier)
         st = self.c.session.state
         if k == Qt.Key_Escape:
-            self.c.cancel()
+            if self.ocr_lines is not None:
+                self.exit_ocr_mode()      # leave text mode, keep the capture
+            else:
+                self.c.cancel()
             return
         if st is State.SELECTING:
             if k == Qt.Key_C:
@@ -286,8 +445,21 @@ class OverlayWindow(QWidget):
         if st is not State.EDITING or not self.active:
             return
         doc = self.c.session.document
-        if k in (Qt.Key_Return, Qt.Key_Enter) or (ctrl and k == Qt.Key_C):
+        tb = self.toolbar
+        if self.ocr_lines is not None and (k in (Qt.Key_Return, Qt.Key_Enter) or (ctrl and k == Qt.Key_C)):
+            self.c.on_ocr_action("all")
+        elif k in (Qt.Key_Return, Qt.Key_Enter) or (ctrl and k == Qt.Key_C):
             self.c.finish("copy")
+        elif ctrl and k in TEXT_STYLE_KEYS:
+            tb.toggle_style(TEXT_STYLE_KEYS[k])
+        elif ctrl and k in (Qt.Key_BracketRight, Qt.Key_BracketLeft):
+            tb.bump_font(1 if k == Qt.Key_BracketRight else -1)
+        elif not ctrl and k in (Qt.Key_BracketRight, Qt.Key_BracketLeft):
+            step = 5 if shift else 1
+            tb.bump_width(step if k == Qt.Key_BracketRight else -step)
+        elif k in (Qt.Key_Delete, Qt.Key_Backspace) and self.selected is not None:
+            doc.delete(self.selected)
+            self._select(None)
         elif ctrl and k == Qt.Key_S:
             self.c.finish("save_as" if shift else "save")
         elif k == Qt.Key_F3:
@@ -353,6 +525,26 @@ class OverlayWindow(QWidget):
         p.translate(lr.topLeft())
         p.scale(1 / self.scale, 1 / self.scale)
         paint_document(p, shapes)
+        if self.selected is not None and 0 <= self.selected < len(doc.shapes):
+            x1, y1, x2, y2 = doc.shapes[self.selected].bbox()
+            pen = QPen(ACCENT, 1.5 * self.scale, Qt.DashLine)
+            p.setPen(pen)
+            p.setBrush(Qt.NoBrush)
+            p.drawRect(QRectF(x1 - 5, y1 - 5, x2 - x1 + 10, y2 - y1 + 10))
+        if self.ocr_lines is not None:
+            p.setPen(Qt.NoPen)
+            p.setBrush(QColor(76, 141, 255, 40))
+            for l in self.ocr_lines:
+                p.drawRect(QRectF(*l.box))
+            if self._ocr_sel is not None:
+                p.setBrush(QColor(76, 141, 255, 70))
+                p.setPen(QPen(ACCENT, 1.5 * self.scale))
+                p.drawRect(QRectF(*self._ocr_sel))
+            if self._press is not None and self._cursor is not None and self._moved:
+                a, b = self.to_doc(self._press), self.to_doc(self._cursor)
+                p.setBrush(QColor(76, 141, 255, 50))
+                p.setPen(QPen(ACCENT, 1.5 * self.scale, Qt.DashLine))
+                p.drawRect(QRectF(min(a[0], b[0]), min(a[1], b[1]), abs(b[0] - a[0]), abs(b[1] - a[1])))
         p.restore()
 
     def _label(self, p: QPainter, at: QPointF, text: str):
@@ -406,8 +598,11 @@ class OverlayWindow(QWidget):
     def _paint_hint(self, p: QPainter, st):
         if st is State.SELECTING:
             text = "드래그로 영역 선택 · 클릭하면 창 선택 · C 색상 복사 · Esc 취소"
+        elif self.active and self.ocr_lines is not None:
+            text = "글자 위를 드래그하면 그 부분만 복사 · Enter 전체 복사 · Esc 그리기로 돌아가기"
         elif self.active:
-            text = "Enter 복사 · Ctrl+S 바로 저장 · Ctrl+Shift+S 위치 골라 저장 · F3 고정 · Ctrl+Z 되돌리기 · Esc 취소"
+            text = ("Enter 복사 · Ctrl+S 저장 · F3 고정 · [ ] 두께 · 선택 후 Delete 삭제 · "
+                    "Ctrl+Z 되돌리기 · Esc 취소")
         else:
             return
         f = QFont(FONT_FAMILY)

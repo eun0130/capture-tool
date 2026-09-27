@@ -14,6 +14,7 @@ from capture_tool.core.clipboard_payload import (
     cf_html,
     dib_from_bgr,
     image_payload,
+    png_with_dpi,
     shapes_payload,
     text_payload,
 )
@@ -97,6 +98,23 @@ def test_dib_from_bgr_header_and_bottom_up():
     assert len(pixels) == 3 * 2 * 4
     assert pixels[0:4] == bytes([4, 5, 6, 255])       # first stored row = bottom
     assert pixels[12:16] == bytes([1, 2, 3, 255])
+
+
+def test_CLIP_10_png_carries_dpi():
+    import cv2
+    ok, png = cv2.imencode(".png", np.zeros((10, 20, 3), np.uint8))
+    out = png_with_dpi(png.tobytes(), 144)
+    i = out.index(b"pHYs")
+    ppx, ppy, unit = struct.unpack(">IIB", out[i + 4:i + 13])
+    assert (ppx, ppy, unit) == (5669, 5669, 1)       # 144 dpi in pixels per metre
+    assert cv2.imdecode(np.frombuffer(out, np.uint8), 1).shape == (10, 20, 3)
+    assert png_with_dpi(out, 96).count(b"pHYs") == 1  # replaces, never duplicates
+
+
+def test_CLIP_11_dib_carries_dpi():
+    dib = dib_from_bgr(np.zeros((2, 2, 3), np.uint8), dpi=144)
+    xppm, yppm = struct.unpack("<ii", dib[24:32])
+    assert (xppm, yppm) == (5669, 5669)
 
 
 def test_dib_from_bgra_and_gray():

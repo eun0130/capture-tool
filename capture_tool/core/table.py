@@ -4,6 +4,9 @@ from __future__ import annotations
 import re
 from statistics import median
 
+import cv2
+import numpy as np
+
 Item = tuple  # (text, x, y, w, h)
 
 
@@ -58,6 +61,49 @@ def to_grid(items: list[Item]) -> list[list[str]]:
             out[k] = f"{out[k]} {text}".strip()
         grid.append(out)
     return grid
+
+
+def _line_positions(profile: np.ndarray, min_len: int) -> list[int]:
+    """Indices where a long line runs (merging neighbours that belong to one thick line)."""
+    idx = [i for i, v in enumerate(profile) if v >= min_len]
+    out: list[int] = []
+    for i in idx:
+        if out and i - out[-1] <= 2:
+            continue
+        out.append(i)
+    return out
+
+
+def detect_grid(img: np.ndarray) -> tuple[list[int], list[int]] | None:
+    """Spreadsheet-style ruling lines -> (column x positions, row y positions), or None.
+
+    Excel/Sheets grid lines are thin, light-gray and run across the whole table, so we keep
+    long horizontal/vertical runs of non-white pixels and read their positions."""
+    if img is None or img.size == 0 or min(img.shape[:2]) < 10:
+        return None
+    gray = img if img.ndim == 2 else cv2.cvtColor(img[:, :, :3], cv2.COLOR_BGR2GRAY)
+    dark = (gray < 235).astype(np.uint8)
+    h, w = dark.shape
+    horiz = cv2.morphologyEx(dark, cv2.MORPH_OPEN, np.ones((1, max(20, w // 4)), np.uint8))
+    vert = cv2.morphologyEx(dark, cv2.MORPH_OPEN, np.ones((max(12, h // 4), 1), np.uint8))
+    ys = _line_positions(horiz.sum(axis=1), max(20, int(w * 0.25)))
+    xs = _line_positions(vert.sum(axis=0), max(12, int(h * 0.25)))
+    if len(xs) < 3 or len(ys) < 3:   # at least 2 columns and 2 rows of cells
+        return None
+    return xs, ys
+
+
+def grid_from_cells(items: list[Item], xs: list[int], ys: list[int]) -> list[list[str]]:
+    """Put each OCR box into the cell containing its center; words in one cell are joined."""
+    rows, cols = len(ys) - 1, len(xs) - 1
+    cells: list[list[list[tuple[float, float, str]]]] = [[[] for _ in range(cols)] for _ in range(rows)]
+    for text, x, y, w, h in items:
+        cx, cy = x + w / 2, y + h / 2
+        c = next((i for i in range(cols) if xs[i] <= cx < xs[i + 1]), None)
+        r = next((j for j in range(rows) if ys[j] <= cy < ys[j + 1]), None)
+        if c is not None and r is not None:
+            cells[r][c].append((y, x, text))
+    return [[" ".join(t for _, _, t in sorted(cell)) for cell in row] for row in cells]
 
 
 def to_tsv(grid: list[list[str]]) -> str:

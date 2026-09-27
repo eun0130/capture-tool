@@ -3,7 +3,7 @@ import threading
 import numpy as np
 import pytest
 
-from capture_tool.core.ocr import OcrEngine, OcrLine, OcrUnavailable, full_text
+from capture_tool.core.ocr import OcrEngine, OcrLine, OcrUnavailable, full_text, select_text
 from capture_tool.core.redact import char_boxes
 
 
@@ -100,6 +100,30 @@ def test_char_boxes_proportional():
     assert char_boxes("", (0, 0, 10, 10), [(0, 1)]) == []
 
 
+# --- drag to copy part of the recognized text -------------------------------------------------
+
+def test_SEL_01_drag_over_part_of_a_line_copies_those_characters():
+    lines = [OcrLine("0123456789", (100, 10, 200, 20), 0.9)]     # 20 px per character
+    assert select_text(lines, (140, 0, 60, 40)) == "234"
+
+
+def test_SEL_02_drag_over_several_lines():
+    lines = [OcrLine("첫 번째 줄", (10, 10, 120, 20), 0.9), OcrLine("두 번째 줄", (10, 40, 120, 20), 0.9),
+             OcrLine("세 번째 줄", (10, 70, 120, 20), 0.9)]
+    assert select_text(lines, (0, 0, 300, 65)) == "첫 번째 줄\n두 번째 줄"
+
+
+def test_SEL_03_nothing_under_the_drag():
+    lines = [OcrLine("abc", (10, 10, 30, 20), 0.9)]
+    assert select_text(lines, (200, 200, 10, 10)) == ""
+    assert select_text([], (0, 0, 10, 10)) == ""
+
+
+def test_SEL_04_same_row_segments_joined_with_space():
+    lines = [OcrLine("이름", (10, 10, 40, 20), 0.9), OcrLine("홍길동", (100, 12, 60, 20), 0.9)]
+    assert select_text(lines, (0, 0, 300, 40)) == "이름 홍길동"
+
+
 # --- second recognizer for Latin-script languages (French, Spanish, German, ...) ---------
 
 class FakeLatin:
@@ -185,6 +209,42 @@ def test_OCR_12_real_mixed_korean_french_spanish_german(qt_app):
     for word in ["garçon", "crème", "brûlée", "côté", "église", "niño", "piña", "montaña", "¿Dónde",
                  "estación", "Größe", "Straße", "Übung", "Mädchen"]:
         assert word in joined, (word, joined)
+
+
+@pytest.mark.slow
+def test_OCR_13_real_spreadsheet_screenshot_to_cells(qt_app):
+    """Excel-like screenshot (light gray grid, Korean + numbers) -> exact cells."""
+    import numpy as np
+    from PySide6.QtCore import QRect, Qt
+    from PySide6.QtGui import QColor, QImage, QPainter, QPen
+    from capture_tool.core.table import detect_grid, grid_from_cells
+    from tests.render import _font
+
+    rows = [["품목", "수량", "단가", "금액"], ["사과", "3", "1,200", "3,600"],
+            ["배", "", "2,500", "0"], ["합계", "", "", "3,600"]]
+    cw, rh, x0, y0 = 150, 34, 10, 10
+    W, H = x0 * 2 + cw * 4 + 1, y0 * 2 + rh * 4 + 1
+    img = QImage(W, H, QImage.Format_RGB888)
+    img.fill(QColor("white"))
+    p = QPainter(img)
+    p.setPen(QPen(QColor(212, 212, 212), 1))
+    for r in range(5):
+        p.drawLine(x0, y0 + r * rh, x0 + 4 * cw, y0 + r * rh)
+    for c in range(5):
+        p.drawLine(x0 + c * cw, y0, x0 + c * cw, y0 + 4 * rh)
+    p.setFont(_font(15))
+    p.setPen(QColor("black"))
+    for r, row in enumerate(rows):
+        for c, t in enumerate(row):
+            align = Qt.AlignVCenter | (Qt.AlignRight if c > 0 else Qt.AlignLeft)
+            p.drawText(QRect(x0 + c * cw + 6, y0 + r * rh, cw - 12, rh), align, t)
+    p.end()
+    arr = np.frombuffer(img.constBits(), np.uint8).reshape(H, img.bytesPerLine())[:, :W * 3]
+    bgr = arr.reshape(H, W, 3)[:, :, ::-1].copy()
+    xs, ys = detect_grid(bgr)
+    lines = OcrEngine().recognize(bgr)
+    grid = grid_from_cells([(l.text, *l.box) for l in lines], xs, ys)
+    assert grid == rows
 
 
 @pytest.mark.slow

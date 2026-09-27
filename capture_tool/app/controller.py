@@ -7,18 +7,21 @@ from datetime import datetime
 from pathlib import Path
 
 import cv2
-from PySide6.QtCore import QObject, QPoint, QThreadPool, QRunnable, QTimer, Signal
+import numpy as np
+from PySide6.QtCore import QObject, QPoint, QRunnable, Qt, QThreadPool, QTimer, Signal
 
 from ..core import settings as settings_io
-from ..core.clipboard_payload import UNICODE, dib_from_bgr, image_payload, shapes_payload, text_payload
+from ..core.clipboard_payload import (UNICODE, dib_from_bgr, image_payload, png_with_dpi, shapes_payload,
+                                      text_payload)
 from ..core.color import pixel_color, push_recent
 from ..core.convert import annotations_to_drawing
 from ..core.drawingml import gvml_package, svg
 from ..core.geometry import Rect, clamp_rect, nudge, order_cursor_first, virtual_bounds
 from ..core.naming import SaveDirError, render, resolve_save_dir, unique_path
-from ..core.ocr import OcrUnavailable, full_text
+from ..core.ocr import OcrUnavailable, full_text, select_text
 from ..core.session import CaptureSession, State
 from ..core.shapes import attach_text, detect, to_drawing
+from ..core.table import detect_grid, grid_from_cells
 from .overlay import OverlayWindow
 from .pin import PinWindow
 from .render import compose
@@ -43,6 +46,7 @@ class _Job(QRunnable):
 class Controller(QObject):
     _job_done = Signal(object)
     _ppt_done = Signal(object)
+    _text_ready = Signal(object)
 
     def __init__(self, screen, clipboard, ocr, settings, settings_path, fallback_dir, sync=False, notify=None):
         super().__init__()
@@ -64,6 +68,10 @@ class Controller(QObject):
         self._pending = None
         self._job_done.connect(self._on_job_done)
         self._ppt_done.connect(self._on_ppt_done)
+        self._text_ready.connect(self._on_text_ready)
+        self._text_ctx = None
+        self._text_lines: list = []
+        self._text_grid = None
         self.ask_save_path = self._ask_save_path_dialog
         from ..platform.powerpoint import PowerPointSender
         from ..platform.security_software import detect_drm
@@ -96,8 +104,8 @@ class Controller(QObject):
             return False
         ordered = order_cursor_first(mons, self.screen.cursor_pos())
         if mode == "fullscreen":
-            img = self.screen.grab(ordered[0].rect)
-            self._copy_image(img)
+            img = np.ascontiguousarray(self.screen.grab(ordered[0].rect)[:, :, :3])
+            self._copy_image(img, 96 * ordered[0].scale)
             return True
         wins = self.screen.windows()
         self.session.hotkey(virtual_bounds(mons))
@@ -221,17 +229,115 @@ class Controller(QObject):
             getattr(self.session.document, name)()
             if self.active_overlay:
                 self.active_overlay.update()
+        elif name == "text" and self.mode != "text":
+            self._start_text_mode()
         elif name in ("text", "shapes", "ppt"):
             self._run_recognition(name)
 
-    def _take(self):
-        """Grab selection + document + pixels, end the session and close overlays."""
+    # --- text mode: copy everything, then drag over the frozen image to copy a part -------
+    def _start_text_mode(self) -> None:
+        if self.session.state is not State.EDITING:
+            return
+        ov, sel = self.active_overlay, self.session.selection
+        raw = ov.crop(sel)
+
+        def work():
+            try:
+                return self.ocr.recognize(raw), None
+            except OcrUnavailable as e:
+                return [], str(e)
+
+        self._text_ctx = (ov, raw)
+        if self.sync:
+            self._on_text_ready(work())
+        else:
+            ov.setCursor(Qt.BusyCursor)
+            QThreadPool.globalInstance().start(_Job(work, self._text_ready))
+
+    def _on_text_ready(self, result) -> None:
+        ov, raw = self._text_ctx
+        if self.session.state is not State.EDITING or ov is not self.active_overlay:
+            return  # the capture was closed while recognizing
+        if isinstance(result, Exception):
+            self.notify(f"인식 중 오류가 발생했습니다: {result}")
+            return
+        lines, err = result
+        if err:
+            self.notify(err)
+            return
+        if not lines:
+            self.notify("텍스트를 찾지 못했습니다.")
+            ov.unsetCursor()
+            return
+        self._text_lines, self._text_grid = lines, self._grid_for(raw, lines)
+        self._copy_text(lines, self._text_grid, drag_hint=True)
+        ov.enter_ocr_mode(lines)
+
+    @staticmethod
+    def _grid_for(raw, lines):
+        """Spreadsheet screenshot -> table cells (from its grid lines), else None."""
+        found = detect_grid(raw)
+        if not found:
+            return None
+        grid = grid_from_cells([(l.text, *l.box) for l in lines], *found)
+        filled = sum(1 for row in grid for c in row if c)
+        return grid if filled >= 3 else None
+
+    def _copy_text(self, lines, grid=None, drag_hint=False) -> None:
+        redact = self.settings.redact_pii
+        if grid:
+            cells = [[mask(c) if redact else c for c in row] for row in grid]
+            if self._set_clipboard(text_payload("", table=cells)):
+                self.notify(f"표 {len(cells)}행×{len(cells[0])}열로 복사했습니다. Excel에 붙여넣으면 칸이 나뉩니다.")
+            return
+        raw_text = full_text(lines)
+        text = mask(raw_text) if redact else raw_text
+        if text.strip() and self._set_clipboard(text_payload(text)):
+            note = " (개인정보 가림)" if text != raw_text else ""
+            hint = " 글자 위를 드래그하면 그 부분만 복사합니다." if drag_hint else ""
+            self.notify(f"텍스트 {len(lines)}줄을 복사했습니다{note}.{hint}")
+
+    def copy_ocr_selection(self, rect) -> None:
+        text = select_text(self._text_lines, rect)
+        if not text:
+            self.notify("드래그한 곳에 인식된 글자가 없습니다.")
+            return
+        if self.settings.redact_pii:
+            text = mask(text)
+        if self._set_clipboard(text_payload(text)):
+            n = len(text.replace("\n", "").replace(" ", ""))
+            self.notify(f"선택한 글자 {n}자를 복사했습니다.")
+
+    def on_ocr_action(self, name: str) -> None:
+        ov = self.active_overlay
+        if name == "all":
+            self._copy_text(self._text_lines, self._text_grid)
+        elif name == "back" and ov is not None:
+            ov.exit_ocr_mode()
+        elif name == "window" and ov is not None:
+            sel = self.session.selection
+            pos = ov.local_rect(sel).bottomLeft().toPoint() + ov.geometry().topLeft()
+            lines, grid = self._text_lines, self._text_grid
+            self._take()
+            self._show_text_panel(lines, None, pos, grid)
+
+    def _show_text_panel(self, lines, qr, pos, grid=None) -> None:
+        if self.text_panel:
+            self.text_panel.close()
+        self.text_panel = TextPanel(lines, self._set_clipboard, self.settings.redact_pii, qr, self.notify, grid)
+        self.text_panel.move(pos + QPoint(0, 8))
+        self.text_panel.show()
+
+    def _take(self, close: bool = True):
+        """Grab selection + document + pixels and end the session. close=False lets the caller
+        put the result on the clipboard first and hide the (large) overlay windows afterwards."""
         ov = self.active_overlay
         sel, doc = self.session.selection, self.session.document
         raw = ov.crop(sel)
         self._remember_style(ov)
         self.session.key("Escape")
-        self.close_overlays()
+        if close:
+            self.close_overlays()
         return ov, sel, doc, raw
 
     def _remember_style(self, ov) -> None:
@@ -266,10 +372,12 @@ class Controller(QObject):
                 return  # cancelled: keep the capture and the drawing
             if target.suffix.lower() not in (".png", ".jpg", ".jpeg"):
                 target = target.with_suffix(ext)
-        ov, sel, doc, raw = self._take()
+        ov, sel, doc, raw = self._take(close=action != "copy")
         final = compose(raw, doc)
+        dpi = 96 * ov.scale
         if action == "copy":
-            self._copy_image(final)
+            self._copy_image(final, dpi)   # clipboard first (what "Enter → copied" means) ...
+            self.close_overlays()          # ... then hide the full-screen windows
         elif action == "save":
             self._save(final)
         elif action == "save_as":
@@ -281,9 +389,17 @@ class Controller(QObject):
             pos = ov.mapToGlobal(ov.local_rect(sel).topLeft().toPoint())
             self.pin(final, pos, ov.devicePixelRatioF() or ov.scale, ov.screen())
 
-    def _copy_image(self, img) -> None:
+    @staticmethod
+    def _image_payload(img, dpi: float = 96) -> dict | None:
+        """PNG + DIB tagged with the screen's pixels-per-inch, so Office pastes it at on-screen size."""
         ok, png = cv2.imencode(".png", img, [cv2.IMWRITE_PNG_COMPRESSION, 1])  # fast; size is secondary
-        if ok and self._set_clipboard(image_payload(png.tobytes(), dib_from_bgr(img))):
+        if not ok:
+            return None
+        return image_payload(png_with_dpi(png.tobytes(), dpi), dib_from_bgr(img, dpi))
+
+    def _copy_image(self, img, dpi: float = 96) -> None:
+        payload = self._image_payload(img, dpi)
+        if payload and self._set_clipboard(payload):
             self.notify("이미지를 클립보드에 복사했습니다. 원하는 곳에 Ctrl+V")
         if self.settings.auto_save:
             self._save(img)
@@ -335,7 +451,7 @@ class Controller(QObject):
             p.setScreen(screen)
             p.move(pos)
         p.closed.connect(lambda w: self.pins.remove(w) if w in self.pins else None)
-        p.copyRequested.connect(lambda w: self._copy_image(w.image))
+        p.copyRequested.connect(lambda w: self._copy_image(w.image, 96 * w.dpr))
         p.saveRequested.connect(lambda w: self._save(w.image))
         self.pins.append(p)
         p.show()
@@ -369,64 +485,58 @@ class Controller(QObject):
                     qr = data or None
                 except cv2.error:
                     pass
-                return kind, lines, err, qr, None
+                    return kind, lines, err, qr, self._grid_for(raw, lines) if lines else None
             det = detect(raw, text_boxes=[l.box for l in lines])
             attach_text(det, [(l.text, l.box) for l in lines])
             return kind, lines, err, None, det
 
-        self._pending = (user_shapes, final, pos)
+        self._pending = (user_shapes, final, pos, 96 * ov.scale)
         if self.sync:
             self._on_job_done(work())
         else:
             QThreadPool.globalInstance().start(_Job(work, self._job_done))
 
     def _on_job_done(self, result) -> None:
-        user_shapes, final, pos = self._pending
+        user_shapes, final, pos, dpi = self._pending
         if isinstance(result, Exception):
             self.notify(f"인식 중 오류가 발생했습니다: {result}")
             return
-        kind, lines, err, qr, det = result
+        kind, lines, err, qr, extra = result
         if kind == "text":
-            self._finish_text(lines, err, qr, pos)
+            self._finish_text(lines, err, qr, pos, extra)
         else:
-            self._finish_shapes(det or [], user_shapes, final, err, send=kind == "ppt")
+            self._finish_shapes(extra or [], user_shapes, final, err, send=kind == "ppt", dpi=dpi)
 
-    def _finish_text(self, lines, err, qr, pos) -> None:
+    def _finish_text(self, lines, err, qr, pos, grid=None) -> None:
+        """Direct "text" hotkey: copy everything at once and show the text window."""
         if err:
             self.notify(err)
             return
         if not lines and not qr:
             self.notify("텍스트를 찾지 못했습니다.")
             return
-        text = full_text(lines)
-        if self.settings.redact_pii:
-            text = mask(text)
-        if text.strip():
-            if self._set_clipboard(text_payload(text)):
-                self.notify(f"텍스트 {len(lines)}줄을 복사했습니다." + (" (개인정보 가림)" if text != full_text(lines) else ""))
+        if lines:
+            self._copy_text(lines, grid)
         elif qr:
             self._set_clipboard(text_payload(qr))
             self.notify("QR 코드 내용을 복사했습니다.")
-        if self.text_panel:
-            self.text_panel.close()
-        self.text_panel = TextPanel(lines, self._set_clipboard, self.settings.redact_pii, qr, self.notify)
-        self.text_panel.move(pos + QPoint(0, 8))
-        self.text_panel.show()
+        self._show_text_panel(lines, qr, pos, grid)
 
-    def _finish_shapes(self, det, user_shapes, final, err, send: bool = False) -> None:
+    def _finish_shapes(self, det, user_shapes, final, err, send: bool = False, dpi: float = 96) -> None:
         shapes, conns = to_drawing(det)
-        us, uc = annotations_to_drawing(user_shapes)
+        us, uc = annotations_to_drawing(user_shapes, scale=dpi / 96)
         shapes, conns = shapes + us, conns + uc
         if not shapes and not conns:
             if send:  # nothing to convert: still deliver the picture to PowerPoint
-                ok, png = cv2.imencode(".png", final, [cv2.IMWRITE_PNG_COMPRESSION, 1])
-                if self._set_clipboard(image_payload(png.tobytes(), dib_from_bgr(final))):
+                payload = self._image_payload(final, dpi)
+                if payload and self._set_clipboard(payload):
                     self._send_to_powerpoint("도형이 없어 이미지로")
             else:
                 self.notify("도형을 찾지 못했습니다. 사각형·원·삼각형·선·화살표를 인식합니다.")
             return
         ok, png = cv2.imencode(".png", final)
-        payload = shapes_payload(gvml_package(shapes, conns), svg(shapes, conns), png.tobytes())
+        payload = shapes_payload(gvml_package(shapes, conns, dpi), svg(shapes, conns, dpi),
+                                 png_with_dpi(png.tobytes(), dpi))
         if not self._set_clipboard(payload):
             return
         note = " (텍스트 인식 없이)" if err else ""

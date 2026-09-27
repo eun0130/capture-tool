@@ -211,5 +211,29 @@ def reading_order(lines: list[OcrLine]) -> list[OcrLine]:
     return [l for row in rows for l in sorted(row, key=lambda l: l.box[0])]
 
 
+def select_text(lines: list[OcrLine], rect: tuple) -> str:
+    """Text under a dragged rectangle (x, y, w, h): whole characters whose horizontal half lies
+    inside it (widths estimated proportionally), rows joined by newlines, segments by spaces."""
+    rx, ry, rw, rh = rect
+    picked: list[OcrLine] = []
+    for l in reading_order(lines):
+        x, y, w, h = l.box
+        if y + h <= ry or y >= ry + rh or x + w <= rx or x >= rx + rw or not l.text:
+            continue
+        per = w / len(l.text)
+        chars = [c for i, c in enumerate(l.text) if rx <= x + (i + 0.5) * per <= rx + rw]
+        part = "".join(chars).strip()
+        if part:
+            picked.append(OcrLine(part, l.box, l.score))
+    rows: list[list[OcrLine]] = []
+    for l in picked:
+        cy = l.box[1] + l.box[3] / 2
+        if rows and abs(cy - (rows[-1][0].box[1] + rows[-1][0].box[3] / 2)) <= max(l.box[3], rows[-1][0].box[3]) * 0.5:
+            rows[-1].append(l)
+        else:
+            rows.append([l])
+    return "\n".join(" ".join(l.text for l in row) for row in rows)
+
+
 def full_text(lines: list[OcrLine]) -> str:
     return "\n".join(l.text for l in lines)

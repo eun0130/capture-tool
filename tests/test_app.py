@@ -258,7 +258,8 @@ def test_APP_14_text_mode_copies_ocr_text_with_pii_masked(make):
     text = c.clipboard.last[UNICODE]
     assert "견적 요약" in text
     assert "010-1234-5678" not in text and "***" in text
-    assert c.text_panel is not None and c.text_panel.isVisible()
+    # the capture stays open so the user can drag over part of the text
+    assert c.overlays == [ov] and ov.ocr_lines and ov.ocr_bar.isVisible()
 
 
 def test_APP_15_text_mode_pii_off(make):
@@ -286,6 +287,8 @@ def test_APP_17_text_panel_table_copy(make):
     c.start_capture()
     drag(c.overlays[0], (100, 100), (400, 300))
     c.overlays[0].toolbar.trigger("text")
+    c.overlays[0].ocr_bar.trigger("window")        # "창으로 보기"
+    assert c.overlays == [] and c.text_panel.isVisible()
     c.text_panel.copy_table()
     assert c.clipboard.last[UNICODE] == "품목\t수량\r\nA\t3"
 
@@ -623,6 +626,160 @@ def test_APP_45_no_drm_no_notice(make):
     drag(c.overlays[0], (100, 100), (400, 300))
     c.overlays[0].side_bar.trigger("ppt")
     assert not any("DRM" in m for m in c.messages)
+
+
+# --- v0.3: thickness, text style, drag-to-copy text, spreadsheet tables, same size in PPT ---
+
+def _editing(make, **kw):
+    c = make(**kw)
+    c.start_capture()
+    ov = c.overlays[0]
+    drag(ov, (100, 100), (500, 400))
+    return c, ov
+
+
+def test_APP_46_custom_thickness_and_bracket_keys(make):
+    c, ov = _editing(make)
+    ov.toolbar.set_width(13)
+    ov.set_tool("rect")
+    drag(ov, (150, 150), (250, 250))
+    assert c.session.document.shapes[-1].width == 13
+    QTest.keyClick(ov, Qt.Key_BracketRight)
+    assert ov.toolbar.line_width == 14
+    QTest.keyClick(ov, Qt.Key_BracketLeft, Qt.ShiftModifier)
+    assert ov.toolbar.line_width == 9
+    ov.toolbar.palette.width_spin.setValue(27)
+    assert ov.toolbar.line_width == 27
+
+
+def test_APP_47_restyle_selected_shape_and_undo(make):
+    c, ov = _editing(make)
+    ov.set_tool("rect")
+    drag(ov, (150, 150), (250, 250))
+    ov.set_tool("select")
+    QTest.mouseClick(ov, Qt.LeftButton, Qt.NoModifier, QPoint(150, 200))   # click its edge
+    assert ov.selected == 0
+    ov.set_color("#1971C2")
+    ov.toolbar.set_width(9)
+    s = c.session.document.shapes[0]
+    assert (s.color, s.width) == ("#1971C2", 9)
+    c.session.document.undo()
+    c.session.document.undo()
+    assert c.session.document.shapes[0].color == "#E03131"
+
+
+def test_APP_48_text_style_shortcuts(make):
+    c, ov = _editing(make)
+    ov.set_tool("text")
+    QTest.mouseClick(ov, Qt.LeftButton, Qt.NoModifier, QPoint(200, 200))
+    ed = ov._editor
+    ed.insert("강조")   # like an IME commit (QTest.keyClicks can't type Hangul)
+    for key in (Qt.Key_B, Qt.Key_I, Qt.Key_U, Qt.Key_5):
+        QTest.keyClick(ed, key, Qt.ControlModifier)
+    for _ in range(3):
+        QTest.keyClick(ed, Qt.Key_BracketRight, Qt.ControlModifier)
+    assert ed.font().bold() and ed.font().italic() and ed.font().underline() and ed.font().strikeOut()
+    QTest.keyClick(ed, Qt.Key_Return)
+    assert c.overlays == [ov]                 # Enter finished the text, not the whole capture
+    s = c.session.document.shapes[-1]
+    assert (s.text, s.bold, s.italic, s.underline, s.strike) == ("강조", True, True, True, True)
+    assert s.font_size == ov.toolbar.default_font_size + 6
+    tb = ov.toolbar
+    assert tb.buttons["bold"].isChecked() and tb.buttons["strike"].isChecked()
+
+
+def test_APP_48b_escape_in_text_input_cancels_only_the_text(make):
+    c, ov = _editing(make)
+    ov.set_tool("text")
+    QTest.mouseClick(ov, Qt.LeftButton, Qt.NoModifier, QPoint(200, 200))
+    ov._editor.insert("지울 글자")
+    QTest.keyClick(ov._editor, Qt.Key_Escape)
+    assert c.overlays == [ov] and c.session.document.shapes == []
+
+
+def test_APP_49_text_style_on_selected_text_and_delete_key(make):
+    c, ov = _editing(make)
+    c.session.document.add(__import__("capture_tool.core.annotations", fromlist=["Shape"]).Shape(
+        kind="text", points=[(60, 60)], text="메모", color="#000000"))
+    ov.set_tool("select")
+    QTest.mouseClick(ov, Qt.LeftButton, Qt.NoModifier, QPoint(165, 170))
+    assert ov.selected == 0
+    QTest.keyClick(ov, Qt.Key_B, Qt.ControlModifier)
+    QTest.keyClick(ov, Qt.Key_BracketRight, Qt.ControlModifier)
+    s = c.session.document.shapes[0]
+    assert s.bold and s.font_size > 20
+    QTest.keyClick(ov, Qt.Key_Delete)
+    assert c.session.document.shapes == []
+
+
+def test_APP_50_drag_over_text_copies_just_that_part(make):
+    lines = [OcrLine("0123456789", (100, 10, 200, 20), 0.95), OcrLine("다음 줄", (100, 60, 80, 20), 0.95)]
+    c, ov = _editing(make, ocr=FakeOcr(lines))
+    ov.side_bar.trigger("text")
+    assert "0123456789" in c.clipboard.last[UNICODE]          # everything is copied first
+    # selection starts at (100,100); drag over characters 2..4 of the first line
+    drag(ov, (100 + 140, 100 + 5), (100 + 200, 100 + 35))
+    assert c.clipboard.last[UNICODE] == "234"
+    assert any("3자" in m for m in c.messages)
+    QTest.keyClick(ov, Qt.Key_Escape)                           # leave text mode, keep the capture
+    assert ov.ocr_lines is None and c.overlays == [ov]
+    QTest.keyClick(ov, Qt.Key_Escape)
+    assert c.overlays == []
+
+
+def test_APP_51_text_window_closes_with_escape(make):
+    lines = [OcrLine("가나다", (10, 10, 60, 20), 0.95)]
+    c, ov = _editing(make, ocr=FakeOcr(lines))
+    ov.side_bar.trigger("text")
+    ov.ocr_bar.trigger("window")
+    panel = c.text_panel
+    assert panel.isVisible() and panel.close_button.isVisible()
+    QTest.keyClick(panel, Qt.Key_Escape)
+    assert not panel.isVisible()
+
+
+def test_APP_52_spreadsheet_capture_copies_as_table(make):
+    from tests.test_table import excel_like
+    img, _ = excel_like(rows=3, cols=3, cw=120, rh=28, x0=10, y0=10)
+    screen_img = np.full((600, 800, 3), 255, np.uint8)
+    screen_img[100:100 + img.shape[0], 100:100 + img.shape[1]] = img
+    items = [("품목", (20, 15, 40, 18)), ("수량", (140, 15, 40, 18)), ("금액", (260, 15, 40, 18)),
+             ("사과", (20, 43, 40, 18)), ("3", (140, 43, 10, 18)), ("9,000", (260, 43, 50, 18)),
+             ("배", (20, 71, 20, 18)), ("1,000", (260, 71, 50, 18))]
+    lines = [OcrLine(t, b, 0.95) for t, b in items]
+    c = make(screen=FakeScreen(image=screen_img), ocr=FakeOcr(lines))
+    c.start_capture()
+    ov = c.overlays[0]
+    drag(ov, (100, 100), (100 + img.shape[1], 100 + img.shape[0]))
+    ov.side_bar.trigger("text")
+    p = c.clipboard.last
+    assert p[UNICODE] == "품목\t수량\t금액\r\n사과\t3\t9,000\r\n배\t\t1,000"
+    assert b"<table>" in p["HTML Format"]
+    assert any("표" in m and "3행" in m for m in c.messages)
+
+
+def test_APP_53_same_size_in_powerpoint_on_150_percent_screen(make):
+    big = Monitor(0, Rect(0, 0, 1200, 900), 1.5, True, "HiDPI")
+    c = make(screen=FakeScreen(monitors=[big]))
+    c.start_capture()
+    ov = c.overlays[0]
+    drag(ov, (100, 100), (500, 400))            # logical px on a 1.5 screen
+    ov.set_tool("rect")
+    drag(ov, (150, 150), (250, 250))            # 100 logical = 150 physical px
+    ov.toolbar.trigger("shapes")
+    xml = zipfile.ZipFile(io.BytesIO(c.clipboard.last[GVML])).read("clipboard/drawings/drawing1.xml").decode()
+    from capture_tool.core.drawingml import px_to_emu
+    assert f'cx="{px_to_emu(100)}"' in xml      # same size as seen on screen
+
+
+def test_APP_54_picture_carries_screen_dpi(make):
+    big = Monitor(0, Rect(0, 0, 1200, 900), 1.5, True, "HiDPI")
+    c = make(screen=FakeScreen(monitors=[big]))
+    c.start_capture()
+    drag(c.overlays[0], (100, 100), (300, 200))
+    QTest.keyClick(c.overlays[0], Qt.Key_Return)
+    png = c.clipboard.last[PNG]
+    assert b"pHYs" in png
 
 
 def test_APP_30_fullscreen_mode_copies_cursor_monitor(make):

@@ -165,6 +165,24 @@ def test_plain_line_has_no_arrowhead():
     assert root.find(".//a:cxnSp//a:tailEnd", NS) is None
 
 
+def test_DML_16_text_formatting():
+    s = DShape("rect", 0, 0, 100, 40, text="강조", font_size=18, bold=True, italic=True, underline=True, strike=True)
+    rpr = parse(drawing_xml([s], [])).find(".//a:rPr", NS)
+    assert (rpr.get("sz"), rpr.get("b"), rpr.get("i"), rpr.get("u"), rpr.get("strike")) == \
+        ("1800", "1", "1", "sng", "sngStrike")
+
+
+def test_DML_17_same_size_on_high_dpi_screens():
+    """150 physical px on a 150% screen are 100 logical px = 100/96 inch on screen."""
+    root = parse(drawing_xml([DShape("rect", 0, 0, 150, 60)], [], dpi=144))
+    ext = root.find(".//a:sp//a:ext", NS)
+    assert int(ext.get("cx")) == px_to_emu(100) and int(ext.get("cy")) == px_to_emu(40)
+    s = svg([DShape("rect", 0, 0, 150, 60)], [], dpi=144)
+    root_svg = ET.fromstring(s.encode())
+    assert root_svg.get("width") == "81pt"   # (150 + 2*6 padding) px at 144 dpi, in points
+    assert root_svg.get("viewBox") == "0 0 162 72"   # drawing coordinates stay in pixels
+
+
 def test_colors_written():
     root = parse(drawing_xml([DShape("rect", 0, 0, 10, 10, fill="#f1f3f5", stroke="#343a40")], []))
     vals = [c.get("val") for c in root.findall(".//a:sp/a:spPr//a:srgbClr", NS)]

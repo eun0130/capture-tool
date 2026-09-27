@@ -64,8 +64,12 @@ def shapes_payload(gvml: bytes, svg_text: str, png: bytes) -> dict:
     return {GVML: gvml, SVG: svg_text.encode("utf-8"), PNG: png}
 
 
-def dib_from_bgr(img: np.ndarray) -> bytes:
-    """CF_DIB: BITMAPINFOHEADER + bottom-up 32-bit BGRA pixels."""
+def _ppm(dpi: float) -> int:
+    return round(dpi / 0.0254)  # pixels per metre
+
+
+def dib_from_bgr(img: np.ndarray, dpi: float = 96) -> bytes:
+    """CF_DIB: BITMAPINFOHEADER + bottom-up 32-bit BGRA pixels, tagged with the screen dpi."""
     if img.ndim == 2:
         img = np.stack([img] * 3, axis=-1)
     h, w = img.shape[:2]
@@ -73,5 +77,28 @@ def dib_from_bgr(img: np.ndarray) -> bytes:
         bgra = np.concatenate([img, np.full((h, w, 1), 255, np.uint8)], axis=2)
     else:
         bgra = img[:, :, :4]
-    header = struct.pack("<IiiHHIIiiII", 40, w, h, 1, 32, 0, w * h * 4, 2835, 2835, 0, 0)
+    header = struct.pack("<IiiHHIIiiII", 40, w, h, 1, 32, 0, w * h * 4, _ppm(dpi), _ppm(dpi), 0, 0)
     return header + np.ascontiguousarray(bgra[::-1]).tobytes()
+
+
+def png_with_dpi(png: bytes, dpi: float) -> bytes:
+    """Add (or replace) the PNG pHYs chunk so Office/Word place the picture at the size it had
+    on screen: a 150% display has 144 physical pixels per inch, not 96."""
+    import zlib
+    sig, pos = png[:8], 8
+    chunks = []
+    while pos < len(png):
+        n = struct.unpack(">I", png[pos:pos + 4])[0]
+        kind = png[pos + 4:pos + 8]
+        chunks.append((kind, png[pos:pos + 12 + n]))
+        pos += 12 + n
+    data = struct.pack(">IIB", _ppm(dpi), _ppm(dpi), 1)
+    phys = struct.pack(">I", len(data)) + b"pHYs" + data + struct.pack(">I", zlib.crc32(b"pHYs" + data))
+    out = [sig]
+    for kind, raw in chunks:
+        if kind == b"pHYs":
+            continue
+        out.append(raw)
+        if kind == b"IHDR":
+            out.append(phys)
+    return b"".join(out)

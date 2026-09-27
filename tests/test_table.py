@@ -1,4 +1,4 @@
-from capture_tool.core.table import to_grid, to_tsv
+from capture_tool.core.table import detect_grid, grid_from_cells, to_grid, to_tsv
 
 
 def item(text, col, row, w=60, h=20, dx=0, dy=0):
@@ -30,6 +30,45 @@ def test_TBL_05_empty_and_single_line():
     assert to_grid([]) == []
     assert to_tsv([]) == ""
     assert to_grid([("hello world", 10, 10, 100, 20)]) == [["hello world"]]
+
+
+# --- spreadsheet screenshots: cells come from the grid lines ------------------------------
+
+def excel_like(rows=4, cols=3, cw=120, rh=28, x0=10, y0=10):
+    import numpy as np
+    img = np.full((y0 * 2 + rows * rh + 1, x0 * 2 + cols * cw + 1, 3), 255, np.uint8)
+    for r in range(rows + 1):
+        img[y0 + r * rh, x0:x0 + cols * cw + 1] = (212, 212, 212)
+    for c in range(cols + 1):
+        img[y0:y0 + rows * rh + 1, x0 + c * cw] = (212, 212, 212)
+    return img, (x0, y0, cw, rh)
+
+
+def test_TBL_06_detect_grid_from_spreadsheet_lines():
+    img, (x0, y0, cw, rh) = excel_like()
+    xs, ys = detect_grid(img)
+    assert xs == [x0 + i * cw for i in range(4)]
+    assert ys == [y0 + i * rh for i in range(5)]
+
+
+def test_TBL_07_cells_from_grid_keep_empty_and_multiword_cells():
+    xs, ys = [10, 130, 250, 370], [10, 38, 66]
+    items = [("품목", 20, 15, 40, 18), ("수량", 140, 15, 40, 18), ("비고", 260, 15, 40, 18),
+             ("사과", 20, 43, 40, 18), ("박스", 60, 43, 30, 18), ("12", 300, 43, 20, 18)]
+    assert grid_from_cells(items, xs, ys) == [["품목", "수량", "비고"], ["사과 박스", "", "12"]]
+
+
+def test_TBL_08_no_grid_in_plain_text():
+    import numpy as np
+    from tests.render import render_text  # noqa: F401  (plain white image with no lines)
+    img = np.full((200, 400, 3), 255, np.uint8)
+    img[50:52, 20:120] = 0   # an underline is not a table
+    assert detect_grid(img) is None
+
+
+def test_TBL_09_grid_needs_two_rows_and_two_columns():
+    img, _ = excel_like(rows=1, cols=1)
+    assert detect_grid(img) is None
 
 
 def test_two_words_same_cell_joined():

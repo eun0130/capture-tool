@@ -139,6 +139,37 @@ def test_unknown_kind():
         Shape(kind="star", points=[(0, 0), (5, 5)])
 
 
+def test_ANN_16_update_style_is_undoable():
+    d = Document(400, 300)
+    d.add(rect(10, 10, 50, 50, color="#E03131", width=4))
+    assert d.update(0, color="#1971C2", width=12)
+    assert (d.shapes[0].color, d.shapes[0].width) == ("#1971C2", 12)
+    d.undo()
+    assert (d.shapes[0].color, d.shapes[0].width) == ("#E03131", 4)
+
+
+def test_ANN_17_update_validates():
+    d = Document(400, 300)
+    d.add(rect(10, 10, 50, 50))
+    with pytest.raises(ValueError):
+        d.update(0, color="nope")
+    with pytest.raises(IndexError):
+        d.update(5, width=3)
+    assert d.update(0) is False  # nothing to change
+
+
+def test_ANN_18_text_style_fields():
+    s = Shape(kind="text", points=[(0, 0)], text="메모", font_size=300, bold=True, italic=True,
+              underline=True, strike=True)
+    assert s.font_size == 144 and s.bold and s.italic and s.underline and s.strike
+    assert Shape(kind="text", points=[(0, 0)], text="x", font_size=1).font_size == 8
+
+
+def test_ANN_19_width_range():
+    assert rect(1, 1, 50, 50, width=0.5).width == 0.5
+    assert rect(1, 1, 50, 50, width=200).width == 60  # clamped to the maximum
+
+
 def test_bad_index():
     d = Document(100, 100)
     with pytest.raises(IndexError):
