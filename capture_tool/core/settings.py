@@ -31,6 +31,7 @@ class Settings:
     last_color: str = "#E03131"
     last_width: int = 4
     last_save_dir: str = ""
+    last_font_family: str = "Malgun Gothic"
     drm_notice_shown: bool = False
     version: int = SETTINGS_VERSION
 
@@ -67,6 +68,10 @@ def _apply(s: Settings, data: dict, warnings: list[str]) -> None:
                 if not _is_int(v):
                     raise TypeError
                 s.version = SETTINGS_VERSION
+            elif name == "last_font_family":
+                if not isinstance(v, str) or not v.strip():
+                    raise TypeError
+                s.last_font_family = v.strip()[:100]
             elif name in ("save_dir", "filename_pattern", "last_save_dir"):
                 if not isinstance(v, str):
                     raise TypeError

@@ -102,9 +102,12 @@ def paint_shape(p: QPainter, s: Shape) -> None:
                 path.lineTo(q)
         p.drawPath(path)
     elif s.kind == "text":
-        f = QFont(FONT_FAMILY)
-        f.setPixelSize(int(14 + s.width * 2))
-        f.setBold(True)
+        f = QFont(s.font_family or FONT_FAMILY)
+        f.setPixelSize(int(s.font_size))
+        f.setBold(s.bold)
+        f.setItalic(s.italic)
+        f.setUnderline(s.underline)
+        f.setStrikeOut(s.strike)
         p.setFont(f)
         y = pts[0].y()
         for line in (s.text or "").split("\n"):

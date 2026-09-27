@@ -26,7 +26,8 @@ def annotations_to_drawing(anns: list[Shape], offset=(0, 0), scale: float = 1.0)
             pt = round(a.font_size / scale * 0.75)  # px on screen -> points
             shapes.append(DShape("rect", bx1 + ox, by1 + oy, max(8, bx2 - bx1), max(8, by2 - by1),
                                  fill=None, stroke=None, text=a.text, text_color=a.color, font_size=pt,
-                                 bold=a.bold, italic=a.italic, underline=a.underline, strike=a.strike))
+                                 bold=a.bold, italic=a.italic, underline=a.underline, strike=a.strike,
+                                 font_family=a.font_family))
         elif a.kind == "step" and a.number is not None:
             (cx, cy), = a.points
             d = STEP_RADIUS * 2

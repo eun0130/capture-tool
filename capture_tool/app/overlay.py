@@ -39,7 +39,7 @@ class TextEditor(QLineEdit):
 
     def apply_style(self) -> None:
         tb = self.tb
-        f = QFont(FONT_FAMILY)
+        f = QFont(tb.font_family or FONT_FAMILY)
         f.setPixelSize(max(8, round(tb.font_size / self.scale)))
         f.setBold(tb.bold)
         f.setItalic(tb.italic)
@@ -121,7 +121,8 @@ class OverlayWindow(QWidget):
         self.setCursor(Qt.CrossCursor)
         self.setAttribute(Qt.WA_OpaquePaintEvent, True)
         s = controller.settings
-        self.toolbar = Toolbar(self, tool=s.last_tool, color=s.last_color, width=s.last_width, recent=s.recent_colors)
+        self.toolbar = Toolbar(self, tool=s.last_tool, color=s.last_color, width=s.last_width, recent=s.recent_colors,
+                               font_family=s.last_font_family)
         self.toolbar.hide()
         self.toolbar.toolChanged.connect(self._tool_changed)
         self.toolbar.action.connect(controller.on_toolbar_action)
@@ -178,8 +179,8 @@ class OverlayWindow(QWidget):
     # --- selected shape & style -------------------------------------------------
     _STYLE_ATTR = {"color": "color", "width": "line_width", "fill": "fill", "opacity": "opacity",
                    "font_size": "font_size", "bold": "bold", "italic": "italic",
-                   "underline": "underline", "strike": "strike"}
-    _TEXT_ONLY = {"font_size", "bold", "italic", "underline", "strike"}
+                   "underline": "underline", "strike": "strike", "font_family": "font_family"}
+    _TEXT_ONLY = {"font_size", "bold", "italic", "underline", "strike", "font_family"}
 
     def _style_changed(self, name: str) -> None:
         if self._editor is not None:
@@ -435,7 +436,7 @@ class OverlayWindow(QWidget):
             tb = self.toolbar
             doc.add(Shape(kind="text", points=[cur.doc_point], text=text, color=tb.color, width=tb.line_width,
                           font_size=tb.font_size, bold=tb.bold, italic=tb.italic, underline=tb.underline,
-                          strike=tb.strike))
+                          strike=tb.strike, font_family=tb.font_family))
         cur.hide()
         cur.deleteLater()
         self.setFocus()

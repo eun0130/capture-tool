@@ -750,6 +750,50 @@ def test_APP_59_copy_while_typing_keeps_the_text(make):
     assert c.clipboard.last  # and the image (with the text) was copied
 
 
+def _some_other_font():
+    """A real font other than the default (headless Qt only knows fonts we load)."""
+    from PySide6.QtGui import QFontDatabase
+    fid = QFontDatabase.addApplicationFont(r"C:\Windows\Fonts\arial.ttf")
+    return QFontDatabase.applicationFontFamilies(fid)[0]
+
+
+def test_APP_60_choose_font_for_new_text(make):
+    c, ov = _editing(make)
+    ov.set_tool("text")
+    combo = ov.toolbar.buttons["font_family"]
+    assert combo.isVisible() and combo.currentFont().family()
+    fam = _some_other_font()
+    ov.toolbar.set_font_family(fam)
+    QTest.mouseClick(ov, Qt.LeftButton, Qt.NoModifier, QPoint(200, 200))
+    assert ov._editor.font().family() == fam          # preview while typing
+    ov._editor.insert("글씨체")
+    QTest.keyClick(ov._editor, Qt.Key_Return)
+    assert c.session.document.shapes[-1].font_family == fam
+
+
+def test_APP_61_change_font_of_selected_text_and_undo(make):
+    from capture_tool.core.annotations import Shape
+    c, ov = _editing(make)
+    c.session.document.add(Shape(kind="text", points=[(60, 60)], text="메모", color="#000000"))
+    ov.set_tool("select")
+    QTest.mouseClick(ov, Qt.LeftButton, Qt.NoModifier, QPoint(165, 170))
+    fam = _some_other_font()
+    ov.toolbar.set_font_family(fam)
+    assert c.session.document.shapes[0].font_family == fam
+    c.session.document.undo()
+    assert c.session.document.shapes[0].font_family == "Malgun Gothic"
+
+
+def test_APP_62_font_remembered_for_next_capture(make):
+    c, ov = _editing(make)
+    fam = _some_other_font()
+    ov.toolbar.set_font_family(fam)
+    QTest.keyClick(ov, Qt.Key_Return)                  # finish -> remembers style
+    assert c.settings.last_font_family == fam
+    c.start_capture()
+    assert c.overlays[0].toolbar.font_family == fam
+
+
 def test_APP_49_text_style_on_selected_text_and_delete_key(make):
     c, ov = _editing(make)
     c.session.document.add(__import__("capture_tool.core.annotations", fromlist=["Shape"]).Shape(

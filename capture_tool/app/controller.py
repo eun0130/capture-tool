@@ -348,6 +348,7 @@ class Controller(QObject):
         tb = ov.toolbar
         s = self.settings
         s.last_tool, s.last_color, s.last_width = tb.tool, tb.color, int(tb.line_width)
+        s.last_font_family = tb.font_family
         s.recent_colors = push_recent(s.recent_colors, tb.color)
         self._persist()
 

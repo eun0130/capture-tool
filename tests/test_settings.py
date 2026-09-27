@@ -68,6 +68,15 @@ def test_SET_13_user_choice_after_v2_kept(tmp_path):
     assert warnings == []
 
 
+def test_SET_15_last_font_family(tmp_path):
+    p = tmp_path / "settings.json"
+    save(Settings(last_font_family="나눔고딕"), p)
+    assert load(p)[0].last_font_family == "나눔고딕"
+    p.write_text(json.dumps({"last_font_family": 12}), encoding="utf-8")
+    s, warnings = load(p)
+    assert s.last_font_family == "Malgun Gothic" and warnings
+
+
 def test_SET_14_last_save_dir_round_trip(tmp_path):
     p = tmp_path / "settings.json"
     save(Settings(last_save_dir="D:\\보고서"), p)

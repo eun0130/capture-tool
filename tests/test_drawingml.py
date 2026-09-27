@@ -172,6 +172,21 @@ def test_DML_16_text_formatting():
         ("1800", "1", "1", "sng", "sngStrike")
 
 
+def test_DML_18_font_family_in_powerpoint_and_svg():
+    s = DShape("rect", 0, 0, 100, 40, text="가", font_family='궁서 "A&B"')
+    rpr = parse(drawing_xml([s], [])).find(".//a:rPr", NS)
+    assert rpr.find("a:latin", NS).get("typeface") == '궁서 "A&B"'
+    assert rpr.find("a:ea", NS).get("typeface") == '궁서 "A&B"'
+    root = ET.fromstring(svg([s], []).encode("utf-8"))
+    text = [el for el in root.iter() if el.tag.endswith("text")][0]
+    assert text.get("font-family").startswith('궁서 "A&B"')
+
+
+def test_DML_18b_default_font_left_to_theme():
+    rpr = parse(drawing_xml([DShape("rect", 0, 0, 100, 40, text="가")], [])).find(".//a:rPr", NS)
+    assert rpr.find("a:latin", NS) is None
+
+
 def test_DML_17_same_size_on_high_dpi_screens():
     """150 physical px on a 150% screen are 100 logical px = 100/96 inch on screen."""
     root = parse(drawing_xml([DShape("rect", 0, 0, 150, 60)], [], dpi=144))

@@ -16,6 +16,7 @@ MIN_BOX = 2
 MIN_LINE = 3
 MAX_WIDTH = 60
 FONT_MIN, FONT_MAX = 8, 144
+DEFAULT_FONT = "Malgun Gothic"
 STEP_RADIUS = 14
 
 
@@ -35,6 +36,7 @@ class Shape:
     italic: bool = False
     underline: bool = False
     strike: bool = False
+    font_family: str | None = DEFAULT_FONT
 
     def __post_init__(self):
         if self.kind not in KINDS:
@@ -45,6 +47,7 @@ class Shape:
         self.width = min(MAX_WIDTH, self.width)
         self.opacity = min(1.0, max(0.1, float(self.opacity)))
         self.font_size = int(min(FONT_MAX, max(FONT_MIN, self.font_size)))
+        self.font_family = (str(self.font_family or "").strip()[:100]) or DEFAULT_FONT
         self.points = [(p[0], p[1]) for p in self.points]
 
     def bbox(self) -> tuple[float, float, float, float]:

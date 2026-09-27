@@ -165,6 +165,14 @@ def test_ANN_18_text_style_fields():
     assert Shape(kind="text", points=[(0, 0)], text="x", font_size=1).font_size == 8
 
 
+def test_ANN_20_font_family():
+    assert Shape(kind="text", points=[(0, 0)], text="x").font_family == "Malgun Gothic"
+    assert Shape(kind="text", points=[(0, 0)], text="x", font_family="  나눔고딕 ").font_family == "나눔고딕"
+    assert Shape(kind="text", points=[(0, 0)], text="x", font_family="").font_family == "Malgun Gothic"
+    assert Shape(kind="text", points=[(0, 0)], text="x", font_family=None).font_family == "Malgun Gothic"
+    assert len(Shape(kind="text", points=[(0, 0)], text="x", font_family="A" * 500).font_family) <= 100
+
+
 def test_ANN_19_width_range():
     assert rect(1, 1, 50, 50, width=0.5).width == 0.5
     assert rect(1, 1, 50, 50, width=200).width == 60  # clamped to the maximum

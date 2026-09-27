@@ -48,6 +48,7 @@ class DShape:
     italic: bool = False
     underline: bool = False
     strike: bool = False
+    font_family: str | None = None   # None = PowerPoint theme font
 
     def __post_init__(self):
         if self.kind not in KINDS:
@@ -145,6 +146,11 @@ def _clean(text: str) -> str:
     return _CTRL.sub("", text)
 
 
+def _attr(value: str) -> str:
+    """Text safe inside a double-quoted XML attribute."""
+    return escape(_clean(value), {'"': "&quot;"})
+
+
 def _fill(color):
     return f'<a:solidFill><a:srgbClr val="{color[1:]}"/></a:solidFill>' if color else "<a:noFill/>"
 
@@ -163,9 +169,13 @@ def _txbody(s: DShape) -> str:
     for line in _clean(s.text).split("\n"):
         style = ((' b="1"' if s.bold else "") + (' i="1"' if s.italic else "")
                  + (' u="sng"' if s.underline else "") + (' strike="sngStrike"' if s.strike else ""))
+        face = ""
+        if s.font_family:
+            f = _attr(s.font_family)
+            face = f'<a:latin typeface="{f}"/><a:ea typeface="{f}"/><a:cs typeface="{f}"/>'
         paras.append(
             f'<a:p><a:pPr algn="ctr"/><a:r><a:rPr lang="ko-KR" sz="{round(s.font_size * 100)}"{style}>'
-            f'{_fill(s.text_color)}</a:rPr><a:t>{escape(line)}</a:t></a:r></a:p>'
+            f'{_fill(s.text_color)}{face}</a:rPr><a:t>{escape(line)}</a:t></a:r></a:p>'
         )
     return (f'<a:txSp><a:txBody><a:bodyPr anchor="ctr" wrap="square"/><a:lstStyle/>{"".join(paras)}'
             f"</a:txBody><a:useSpRect/></a:txSp>")
@@ -269,7 +279,8 @@ def svg(shapes: list[DShape], connectors: list[DConnector], dpi: float = 96) -> 
             deco = f' text-decoration="{deco}"' if deco else ""
             out.append(
                 f'<text x="{f(x + s.w / 2)}" y="{f(y + s.h / 2)}" text-anchor="middle" dominant-baseline="central" '
-                f'font-family="Malgun Gothic, sans-serif" font-size="{f(s.font_size * dpi / 72)}"{weight}{italic}{deco} '
+                f'font-family="{_attr((s.font_family + ", ") if s.font_family else "")}Malgun Gothic, sans-serif" '
+                f'font-size="{f(s.font_size * dpi / 72)}"{weight}{italic}{deco} '
                 f'fill="{s.text_color}">{escape(_clean(s.text))}</text>'
             )
     for l in lines:

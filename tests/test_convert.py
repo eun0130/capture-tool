@@ -42,5 +42,10 @@ def test_CONV_05_text_style_carried_over():
     assert s.font_size == 15  # 30 physical px at 150% = 20 logical px = 15 pt
 
 
+def test_CONV_06_font_family_carried_over():
+    shapes, _ = annotations_to_drawing([Shape("text", [(0, 0)], text="글", font_family="Batang")])
+    assert shapes[0].font_family == "Batang"
+
+
 def test_CONV_04_empty():
     assert annotations_to_drawing([]) == ([], [])

@@ -3,10 +3,10 @@ from __future__ import annotations
 
 from PySide6.QtCore import QPoint, QSize, Qt, Signal
 from PySide6.QtGui import QColor, QFont
-from PySide6.QtWidgets import (QColorDialog, QFrame, QGridLayout, QHBoxLayout, QLabel, QPushButton,
-                               QSlider, QSpinBox, QToolButton, QVBoxLayout, QWidget)
+from PySide6.QtWidgets import (QColorDialog, QFontComboBox, QFrame, QGridLayout, QHBoxLayout, QLabel,
+                               QPushButton, QSlider, QSpinBox, QToolButton, QVBoxLayout, QWidget)
 
-from ..core.annotations import FONT_MAX, FONT_MIN, MAX_WIDTH
+from ..core.annotations import DEFAULT_FONT, FONT_MAX, FONT_MIN, MAX_WIDTH
 from . import icons
 
 TOOLS = [
@@ -37,7 +37,8 @@ class Toolbar(QWidget):
     action = Signal(str)          # text, shapes, undo, redo, cancel
     styleChanged = Signal(str)    # which attribute changed: color, width, fill, opacity, font_size, bold, ...
 
-    def __init__(self, parent=None, tool="rect", color="#E03131", width=4, recent=None):
+    def __init__(self, parent=None, tool="rect", color="#E03131", width=4, recent=None,
+                 font_family=DEFAULT_FONT):
         super().__init__(parent)
         self.setObjectName("toolbar")
         self.setAttribute(Qt.WA_StyledBackground, True)
@@ -46,6 +47,7 @@ class Toolbar(QWidget):
         self.default_font_size = DEFAULT_FONT_SIZE
         self.font_size = DEFAULT_FONT_SIZE
         self.bold = self.italic = self.underline = self.strike = False
+        self.font_family = font_family or DEFAULT_FONT
         self.recent = list(recent or [])
         self.buttons: dict[str, QWidget] = {}
         self._items: list[QWidget] = []
@@ -70,6 +72,14 @@ class Toolbar(QWidget):
         fill.toggled.connect(self._set_fill)
         self.addWidget(fill)
         # text style group (shown for the text tool / a selected text)
+        self.font_combo = QFontComboBox()
+        self.font_combo.setToolTip("글씨체 — 목록에서 고르거나 이름을 입력하세요")
+        self.font_combo.setMaximumWidth(170)
+        self.font_combo.setFocusPolicy(Qt.ClickFocus)
+        self.font_combo.setCurrentFont(QFont(self.font_family))
+        self.font_combo.currentFontChanged.connect(self._font_combo_changed)
+        self.buttons["font_family"] = self.font_combo
+        self._add_text_item(self.font_combo)
         self.font_spin = QSpinBox()
         self.font_spin.setRange(FONT_MIN, FONT_MAX)
         self.font_spin.setValue(self.font_size)
@@ -205,6 +215,19 @@ class Toolbar(QWidget):
         self.opacity = o
         self.styleChanged.emit("opacity")
 
+    def _font_combo_changed(self, font: QFont) -> None:
+        fam = font.family()
+        if fam and fam != self.font_family:
+            self.font_family = fam
+            self.styleChanged.emit("font_family")
+
+    def set_font_family(self, family: str) -> None:
+        self.font_family = family or DEFAULT_FONT
+        self.font_combo.blockSignals(True)
+        self.font_combo.setCurrentFont(QFont(self.font_family))
+        self.font_combo.blockSignals(False)
+        self.styleChanged.emit("font_family")
+
     def _font_spin_changed(self, v: int) -> None:
         if v != self.font_size:
             self.font_size = v
@@ -233,6 +256,7 @@ class Toolbar(QWidget):
         """Show a selected text's style in the controls without re-applying it."""
         self.blockSignals(True)
         self.set_font_size(shape.font_size)
+        self.set_font_family(shape.font_family)
         for name, _, _ in TEXT_STYLES:
             setattr(self, name, getattr(shape, name))
             self.buttons[name].setChecked(getattr(shape, name))
