@@ -930,10 +930,25 @@ class Controller(QObject):
             self._ai_cancel = True
         elif name == "copy" and text.strip():
             if self._set_clipboard(text_payload(text)):
+                win.set_status("결과를 복사했습니다. 원하는 곳에 Ctrl+V 하세요.")
                 self.notify("결과를 복사했습니다.")
         elif name == "ppt" and text.strip():
             body, _ = clip_text(text)
-            self._send_item_to_ppt(TextItem(body, font_family="Malgun Gothic", font_size=18), "결과를")
+            self._set_clipboard(text_payload(text))       # Ctrl+V works whatever PowerPoint does
+            win.buttons["ppt"].setEnabled(False)
+            win.set_busy("PowerPoint에 넣는 중…")
+
+            def done(ok: bool, msg: str) -> None:
+                win.buttons["ppt"].setEnabled(True)
+                win.set_status(msg)
+                if ok:                                     # get out of the way: show the new slide
+                    if self.session.state is not State.IDLE:
+                        self.cancel()
+                    win.close()
+            self._send_item_to_ppt(TextItem(body, font_family="Malgun Gothic", font_size=18),
+                                   "요약을" if win.mode == "summarize" else "번역을", on_done=done)
+        elif name in ("copy", "ppt"):
+            win.set_status("넣을 결과가 없습니다.")
 
     def _download_packs(self, packs: list[str], done) -> None:
         """Download model packs in the background with progress in the result window."""
@@ -963,12 +978,17 @@ class Controller(QObject):
             self._ai.unload()
 
     # --- PowerPoint -----------------------------------------------------------------
-    def _send_item_to_ppt(self, item, what: str) -> None:
+    def _send_item_to_ppt(self, item, what: str, on_done=None) -> None:
         """Insert into PowerPoint in the background, time-limited; the clipboard already holds
-        the same content, so whatever happens the user can still Ctrl+V."""
+        the same content, so whatever happens the user can still Ctrl+V.
+        on_done(ok, message) lets a window show the outcome itself."""
         if getattr(self.powerpoint, "busy", False):
-            self.notify("PowerPoint로 보내는 중입니다. 끝나면 다시 시도하세요. (클립보드에 있으니 Ctrl+V도 됩니다)")
+            msg = "PowerPoint로 보내는 중입니다. 끝나면 다시 시도하세요. (클립보드에 있으니 Ctrl+V도 됩니다)"
+            self.notify(msg)
+            if on_done:
+                on_done(False, msg)
             return
+        self._ppt_cb = on_done
         if self.drm and not self.settings.drm_notice_shown:
             self.notify(
                 f"이 PC에는 {self.drm}(문서 보안 프로그램)가 설치되어 있습니다. PowerPoint가 켜질 때 "
@@ -993,13 +1013,19 @@ class Controller(QObject):
             QThreadPool.globalInstance().start(_Job(work, self._ppt_done))
 
     def _on_ppt_done(self, result) -> None:
+        ok = False
         if isinstance(result, Exception):
-            self.notify(f"PowerPoint에 넣지 못했습니다: {result} 클립보드에 있으니 Ctrl+V 하세요.")
-            return
-        what, added, err = result
-        if err:
-            self.notify(f"{err} 클립보드에 복사해 두었으니 원하는 곳에 Ctrl+V 하세요.")
-        elif added:
-            self.notify(f"{what} PowerPoint에 넣었습니다.")
+            msg = f"PowerPoint에 넣지 못했습니다: {result} 클립보드에 있으니 Ctrl+V 하세요."
         else:
-            self.notify("PowerPoint에 들어가지 않았습니다. 클립보드에 있으니 슬라이드에서 Ctrl+V 하세요.")
+            what, added, err = result
+            if err:
+                msg = f"{err} 클립보드에 복사해 두었으니 원하는 곳에 Ctrl+V 하세요."
+            elif added:
+                where = "새 슬라이드" if self.settings.ppt_new_slide else "보고 있는 슬라이드"
+                msg, ok = f"{what} PowerPoint에 넣었습니다 ({where}).", True
+            else:
+                msg = "PowerPoint에 들어가지 않았습니다. 클립보드에 있으니 슬라이드에서 Ctrl+V 하세요."
+        self.notify(msg)
+        cb, self._ppt_cb = getattr(self, "_ppt_cb", None), None
+        if cb:
+            cb(ok, msg)

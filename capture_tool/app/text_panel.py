@@ -31,6 +31,9 @@ class TextPanel(QWidget):
         v.addWidget(self.edit)
         if qr:
             v.addWidget(QLabel(f"QR 인식: {qr}"))
+        self.status = QLabel()
+        self.status.setStyleSheet("color: #1F5FD1;")
+        v.addWidget(self.status)
         self.redact = QCheckBox("개인정보 자동 가림 (이메일·전화·주민번호·카드번호)")
         self.redact.setChecked(redact)
         self.redact.toggled.connect(self._refresh)
@@ -78,19 +81,28 @@ class TextPanel(QWidget):
     def _refresh(self) -> None:
         self.edit.setPlainText(self._clean(full_text(self.lines)))
 
+    def _say(self, msg: str) -> None:
+        """Confirm right here in the window (tray notifications are easy to miss)."""
+        self.status.setText(msg)
+        self._notify(msg)
+
     def copy_all(self) -> None:
         self._set(text_payload(self.edit.toPlainText()))
-        self._notify("전체 텍스트를 복사했습니다.")
+        self._say("전체 텍스트를 복사했습니다. 원하는 곳에 Ctrl+V 하세요.")
 
     def copy_selected(self) -> None:
-        t = self.edit.textCursor().selectedText().replace(" ", "\n")
+        t = self.edit.textCursor().selectedText().replace("\u2029", "\n")
         if t.strip():
             self._set(text_payload(t))
-            self._notify("선택한 텍스트를 복사했습니다.")
+            self._say("선택한 텍스트를 복사했습니다.")
+        else:
+            self._say("먼저 위 글상자에서 복사할 부분을 마우스로 선택하세요.")
 
     def copy_table(self) -> None:
         grid = self.grid or to_grid([(l.text, *l.box) for l in self.lines])
         grid = [[self._clean(c) for c in row] for row in grid]
-        if grid:
+        if grid and any(any(c for c in row) for row in grid):
             self._set(text_payload("", table=grid))
-            self._notify("표로 복사했습니다. Excel에 붙여넣으면 칸이 나뉩니다.")
+            self._say(f"표 {len(grid)}행×{len(grid[0])}열로 복사했습니다. Excel에 붙여넣으면 칸이 나뉩니다.")
+        else:
+            self._say("표로 만들 글자가 없습니다.")

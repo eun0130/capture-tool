@@ -224,3 +224,78 @@ def test_KEY_05_settings_dialog_ai_section(qt_app):
     dlg.ai_cloud_translate.setChecked(True)
     s = dlg.result_settings()
     assert s.ai_summary_engine == "cloud" and s.ai_cloud_translate
+
+
+# --- v0.4.1: visible feedback -------------------------------------------------------------------------
+def test_AAPP_15_ppt_from_result_window_shows_progress_then_gets_out_of_the_way(make):
+    from capture_tool.platform.powerpoint import TextItem
+    c, ov = text_mode(make)
+    c.powerpoint = FakePpt()
+    ov.ocr_bar.trigger("summarize")
+    win = c.ai_window
+    win.trigger("ppt")
+    assert isinstance(c.powerpoint.items[-1], TextItem)
+    assert "PowerPoint" in win.status_text() and "넣었습니다" in win.status_text()
+    assert c.overlays == [] and not win.isVisible()          # PowerPoint (new slide) is now visible
+
+
+def test_AAPP_16_ppt_failure_is_shown_in_the_window_which_stays(make):
+    c, ov = text_mode(make)
+    c.powerpoint = FakePpt(ok=False)
+    ov.ocr_bar.trigger("summarize")
+    win = c.ai_window
+    win.trigger("ppt")
+    assert win.isVisible() and "설치" in win.status_text()
+    assert win.buttons["ppt"].isEnabled()                    # can try again
+
+
+def test_AAPP_17_ppt_clicked_again_while_sending_is_ignored(make):
+    c, ov = text_mode(make)
+    ppt = FakePpt()
+    ppt.busy = True
+    c.powerpoint = ppt
+    ov.ocr_bar.trigger("summarize")
+    c.ai_window.trigger("ppt")
+    assert ppt.calls == 0 and "보내는 중" in c.ai_window.status_text()
+
+
+def test_AAPP_18_copy_result_confirms_in_the_window(make):
+    c, ov = text_mode(make)
+    ov.ocr_bar.trigger("translate")
+    c.ai_window.trigger("copy")
+    assert "복사했습니다" in c.ai_window.status_text()
+
+
+def test_TP_01_text_window_shows_what_was_copied(qt_app):
+    from capture_tool.app.text_panel import TextPanel
+    from capture_tool.core.clipboard_payload import HTML
+    got = []
+    lines = [OcrLine("품목", (10, 10, 40, 20), 0.9), OcrLine("수량", (200, 10, 40, 20), 0.9),
+             OcrLine("사과", (10, 40, 40, 20), 0.9), OcrLine("3", (200, 40, 10, 20), 0.9)]
+    p = TextPanel(lines, got.append, redact=False)
+    p.copy_table()
+    assert HTML in got[-1] and "표 2행×2열" in p.status.text()
+    p.copy_all()
+    assert "전체" in p.status.text() and "복사" in p.status.text()
+    p.close()
+
+
+def test_TP_02_table_copy_with_no_table_says_so(qt_app):
+    from capture_tool.app.text_panel import TextPanel
+    got = []
+    p = TextPanel([], got.append, redact=False)
+    p.copy_table()
+    assert got == [] and "없습니다" in p.status.text()
+    p.close()
+
+
+def test_TOAST_01_toast_shows_message_and_hides_itself(qt_app):
+    from capture_tool.app.toast import Toast
+    t = Toast()
+    t.show_message("결과를 PowerPoint에 넣었습니다.")
+    assert t.isVisible() and "PowerPoint" in t.label.text()
+    t.show_message("두 번째")
+    assert t.label.text() == "두 번째"                     # replaces, doesn't stack
+    t._timer.timeout.emit()
+    assert not t.isVisible()
+    assert t.testAttribute(Qt.WA_ShowWithoutActivating)   # never steals focus from the capture

@@ -85,6 +85,7 @@ def handle_instance_message(data: bytes, trigger) -> bool:
 
 class TrayApp:
     def __init__(self, app: QApplication, selftest: bool = False):
+        self._toast = None
         self.app = app
         self.settings_path = data_dir() / "settings.json"
         self.settings, warnings = settings_io.load(self.settings_path)
@@ -109,8 +110,14 @@ class TrayApp:
 
     # --- ui ------------------------------------------------------------------------
     def toast(self, msg: str) -> None:
-        # deferred: showing a Windows notification takes ~80 ms, never block a copy on it
-        QTimer.singleShot(0, lambda: self.tray.showMessage("캡처 도구", msg, QSystemTrayIcon.Information, 2500))
+        # on-screen message (tray balloons are often hidden by Windows); deferred so a copy
+        # is never delayed by painting it
+        def show():
+            if self._toast is None:
+                from .toast import Toast
+                self._toast = Toast()
+            self._toast.show_message(msg)
+        QTimer.singleShot(0, show)
 
     def _build_menu(self) -> None:
         m = QMenu()
