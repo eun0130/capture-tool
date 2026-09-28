@@ -256,3 +256,11 @@ def test_OCR_real_engine_korean(qt_app):
     assert "요청접수" in text and "검토" in text and "승인" in text
     assert "010-1234-5678" in text
     assert "HelloWorld2026" in text
+
+
+def test_OCR_FT_01_full_text_joins_segments_on_the_same_row():
+    from capture_tool.core.ocr import OcrLine, full_text
+    words = [OcrLine("starts", (300, 12, 90, 30), 0.9), OcrLine("The", (20, 10, 60, 30), 0.9),
+             OcrLine("meeting", (100, 11, 150, 30), 0.9), OcrLine("tomorrow.", (20, 60, 150, 30), 0.9)]
+    assert full_text(words) == "The meeting starts\ntomorrow."
+    assert full_text([]) == ""

@@ -10,3 +10,5 @@ installer/Output/
 assets/app.ico
 *.prof
 .pytest_tmp*/
+
+ai_models/

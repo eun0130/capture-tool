@@ -51,6 +51,10 @@ class Controller(QObject):
     _job_done = Signal(object)
     _ppt_done = Signal(object)
     _text_ready = Signal(object)
+    _ai_done = Signal(object)
+    _ai_partial = Signal(str)
+    _ai_progress = Signal(object)
+    _ai_dl = Signal(object)
 
     def __init__(self, screen, clipboard, ocr, settings, settings_path, fallback_dir, sync=False, notify=None):
         super().__init__()
@@ -73,11 +77,27 @@ class Controller(QObject):
         self._job_done.connect(self._on_job_done)
         self._ppt_done.connect(self._on_ppt_done)
         self._text_ready.connect(self._on_text_ready)
+        self._ai_done.connect(self._ai_finished)
+        self._ai_partial.connect(lambda t: self.ai_window and self.ai_window.set_partial(t))
+        self._ai_progress.connect(lambda p: self.ai_window and self.ai_window.show_progress(*p))
+        self._ai_dl.connect(lambda r: self._ai_dl_done(r))
+        self._ai_idle_timer = QTimer(self)
+        self._ai_idle_timer.setSingleShot(True)
+        self._ai_idle_timer.setInterval(90_000)      # models leave memory after 90 s unused
+        self._ai_idle_timer.timeout.connect(self.ai_idle)
         self._text_ctx = None
         self.last_document = None
         self._text_lines: list = []
         self._text_grid = None
         self._last_text = ""        # what the text mode last put on the clipboard
+        self._last_raw = ""         # the same text before masking (for translate / summary)
+        self._ai = None             # AiService, created on first use
+        self.ai_window = None
+        self.ai_offline_once_used = False
+        self._ai_ctx = None
+        self.ask_yes_no = None      # tests replace these dialogs
+        self.ask_consent = None
+        self.download_packs = self._download_packs
         self.scrolling = False
         self._scroll_stop = False
         self.scroll_indicator = None
@@ -190,6 +210,8 @@ class Controller(QObject):
         self.active_overlay = None
 
     def close_all(self) -> None:
+        if self.ai_window is not None:
+            self.ai_window.close()
         self.close_overlays()
         for ov in self._pool.values():
             ov.deleteLater()
@@ -491,7 +513,7 @@ class Controller(QObject):
             ov.unsetCursor()
             return
         self._text_lines, self._text_grid = lines, self._grid_for(raw, lines)
-        self._last_text = ""
+        self._last_text = self._last_raw = ""
         self._copy_text(lines, self._text_grid, drag_hint=True)
         ov.enter_ocr_mode(lines)
 
@@ -515,7 +537,7 @@ class Controller(QObject):
         raw_text = full_text(lines)
         text = mask(raw_text) if redact else raw_text
         if text.strip() and self._set_clipboard(text_payload(text)):
-            self._last_text = text
+            self._last_text, self._last_raw = text, raw_text
             note = " (개인정보 가림)" if text != raw_text else ""
             hint = " 글자 위를 드래그하면 그 부분만 복사합니다." if drag_hint else ""
             self.notify(f"텍스트 {len(lines)}줄을 복사했습니다{note}.{hint}")
@@ -525,6 +547,7 @@ class Controller(QObject):
         if not text:
             self.notify("드래그한 곳에 인식된 글자가 없습니다.")
             return
+        self._last_raw = text
         if self.settings.redact_pii:
             text = mask(text)
         if self._set_clipboard(text_payload(text)):
@@ -536,6 +559,8 @@ class Controller(QObject):
         ov = self.active_overlay
         if name == "all":
             self._copy_text(self._text_lines, self._text_grid)
+        elif name in ("translate", "summarize"):
+            self.ai_request(name, self._last_raw or full_text(self._text_lines))
         elif name == "back" and ov is not None:
             ov.exit_ocr_mode()
         elif name == "window" and ov is not None:
@@ -548,7 +573,8 @@ class Controller(QObject):
     def _show_text_panel(self, lines, qr, pos, grid=None) -> None:
         if self.text_panel:
             self.text_panel.close()
-        self.text_panel = TextPanel(lines, self._set_clipboard, self.settings.redact_pii, qr, self.notify, grid)
+        self.text_panel = TextPanel(lines, self._set_clipboard, self.settings.redact_pii, qr, self.notify, grid,
+                                    ai_action=self.ai_request)
         self.text_panel.move(pos + QPoint(0, 8))
         self.text_panel.show()
 
@@ -781,6 +807,160 @@ class Controller(QObject):
             self._send_item_to_ppt(ClipboardShapes(), f"도형 {len(shapes)}개, 연결선 {len(conns)}개를{note}")
         else:
             self.notify(f"도형 {len(shapes)}개, 연결선 {len(conns)}개를 복사했습니다{note}. PowerPoint에서 Ctrl+V")
+
+    # --- translate / summary -----------------------------------------------------------
+    @property
+    def ai(self):
+        if self._ai is None:
+            from ..core.ai_local import LocalSummarizer, LocalTranslator
+            from ..core.ai_service import AiService
+            from ..core.gemini import Gemini
+            self._ai = AiService(self.settings, LocalTranslator(), LocalSummarizer(),
+                                 cloud_factory=Gemini, get_key=self._ai_key)
+        return self._ai
+
+    @ai.setter
+    def ai(self, service) -> None:
+        self._ai = service
+
+    def _ai_key(self):
+        if not self.settings.ai_key:
+            return None
+        try:
+            from ..platform.secret import SecretError, unprotect
+            return unprotect(self.settings.ai_key)
+        except (SecretError, OSError, ImportError):
+            return None
+
+    def ai_request(self, kind: str, text: str, tgt: str | None = None) -> None:
+        """Translate or summarize `text`; the result window stays on top of the capture."""
+        if not text or not text.strip():
+            self.notify("번역·요약할 글자가 없습니다.")
+            return
+        from .ai_ui import AiWindow
+        if self.ai_window is None:
+            self.ai_window = AiWindow()
+            self.ai_window.action.connect(self._ai_window_action)
+            self.ai_window.targetChanged.connect(lambda code: self._ai_run("translate", self._ai_ctx[1], code))
+        win = self.ai_window
+        win.start(kind, tgt)
+        win.show()
+        win.raise_()
+        win.activateWindow()
+        self._ai_run(kind, text, tgt)
+
+    def _ai_run(self, kind: str, text: str, tgt: str | None = None, offline: bool = False) -> None:
+        self._ai_ctx = (kind, text, tgt)
+        win = self.ai_window
+        win.start(kind, tgt)
+        self._ai_cancel = False
+        s = self.settings
+        saved = (s.ai_summary_engine, s.ai_cloud_translate)
+        if offline:                       # "이번엔 오프라인으로": only this request
+            s.ai_summary_engine, s.ai_cloud_translate = "local", False
+            self.ai_offline_once_used = True
+
+        def partial(t):
+            self._ai_partial.emit(t) if not self.sync else win.set_partial(t)
+
+        def work():
+            try:
+                if kind == "translate":
+                    return self.ai.translate(text, tgt=tgt, cancel=lambda: self._ai_cancel)
+                return self.ai.summarize(text, "ko", on_text=partial, cancel=lambda: self._ai_cancel)
+            finally:
+                if offline:
+                    s.ai_summary_engine, s.ai_cloud_translate = saved
+
+        if self.sync:
+            try:
+                result = work()
+            except Exception as e:  # noqa: BLE001 - explained in the window
+                result = e
+            self._ai_finished(result)
+        else:
+            QThreadPool.globalInstance().start(_Job(work, self._ai_done))
+
+    def _ai_finished(self, result) -> None:
+        from ..core.ai_local import Busy, Cancelled, ModelMissing
+        from ..core.ai_service import ConsentNeeded
+        from ..core import model_store as ms
+        win = self.ai_window
+        if win is None:
+            return
+        kind, text, tgt = self._ai_ctx
+        self._ai_idle_timer.start()
+        if isinstance(result, ModelMissing):
+            packs = [ms.CATALOG[p] for p in result.packs if p in ms.CATALOG]
+            size = sum(ms.pack_size(p) for p in packs) / 2**20
+            what = ", ".join(p.title for p in packs)
+            ask = self.ask_yes_no or (lambda t, m: __import__("capture_tool.app.ai_ui", fromlist=["x"]).ask_yes_no(t, m, win))
+            if ask("AI 모델 받기", f"{what} 모델이 필요합니다(약 {size:,.0f} MB, 한 번만 받으면 됩니다).\n"
+                                   "지금 받을까요? 받은 뒤에는 인터넷 없이 동작합니다."):
+                self.download_packs(result.packs, lambda ok: self._ai_run(kind, text, tgt) if ok else None)
+            else:
+                win.set_status("모델을 받지 않아 실행하지 않았습니다. 필요할 때 다시 누르세요.")
+            return
+        if isinstance(result, ConsentNeeded):
+            from . import ai_ui
+            choice = (self.ask_consent or (lambda: ai_ui.ask_consent(win)))()
+            if choice == "agree":
+                self.settings.ai_cloud_consent = True
+                self._persist()
+                self._ai_run(kind, text, tgt)
+            elif choice == "offline":
+                self._ai_run(kind, text, tgt, offline=True)
+            else:
+                win.set_status("취소했습니다.")
+            return
+        if isinstance(result, Busy):
+            win.set_status(str(result))
+        elif isinstance(result, Cancelled):
+            win.set_status("중지했습니다.")
+        elif isinstance(result, Exception):
+            log.warning("ai failed: %s", result)
+            win.set_status(f"실행하지 못했습니다: {result}")
+        else:
+            win.set_result(result)
+
+    def _ai_window_action(self, name: str) -> None:
+        win = self.ai_window
+        text = win.result_text()
+        if name == "cancel":
+            self._ai_cancel = True
+        elif name == "copy" and text.strip():
+            if self._set_clipboard(text_payload(text)):
+                self.notify("결과를 복사했습니다.")
+        elif name == "ppt" and text.strip():
+            body, _ = clip_text(text)
+            self._send_item_to_ppt(TextItem(body, font_family="Malgun Gothic", font_size=18), "결과를")
+
+    def _download_packs(self, packs: list[str], done) -> None:
+        """Download model packs in the background with progress in the result window."""
+        from ..core import model_store as ms
+        win = self.ai_window
+
+        def work():
+            for pid in packs:
+                ms.download(ms.CATALOG[pid], ms.user_root(),
+                            progress=lambda d, t: self._ai_progress.emit((d, t)),
+                            cancel=lambda: self._ai_cancel)
+            return True
+
+        def finished(result):
+            if isinstance(result, Exception):
+                win.set_status(str(result))
+                done(False)
+            else:
+                done(True)
+        self._ai_cancel = False
+        self._ai_dl_done = finished
+        QThreadPool.globalInstance().start(_Job(work, self._ai_dl))
+
+    def ai_idle(self) -> None:
+        """Free the AI models' memory after a while without use."""
+        if self._ai is not None:
+            self._ai.unload()
 
     # --- PowerPoint -----------------------------------------------------------------
     def _send_item_to_ppt(self, item, what: str) -> None:

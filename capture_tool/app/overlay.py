@@ -97,7 +97,8 @@ class OcrBar(QWidget):
         lay.setSpacing(6)
         lay.addWidget(QLabel("드래그한 부분의 글자를 바로 복사합니다"))
         self.buttons = {}
-        for name, label in [("all", "전체 복사 (Enter)"), ("window", "창으로 보기"), ("back", "그리기로 돌아가기 (Esc)")]:
+        for name, label in [("all", "전체 복사 (Enter)"), ("translate", "번역"), ("summarize", "요약"),
+                            ("window", "창으로 보기"), ("back", "그리기로 돌아가기 (Esc)")]:
             b = QPushButton(label, self)
             b.setFocusPolicy(Qt.NoFocus)
             b.clicked.connect(lambda _=False, n=name: self.action.emit(n))

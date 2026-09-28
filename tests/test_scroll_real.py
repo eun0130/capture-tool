@@ -109,7 +109,8 @@ def test_WSCR_02_real_browser_whole_page_from_the_top(tmp_path):
     body = "".join(f'<div class="s" style="background:{c}">SECTION {i}</div>' for i, c in enumerate(COLORS))
     html = tmp_path / "page.html"
     html.write_text(HTML % (tag, body), encoding="utf-8")
-    proc = subprocess.Popen([exe, f"--user-data-dir={tmp_path / 'profile'}", "--no-first-run",
+    profile = tmp_path / f"profile-{os.getpid()}-{time.time_ns()}"   # never shared with a closing browser
+    proc = subprocess.Popen([exe, f"--user-data-dir={profile}", "--no-first-run",
                              "--no-default-browser-check", "--disable-sync", "--new-window", "--window-position=80,40",
                              "--window-size=900,760", html.as_uri()])
     try:
@@ -169,7 +170,7 @@ def test_WSCR_02_real_browser_whole_page_from_the_top(tmp_path):
     finally:
         # only the browser processes of THIS test's own profile (Chrome hands off to children)
         subprocess.run(["taskkill", "/PID", str(proc.pid), "/T", "/F"], capture_output=True)
-        marker = str(tmp_path / "profile").replace("'", "''")
+        marker = str(profile).replace("'", "''")
         subprocess.run(["powershell", "-NoProfile", "-Command",
                         "Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -and "
                         f"$_.CommandLine.Contains('{marker}') }} | ForEach-Object {{ Stop-Process -Id $_.ProcessId -Force "
@@ -216,3 +217,49 @@ def test_WSCR_03_capture_protected_windows_come_out_black_and_are_detected(tmp_p
     from tests.conftest import run_on_desktop
     out = run_on_desktop(PROTECT % ROOT, _protect_ok)
     assert _protect_ok(out), out
+
+
+COVER = r"""
+import os, sys, time, subprocess
+sys.path.insert(0, r"%s")
+from PySide6.QtCore import Qt
+from PySide6.QtWidgets import QApplication, QWidget
+app = QApplication([])
+from capture_tool.platform import scroll, windows
+tag = "COVERTEST-%%d" %% os.getpid()
+html = r"%s"
+open(html, "w", encoding="utf-8").write("<title>" + tag + "</title><body style='height:3000px'>x</body>")
+proc = subprocess.Popen([r"%s", r"--user-data-dir=%s-" + str(time.time_ns()), "--no-first-run",
+                         "--no-default-browser-check", "--disable-sync", "--new-window", "--window-position=80,40",
+                         "--window-size=900,760", "file:///" + html.replace(os.sep, "/")])
+try:
+    win = seen = None
+    for _ in range(100):
+        win = next((w for w in windows.top_level_windows() if tag in w.title), None)
+        seen = scroll.browser_viewport(win.hwnd) if win else None
+        if seen:
+            break
+        time.sleep(0.2)
+    cover = QWidget(None, Qt.WindowStaysOnTopHint | Qt.FramelessWindowHint)
+    cover.setGeometry(app.primaryScreen().geometry())
+    cover.show()
+    for _ in range(60):
+        app.processEvents(); time.sleep(0.05)
+    covered = scroll.browser_viewport(win.hwnd)
+    cover.close()
+    print("seen", seen, "covered", covered, "same", seen is not None and covered == seen)
+finally:
+    subprocess.run(["taskkill", "/PID", str(proc.pid), "/T", "/F"], capture_output=True)
+"""
+
+
+def test_WSCR_04_page_view_found_even_while_the_browser_is_covered(tmp_path):
+    """The capture overlay covers the browser when 스크롤 is pressed; Chrome may hide its page
+    view then (occlusion), but its position must still be found."""
+    exe = _browser()
+    if exe is None:
+        pytest.skip("no Chromium browser")
+    from tests.conftest import run_on_desktop
+    ok = lambda o: "same True" in o
+    out = run_on_desktop(COVER % (ROOT, tmp_path / "c.html", exe, tmp_path / "profile"), ok)
+    assert ok(out), out

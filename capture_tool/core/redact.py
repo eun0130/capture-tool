@@ -77,3 +77,13 @@ def mask_word_boxes(words: list[tuple[str, tuple]]) -> list[tuple]:
         if any(s < m.end and m.start < e for m in hits):
             boxes.append(box)
     return boxes
+
+
+def mask(text: str) -> str:
+    """Phone numbers, e-mail, resident numbers and card numbers replaced by * (spaces kept)."""
+    out = list(text)
+    for m in find_pii(text):
+        for i in range(m.start, m.end):
+            if not out[i].isspace():
+                out[i] = "*"
+    return "".join(out)

@@ -228,6 +228,23 @@ def main():
     ind.show_progress(7, 5320)
     ind.show()
     ind.grab().save(str(OUT / "14-scroll-progress.png"))
+    # 5d) translate / summary result and the Gemini key wizard
+    from capture_tool.app.ai_ui import AiWindow, KeyDialog
+    from capture_tool.core.ai_service import AiResult
+    aw = AiWindow()
+    aw.start("translate", "ko")
+    aw.set_result(AiResult("분기 매출은 작년 같은 기간에 비해 12% 증가했습니다.\n보고서는 금요일까지 제출해 주세요.",
+                           "local", "en", "ko"))
+    aw.show()
+    aw.grab().save(str(OUT / "15-ai-translate.png"))
+    aw.start("summarize")
+    aw.set_result(AiResult("• 3분기 매출 1,250억 원, 전년 대비 12% 증가\n• 영업이익 96억 원, 4% 감소\n"
+                           "• 4분기 신제품 2종 출시, 연간 목표 4,800억 원", "cloud", tgt="ko"))
+    aw.grab().save(str(OUT / "16-ai-summary.png"))
+    kd = KeyDialog(Settings(), open_url=lambda u: None, check=lambda k: None, sync=True)
+    kd.on_clipboard("AIza" + "X" * 35)
+    kd.show()
+    kd.grab().save(str(OUT / "17-ai-key.png"))
     # 6) settings
     dlg = SettingsDialog(Settings())
     dlg.show()

@@ -133,3 +133,59 @@ def test_STI_13_bgra_and_speed():
     assert r.status == ADDED and r.shift == 500
     assert time.perf_counter() - t < 0.5                # per step, 1600x1000 frame
     assert st.result().shape[2] == 3
+
+
+def test_STI_14_popup_bar_over_part_of_the_width_still_matches():
+    fp = FakePage(make_page(2400), vh=500, px_per_notch=40)
+    st = Stitcher()
+    st.add(fp.frame())
+    k = 0
+    while True:
+        fp.wheel(-7)
+        f = fp.frame()
+        k += 1
+        if k >= 3:                                  # a translucent bar pops up over the right 2/3
+            f[60:90, 160:] = (f[60:90, 160:] // 2 + 60).astype(f.dtype)
+        r = st.add(f)
+        if r.status != ADDED:
+            break
+    assert r.status == SAME
+    out = st.result()
+    assert out.shape[0] == 2400
+    ok = (out == fp.expected()).all(axis=(1, 2))
+    assert ok.mean() > 0.97                         # only the rows under the bar can differ
+
+
+def test_STI_15_small_rendering_differences_between_frames_still_join():
+    """150% display + fractional scroll: text edges come out a few levels different each frame."""
+    rng = np.random.default_rng(3)
+    fp = FakePage(make_page(2400), vh=500, px_per_notch=40)
+
+    def jitter(f):
+        noise = rng.integers(-3, 4, f.shape)
+        return np.clip(f.astype(int) + noise, 0, 255).astype(np.uint8)
+    st = Stitcher()
+    st.add(jitter(fp.frame()))
+    while True:
+        fp.wheel(-7)
+        r = st.add(jitter(fp.frame()))
+        if r.status != ADDED:
+            break
+    assert r.status == SAME                                 # the end is still recognized
+    out = st.result()
+    assert out.shape == fp.expected().shape
+    assert np.abs(out.astype(int) - fp.expected()).mean() < 3
+
+
+def test_STI_16_tolerant_match_is_fast_enough():
+    import time
+    rng = np.random.default_rng(4)
+    fp = FakePage(make_page(4000, w=1300), vh=1000, px_per_notch=100)
+    st = Stitcher()
+    st.add(fp.frame())
+    fp.wheel(-5)
+    f = np.clip(fp.frame().astype(int) + rng.integers(-3, 4, (1000, 1300, 3)), 0, 255).astype(np.uint8)
+    t = time.perf_counter()
+    r = st.add(f)
+    assert r.status == ADDED and r.shift == 500
+    assert time.perf_counter() - t < 1.5

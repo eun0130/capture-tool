@@ -37,6 +37,11 @@ class Settings:
     ppt_new_slide: bool = True           # PPT: insert on a new slide after the current one
     last_highlight_color: str = "#FFE066"
     last_text_bg: str | None = None
+    ai_summary_engine: str = "local"     # "local" (offline) or "cloud" (Gemini, own key)
+    ai_cloud_translate: bool = False     # translate with Gemini too (better quality) when a key is set
+    ai_cloud_consent: bool = False       # agreed that text is sent to Google
+    ai_key: str = ""                     # Gemini key, DPAPI-encrypted (never plain text)
+    ai_target_lang: str = ""             # "" = automatic (Korean <-> English)
     version: int = SETTINGS_VERSION
 
 
@@ -88,7 +93,8 @@ def _apply(s: Settings, data: dict, warnings: list[str]) -> None:
                 if not _is_int(v):
                     raise TypeError
                 s.jpg_quality = min(100, max(1, v))
-            elif name in ("auto_save", "launch_at_startup", "redact_pii", "drm_notice_shown", "ppt_new_slide"):
+            elif name in ("auto_save", "launch_at_startup", "redact_pii", "drm_notice_shown", "ppt_new_slide",
+                          "ai_cloud_translate", "ai_cloud_consent"):
                 if not isinstance(v, bool):
                     raise TypeError
                 setattr(s, name, v)
@@ -110,6 +116,19 @@ def _apply(s: Settings, data: dict, warnings: list[str]) -> None:
                 s.last_tool = v
             elif name == "last_color":
                 s.last_color = normalize_hex(v)
+            elif name == "ai_summary_engine":
+                if v not in ("local", "cloud"):
+                    raise TypeError
+                s.ai_summary_engine = v
+            elif name == "ai_key":
+                if not isinstance(v, str) or len(v) > 4096:
+                    raise TypeError
+                s.ai_key = v
+            elif name == "ai_target_lang":
+                from .ai_text import LANGS
+                if v != "" and v not in LANGS:
+                    raise TypeError
+                s.ai_target_lang = v
             elif name == "last_highlight_color":
                 s.last_highlight_color = normalize_hex(v)
             elif name == "last_text_bg":

@@ -7,7 +7,16 @@ ROOT = os.path.abspath(os.path.join(SPECPATH, ".."))
 UNUSED_MODELS = ("PP-OCRv6_det_small", "PP-OCRv6_rec_small")
 
 datas = [d for d in collect_data_files("rapidocr") if not any(m in d[0] for m in UNUSED_MODELS)]
+datas += collect_data_files("sacremoses")            # tokenizer rules of some translation packs
 binaries = collect_dynamic_libs("onnxruntime")
+binaries += collect_dynamic_libs("ctranslate2") + collect_dynamic_libs("onnxruntime_genai")
+
+# offline Korean<->English translation packs (tools/fetch_models.py), marker files included
+AI = os.path.join(ROOT, "ai_models")
+for pack in ("mt-ko_en", "mt-en_ko"):
+    for base, _, files in os.walk(os.path.join(AI, pack)):
+        for f in files:
+            datas.append((os.path.join(base, f), os.path.join("ai_models", os.path.relpath(base, AI))))
 
 a = Analysis(
     [os.path.join(ROOT, "run_capture.py")],
@@ -15,7 +24,8 @@ a = Analysis(
     binaries=binaries,
     datas=datas,
     hiddenimports=["rapidocr", "onnxruntime", "PySide6.QtSvg", "PySide6.QtNetwork",
-                   "win32com.client", "pythoncom", "pywintypes"],
+                   "win32com.client", "pythoncom", "pywintypes",
+                   "ctranslate2", "sentencepiece", "onnxruntime_genai", "sacremoses", "subword_nmt.apply_bpe"],
     excludes=[
         "tkinter", "matplotlib", "pytest", "IPython",
         "PySide6.QtWebEngineCore", "PySide6.QtWebEngineWidgets", "PySide6.QtQml", "PySide6.QtQuick",

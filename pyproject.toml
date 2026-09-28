@@ -7,7 +7,7 @@ include = ["capture_tool*"]
 
 [project]
 name = "capture-tool"
-version = "0.3.7"
+version = "0.4.0"
 description = "Windows capture tool: annotate, OCR, and copy shapes to PowerPoint as native shapes"
 requires-python = ">=3.12"
 license = { text = "MIT" }
@@ -19,6 +19,11 @@ dependencies = [
     "rapidocr>=3.0",
     "mss>=9.0",
     "pywin32>=306",
+    "ctranslate2>=4.5",         # offline translation (Argos Translate models)
+    "sentencepiece>=0.2",
+    "sacremoses>=0.1",          # tokenizer of a few newer Argos packs
+    "subword-nmt>=0.3.8",
+    "onnxruntime-genai>=0.10",  # offline summary (Qwen3 1.7B, downloaded on first use)
 ]
 
 [project.optional-dependencies]

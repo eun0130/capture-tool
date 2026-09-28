@@ -228,15 +228,47 @@ def selftest(tray: TrayApp) -> int:
     t_copy = (time.perf_counter() - t1) * 1000
     png = win_clipboard.get_format(PNG)
     ocr_ok, shapes_ok = _selftest_recognition(tray)
+    translate_ok = _selftest_translation()
+    summary_ok = _selftest_summary()
     clip_ms, close_ms = getattr(c, "last_copy_ms", (t_copy, t_copy))
     line = (f"monitors={len(c.screen.monitors())} overlay_ms={t_overlay:.0f} copy_ms={t_copy:.0f} "
             f"(clipboard={clip_ms:.0f} +close windows={close_ms - clip_ms:.0f}) "
-            f"png_bytes={len(png or b'')} ocr_korean={ocr_ok} shapes={shapes_ok}")
-    ok = bool(png) and t_overlay < 150 and t_copy < 150 and ocr_ok and shapes_ok
+            f"png_bytes={len(png or b'')} ocr_korean={ocr_ok} shapes={shapes_ok} translate={translate_ok} "
+            f"summary={'not installed' if summary_ok is None else summary_ok}")
+    ok = (bool(png) and t_overlay < 150 and t_copy < 150 and ocr_ok and shapes_ok and translate_ok
+          and summary_ok is not False)
     print(line)
     print("SELFTEST", "OK" if ok else "FAIL")
     logging.info("selftest %s %s", "OK" if ok else "FAIL", line)
     return 0 if ok else 1
+
+
+def _selftest_translation() -> bool:
+    """The bundled offline Korean->English pack loads and translates."""
+    try:
+        from ..core.ai_local import LocalTranslator
+        out = LocalTranslator().translate("회의는 내일 오후 3시에 시작합니다.", "ko", "en")
+        logging.info("selftest translate=%r", out)
+        return "meeting" in out.lower() or "3" in out
+    except Exception as e:  # noqa: BLE001 - reported as a failed check
+        logging.error("selftest translate failed: %s", e)
+        return False
+
+
+def _selftest_summary():
+    """Offline summary, when its model has been downloaded (None if not installed)."""
+    from ..core.ai_local import LocalSummarizer
+    s = LocalSummarizer()
+    if not s.available():
+        return None
+    try:
+        out = s.summarize("3분기 매출은 1,250억 원으로 12% 늘었다. 영업이익은 4% 줄었다.", "ko")
+        s.unload()
+        logging.info("selftest summary=%r", out)
+        return "1,250" in out or "12" in out
+    except Exception as e:  # noqa: BLE001
+        logging.error("selftest summary failed: %s", e)
+        return False
 
 
 def _selftest_recognition(tray: TrayApp) -> tuple[bool, bool]:

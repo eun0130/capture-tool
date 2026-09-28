@@ -247,8 +247,13 @@ def select_text(lines: list[OcrLine], rect: tuple) -> str:
         part = "".join(chars).strip()
         if part:
             picked.append(OcrLine(part, l.box, l.score))
+    return _join_rows(picked)
+
+
+def _join_rows(lines: list[OcrLine]) -> str:
+    """Segments in reading order: the ones on one visual row joined by spaces, rows by newlines."""
     rows: list[list[OcrLine]] = []
-    for l in picked:
+    for l in lines:
         cy = l.box[1] + l.box[3] / 2
         if rows and abs(cy - (rows[-1][0].box[1] + rows[-1][0].box[3] / 2)) <= max(l.box[3], rows[-1][0].box[3]) * 0.5:
             rows[-1].append(l)
@@ -258,4 +263,5 @@ def select_text(lines: list[OcrLine], rect: tuple) -> str:
 
 
 def full_text(lines: list[OcrLine]) -> str:
-    return "\n".join(l.text for l in lines)
+    """All recognized text. Words the detector split apart on one row go back on one line."""
+    return _join_rows([l for l in reading_order(lines) if l.text])

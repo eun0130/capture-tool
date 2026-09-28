@@ -7,22 +7,13 @@ from PySide6.QtWidgets import (QCheckBox, QHBoxLayout, QLabel, QPlainTextEdit, Q
 
 from ..core.clipboard_payload import text_payload
 from ..core.ocr import OcrLine, full_text
-from ..core.redact import find_pii
+from ..core.redact import mask  # noqa: F401  (re-exported: controller imports it from here)
 from ..core.table import to_grid
-
-
-def mask(text: str) -> str:
-    out = list(text)
-    for m in find_pii(text):
-        for i in range(m.start, m.end):
-            if not out[i].isspace():
-                out[i] = "*"
-    return "".join(out)
 
 
 class TextPanel(QWidget):
     def __init__(self, lines: list[OcrLine], clipboard_set, redact: bool = True, qr: str | None = None, notify=None,
-                 grid: list[list[str]] | None = None):
+                 grid: list[list[str]] | None = None, ai_action=None):
         super().__init__(None, Qt.Window | Qt.WindowStaysOnTopHint | Qt.Tool)
         self.setWindowTitle("인식된 텍스트 — Esc로 닫기")
         self.lines = lines
@@ -44,6 +35,16 @@ class TextPanel(QWidget):
         self.redact.setChecked(redact)
         self.redact.toggled.connect(self._refresh)
         v.addWidget(self.redact)
+        self.buttons: dict[str, QPushButton] = {}
+        if ai_action is not None:
+            ai_row = QHBoxLayout()
+            for name, label in [("translate", "번역"), ("summarize", "요약")]:
+                b = QPushButton(label)
+                b.clicked.connect(lambda _=False, n=name: ai_action(n, self._ai_text()))
+                ai_row.addWidget(b)
+                self.buttons[name] = b
+            ai_row.addStretch(1)
+            v.addLayout(ai_row)
         row = QHBoxLayout()
         for label, fn in [("전체 복사", self.copy_all), ("선택 부분 복사", self.copy_selected),
                           ("표로 복사 (Excel)", self.copy_table), ("닫기 (Esc)", self.close)]:
@@ -65,6 +66,11 @@ class TextPanel(QWidget):
             self.close()
         else:
             super().keyPressEvent(e)
+
+    def _ai_text(self) -> str:
+        """Selected text if any, else everything (unmasked: the AI service masks for the cloud)."""
+        sel = self.edit.textCursor().selectedText().replace("\u2029", "\n")
+        return sel if sel.strip() else full_text(self.lines)
 
     def _clean(self, t: str) -> str:
         return mask(t) if self.redact.isChecked() else t

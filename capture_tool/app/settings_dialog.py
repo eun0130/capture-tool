@@ -4,8 +4,9 @@ from __future__ import annotations
 import copy
 
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import (QCheckBox, QComboBox, QDialog, QDialogButtonBox, QFileDialog, QFormLayout,
-                               QHBoxLayout, QLabel, QLineEdit, QPushButton, QSpinBox, QVBoxLayout, QWidget)
+from PySide6.QtWidgets import (QButtonGroup, QCheckBox, QComboBox, QDialog, QDialogButtonBox, QFileDialog,
+                               QFormLayout, QHBoxLayout, QLabel, QLineEdit, QPushButton, QRadioButton, QSpinBox,
+                               QVBoxLayout, QWidget)
 
 from ..core.hotkey import HotkeyError, find_duplicates, is_reserved, known_conflicts, parse
 from ..core.settings import Settings
@@ -121,6 +122,28 @@ class SettingsDialog(QDialog):
         self.ppt_new_slide.setChecked(settings.ppt_new_slide)
         for w in (self.auto_save, self.redact, self.startup, self.ppt_new_slide):
             v.addWidget(w)
+        # --- AI: translate / summary --------------------------------------------------------
+        v.addWidget(QLabel("<b>AI 번역·요약</b> — 번역은 항상 무료·오프라인. 요약 방식을 고르세요."))
+        self.ai_local = QRadioButton("요약: 오프라인 AI (PC 안에서 처리 · 무료 · 느림, 처음 한 번 약 1.4GB 받기)")
+        self.ai_cloud = QRadioButton("요약: Gemini (Google 무료 AI · 빠르고 정확 · 무료 키 필요, 글이 Google로 전송)")
+        grp = QButtonGroup(self)
+        grp.addButton(self.ai_local)
+        grp.addButton(self.ai_cloud)
+        (self.ai_cloud if settings.ai_summary_engine == "cloud" else self.ai_local).setChecked(True)
+        self.ai_cloud_translate = QCheckBox("번역도 Gemini로 (더 자연스러운 번역, 키가 있을 때)")
+        self.ai_cloud_translate.setChecked(settings.ai_cloud_translate)
+        self._ai_key = settings.ai_key
+        self._ai_consent = settings.ai_cloud_consent
+        keyrow = QHBoxLayout()
+        self.ai_key_status = QLabel()
+        keyrow.addWidget(self.ai_key_status, 1)
+        key_btn = QPushButton("무료 키 설정 안내…")
+        key_btn.clicked.connect(self._key_wizard)
+        keyrow.addWidget(key_btn)
+        for w in (self.ai_local, self.ai_cloud, self.ai_cloud_translate):
+            v.addWidget(w)
+        v.addLayout(keyrow)
+        self._refresh_key()
         buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel | QDialogButtonBox.RestoreDefaults)
         buttons.button(QDialogButtonBox.Ok).setText("저장")
         buttons.button(QDialogButtonBox.Cancel).setText("취소")
@@ -130,6 +153,19 @@ class SettingsDialog(QDialog):
         buttons.button(QDialogButtonBox.RestoreDefaults).clicked.connect(self._defaults)
         v.addWidget(buttons)
         self._show_problems()
+
+    def _refresh_key(self) -> None:
+        self.ai_key_status.setText("Gemini 키: 설정됨" if self._ai_key else "Gemini 키: 없음 (오프라인으로 동작)")
+
+    def _key_wizard(self) -> None:
+        from .ai_ui import KeyDialog
+        tmp = Settings(ai_key=self._ai_key, ai_summary_engine="cloud" if self.ai_cloud.isChecked() else "local",
+                       ai_cloud_translate=self.ai_cloud_translate.isChecked())
+        KeyDialog(tmp, parent=self).exec()
+        self._ai_key = tmp.ai_key
+        (self.ai_cloud if tmp.ai_summary_engine == "cloud" else self.ai_local).setChecked(True)
+        self.ai_cloud_translate.setChecked(tmp.ai_cloud_translate)
+        self._refresh_key()
 
     def _browse(self):
         d = QFileDialog.getExistingDirectory(self, "저장 폴더 선택", self.save_dir.text())
@@ -188,6 +224,9 @@ class SettingsDialog(QDialog):
         s.redact_pii = self.redact.isChecked()
         s.launch_at_startup = self.startup.isChecked()
         s.ppt_new_slide = self.ppt_new_slide.isChecked()
+        s.ai_summary_engine = "cloud" if self.ai_cloud.isChecked() else "local"
+        s.ai_cloud_translate = self.ai_cloud_translate.isChecked()
+        s.ai_key = self._ai_key
         return s
 
     def _accept(self):
