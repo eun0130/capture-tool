@@ -18,6 +18,7 @@ WAIT_LAZY = 400            # ms: a page that loads more content at the bottom ge
 MAX_NOTCHES = 15
 STEP_FRACTION = 0.6        # scroll ~60% of the view per step: the rest overlaps for matching
 TOP_TRIES = 60
+LATE_TRIES = 3             # x WAIT_LAZY: a page viewer may draw newly revealed pages late
 BLOCK_TRIES = 10           # x WAIT_LAZY: how long a blanked-out screen grab is waited out
 
 
@@ -64,15 +65,36 @@ class ScrollCapture:
             a = b
         self._f = a
 
+    @staticmethod
+    def _bottom_blank(frame: np.ndarray) -> bool:
+        """The lower part (what scrolling revealed) has no detail while the upper part has."""
+        import cv2
+        g = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        detail = (g.max(axis=1).astype(int) - g.min(axis=1)) > 16
+        h = len(detail)
+        return detail[int(h * 0.65):].mean() < 0.03 and detail[:int(h * 0.65)].mean() > 0.1
+
+    def _settle_drawn(self):
+        """Generator: settle, then give a viewer that draws pages late a moment to do so."""
+        yield from self._settle()
+        for _ in range(LATE_TRIES):
+            if not self._bottom_blank(self._f):
+                return
+            before = self._f
+            yield WAIT_LAZY
+            yield from self._settle()
+            if np.array_equal(before, self._f):
+                return                          # really blank (an empty page)
+
     def _settle_unblocked(self):
         """Generator: like _settle, but waits out a blanked grab; sets self._blocked if it stays."""
-        yield from self._settle()
+        yield from self._settle_drawn()
         self._blocked = False
         for _ in range(BLOCK_TRIES):
             if not looks_blocked(self._f):
                 return
             yield WAIT_LAZY
-            yield from self._settle()
+            yield from self._settle_drawn()
         self._blocked = looks_blocked(self._f)
 
     def _report(self) -> None:

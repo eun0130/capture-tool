@@ -22,6 +22,9 @@ LOOSE_MARGIN = 0.3       # ... and beat every shift farther than NEAR rows away 
 NEAR = 16
 ROW_TOL = 8              # gray levels: rows this close count as equal (anti-aliasing at 125%/150%)
 TOL_STEP = 4             # every 4th column is enough for the tolerant comparison
+STRIPS = 8               # vertical strips voting on the shift when only part of the view scrolls
+CLASS_MARGIN = 0.15      # a column "moves" / "stays" when one comparison beats the other by this
+GROW = 16                # blank columns kept beside the scrolling content when cropping a panel off
 EDGE_ZONE = 40           # px at the right edge where a moving scrollbar is looked for
 MAX_BAND_FRACTION = 1 / 3  # sticky header / footer can't be more than this of the frame each
 
@@ -51,6 +54,8 @@ class Stitcher:
         self.frames = 0
         self._weights = None
         self._prev_hash = self._prev_info = None
+        self._moving = self._static = None       # per-column votes: scrolls with the content / stays put
+        self.guessed = 0                          # steps joined on the expected shift (blank overlap)
 
     # --- row signatures --------------------------------------------------------------
     def _cols(self, w: int) -> slice:
@@ -108,9 +113,20 @@ class Stitcher:
             # scroll positions cause on scaled displays
             shift = self._find_shift_tolerant(pg[t:b], cg[t:b], pi[t:b], expected)
         if shift is None:
+            # only part of the width scrolls (PDF thumbnails, a fixed side menu, frozen columns):
+            # let vertical strips vote; the ones that stay put are left out
+            shift = self._strip_shift(self.last[t:b], img[t:b], expected)
+        if (shift is None or shift == 0) and expected:
+            left, right = self._column_span(img.shape[1])       # the part that scrolls
+            moved = not np.array_equal(self.last[t:b, left:right], img[t:b, left:right])
+            if moved and self._overlap_blank(self.last[t:b, left:right], expected):
+                shift = expected      # nothing to line up (blank page / gap): trust the scroll step
+                self.guessed += 1
+        if shift is None:
             return StepResult(NOMATCH)
         if shift == 0:
             return StepResult(SAME)
+        self._classify_columns(self.last[t:b], img[t:b], shift)
         self._note_scrollbar(self.last[t:b], img[t:b], shift)
         new = img[b - shift:b]
         room = self._cap() - self.height
@@ -125,6 +141,113 @@ class Stitcher:
         self._prev_hash, self._prev_info = ch, ci
         self._prev_gray = cg
         return StepResult(status, shift)
+
+    # --- partial-width scrolling ------------------------------------------------------------
+    def _strip_shift(self, prev_band: np.ndarray, cur_band: np.ndarray, expected) -> int | None:
+        pg = cv2.cvtColor(prev_band, cv2.COLOR_BGR2GRAY).astype(np.int16)
+        cg = cv2.cvtColor(cur_band, cv2.COLOR_BGR2GRAY).astype(np.int16)
+        n, w = pg.shape
+        edges = np.linspace(0, w, STRIPS + 1).astype(int)
+        rng = np.random.default_rng(777)
+        weights = rng.integers(1, 2 ** 62, w, dtype=np.uint64)
+        min_overlap = max(20, n // 20)
+        votes: list[tuple[int, int]] = []
+        still = 0
+        for a0, a1 in zip(edges[:-1], edges[1:]):
+            P, C = pg[:, a0:a1], cg[:, a0:a1]
+            info = (P.max(axis=1) - P.min(axis=1)) > 16
+            k_all = int(info.sum())
+            if k_all < MIN_INFO_ROWS:
+                continue
+            ph = (P >> 2).astype(np.uint64) @ weights[a0:a1]
+            ch = (C >> 2).astype(np.uint64) @ weights[a0:a1]
+            scored, loose = [], []
+            for dy in range(0, n - min_overlap + 1):
+                m = info[dy:]
+                k = int(m.sum())
+                if k < MIN_INFO_ROWS:
+                    continue
+                scored.append((float((ph[dy:][m] == ch[:n - dy][m]).mean()), dy, k))
+            dy = self._pick_strict(scored, expected)
+            if dy is None:                                   # tolerant, every 4th column
+                Ps, Cs = P[:, ::TOL_STEP], C[:, ::TOL_STEP]
+                for d in range(0, n - min_overlap + 1):
+                    m = info[d:]
+                    k = int(m.sum())
+                    if k >= MIN_INFO_ROWS:
+                        close = np.abs(Ps[d:][m] - Cs[:n - d][m]).mean(axis=1) < ROW_TOL
+                        loose.append((float(close.mean()), d, k))
+                dy = self._pick_strict(loose, expected)
+            if dy is None:
+                continue
+            if dy == 0:
+                still += k_all
+            else:
+                votes.append((dy, k_all))
+        if not votes:
+            return 0 if still else None
+        # only a shift at least two strips agree on counts (one strip alone could be a coincidence)
+        groups = [[(d, wt) for d, wt in votes if abs(d - v[0]) <= 2] for v in votes]
+        groups = [g for g in groups if len(g) >= 2]
+        if not groups:
+            return None
+        group = max(groups, key=lambda g: sum(wt for _, wt in g))
+        return max(group, key=lambda v: v[1])[0]
+
+    @staticmethod
+    def _pick_strict(scored, expected) -> int | None:
+        """Like _pick, but only clear matches (a narrow strip has too little to go on loosely)."""
+        best = [c for c in scored if c[0] >= MIN_SCORE]
+        if not best:
+            return None
+        top_score = max(sc for sc, _, _ in best)
+        tied = [(dy, k) for sc, dy, k in best if sc >= top_score - 0.01]
+        if expected is not None:
+            return min(tied, key=lambda t: (abs(t[0] - expected), t[0]))[0]
+        return max(tied, key=lambda t: (t[1], -t[0]))[0]
+
+    @staticmethod
+    def _overlap_blank(prev_band: np.ndarray, expected: int) -> bool:
+        """The rows that would overlap after `expected` hold no detail (blank page, page gap)."""
+        g = cv2.cvtColor(prev_band[expected:], cv2.COLOR_BGR2GRAY).astype(np.int16)
+        if g.shape[0] == 0:
+            return False
+        # every row (nearly) the same: nothing that could show how far it moved
+        same_as_first = np.abs(g - g[0]).max(axis=1) <= 16
+        return same_as_first.mean() >= 0.98
+
+    def _classify_columns(self, prev_band: np.ndarray, cur_band: np.ndarray, shift: int) -> None:
+        """Per column: does it follow the scroll, or stay where it was (a panel that doesn't scroll)?"""
+        n = prev_band.shape[0]
+        if n - shift <= 0:
+            return
+        pg = cv2.cvtColor(prev_band, cv2.COLOR_BGR2GRAY).astype(np.int16)
+        cg = cv2.cvtColor(cur_band, cv2.COLOR_BGR2GRAY).astype(np.int16)
+        moved = (np.abs(pg[shift:] - cg[:n - shift]) <= 12).mean(axis=0)
+        stayed = (np.abs(pg[shift:] - cg[shift:]) <= 12).mean(axis=0)
+        if self._moving is None:
+            self._moving = np.zeros(pg.shape[1], np.int32)
+            self._static = np.zeros(pg.shape[1], np.int32)
+        self._moving += moved > stayed + CLASS_MARGIN
+        self._static += stayed > moved + CLASS_MARGIN
+
+    def _column_span(self, w: int) -> tuple[int, int]:
+        """Columns of the scrolling part: from the first to the last column that moved, grown
+        over neutral (blank) columns but never into ones that stayed put."""
+        if self._moving is None or not (self._static > self._moving).any():
+            return 0, w
+        mv = self._moving > self._static
+        st = self._static > self._moving
+        cols = np.nonzero(mv)[0]
+        if len(cols) == 0:
+            return 0, w
+        left, right = int(cols[0]), int(cols[-1]) + 1
+        lo, hi = max(0, left - GROW), min(w, right + GROW)   # a little blank margin, not a whole panel
+        while left > lo and not st[left - 1]:
+            left -= 1
+        while right < hi and not st[right]:
+            right += 1
+        return left, right
 
     def _gray(self, img: np.ndarray) -> np.ndarray:
         return cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)[:, self._cols(img.shape[1])][:, ::TOL_STEP].astype(np.int16)
@@ -210,6 +333,9 @@ class Stitcher:
             foot = self.bottom or 0
             out = np.vstack([self.first[:h - foot]] + self.pieces + ([self.last[h - foot:]] if foot else []))
         out = out[:self._cap()]
+        left, right = self._column_span(out.shape[1])
         if self.crop_right:
-            out = out[:, :out.shape[1] - self.crop_right]
+            right = min(right, out.shape[1] - self.crop_right)
+        if right - left >= 16:
+            out = out[:, left:right]
         return np.ascontiguousarray(out)

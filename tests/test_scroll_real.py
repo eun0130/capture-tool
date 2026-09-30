@@ -263,3 +263,69 @@ def test_WSCR_04_page_view_found_even_while_the_browser_is_covered(tmp_path):
     ok = lambda o: "same True" in o
     out = run_on_desktop(COVER % (ROOT, tmp_path / "c.html", exe, tmp_path / "profile"), ok)
     assert ok(out), out
+
+
+def test_WSCR_05_real_pdf_viewer_with_images_rules_thumbnails_and_a_blank_page(tmp_path, qt_app):
+    """User report: PDF scroll capture stopped midway at images / separators. Chrome's PDF viewer
+    (thumbnail panel that doesn't scroll, photos, ruled table, blank page) must go to the end."""
+    import ctypes
+    from ctypes import wintypes
+    from capture_tool.core.scroll_session import ScrollCapture
+    from capture_tool.platform import screen, scroll, windows
+    from tests.pdfsample import make_pdf
+    exe = _browser()
+    if exe is None:
+        pytest.skip("no Chromium browser")
+    screen.set_dpi_awareness()
+    pdf = tmp_path / f"report{os.getpid()}.pdf"
+    colors = make_pdf(pdf)
+    profile = tmp_path / f"profile-{time.time_ns()}"
+    proc = subprocess.Popen([exe, f"--user-data-dir={profile}", "--no-first-run", "--no-default-browser-check",
+                             "--disable-sync", "--new-window", "--window-position=80,40", "--window-size=1000,800",
+                             pdf.as_uri()])
+    try:
+        win = vp = None
+        for _ in range(100):
+            win = next((w for w in windows.top_level_windows() if pdf.stem in w.title), None)
+            vp = scroll.browser_viewport(win.hwnd) if win else None
+            if vp:
+                break
+            time.sleep(0.2)
+        if not vp:
+            pytest.skip("the PDF viewer did not open")
+        fg = ctypes.WinDLL("user32").SetForegroundWindow
+        fg.argtypes = [wintypes.HWND]
+        fg(win.hwnd)
+        time.sleep(2.5)                                     # first pages rendered
+        cx, cy = vp.x + vp.w // 2, vp.y + vp.h // 2
+        old = screen.cursor_pos()
+        sc = ScrollCapture(grab=lambda: screen.grab(vp), wheel=lambda n: scroll.wheel(cx, cy, n), to_top=True,
+                           still_visible=lambda: scroll.root_window_at(cx, cy) == win.hwnd)
+        for ms in sc.run():
+            time.sleep(ms / 1000)
+        scroll.set_cursor(*old)
+        if sc.reason in ("covered", "blocked"):
+            pytest.skip(f"desktop in use: {sc.reason}")
+        out = sc.result()
+        assert sc.reason == "end", sc.reason
+
+        def near(px, hexc):
+            h = hexc.lstrip("#")
+            return max(abs(int(px[0]) - int(h[4:6], 16)), abs(int(px[1]) - int(h[2:4], 16)),
+                       abs(int(px[2]) - int(h[0:2], 16))) <= 12
+        col = out[:, out.shape[1] // 2]
+        seq = []
+        for px in col:
+            for i, c in enumerate(colors):
+                if near(px, c):
+                    if not seq or seq[-1] != i:
+                        seq.append(i)
+                    break
+        assert seq == list(range(len(colors))), seq         # every page once, in order
+    finally:
+        subprocess.run(["taskkill", "/PID", str(proc.pid), "/T", "/F"], capture_output=True)
+        marker = str(profile).replace("'", "''")
+        subprocess.run(["powershell", "-NoProfile", "-Command",
+                        "Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -and "
+                        f"$_.CommandLine.Contains('{marker}') }} | ForEach-Object {{ Stop-Process -Id $_.ProcessId -Force "
+                        "-ErrorAction SilentlyContinue }"], capture_output=True)
