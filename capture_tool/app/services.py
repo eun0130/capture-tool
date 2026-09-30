@@ -49,6 +49,9 @@ class RealScreen:
         from ..platform import scroll
         return scroll.exclude_from_capture(hwnd)
 
+    def capture_window(self, hwnd, rect):
+        return windows.capture_window(hwnd, rect)
+
     def windows(self):
         try:
             return windows.top_level_windows(exclude_pid=os.getpid())

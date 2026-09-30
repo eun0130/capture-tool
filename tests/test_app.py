@@ -543,7 +543,8 @@ def test_APP_31_side_bar_next_to_selection(make):
     assert sb.isVisible()
     g = sb.geometry()
     assert g.left() >= 400 and g.top() == 100 and g.right() <= 800
-    assert list(sb.buttons) == ["copy", "save_as", "text", "ppt", "ppt_shapes", "scroll", "pin"]
+    assert list(sb.buttons) == ["copy", "save_as", "text", "ppt", "ppt_shapes", "scroll", "link", "pin"]
+    assert sb.columns == 2 and sb.height() <= 600 * 0.6          # small screen: two columns
 
 
 def test_APP_32_save_icon_asks_location(make, tmp_path):

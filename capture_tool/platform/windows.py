@@ -83,3 +83,65 @@ def window_at(p, wins: list[WindowInfo]) -> WindowInfo | None:
         if w.rect.contains(p):
             return w
     return None
+
+
+# --- whole-window picture (also where the window is covered or off-screen) ----------------------
+_gdi = ctypes.WinDLL("gdi32", use_last_error=True)
+PW_RENDERFULLCONTENT = 0x2
+
+
+class _BMIH(ctypes.Structure):
+    _fields_ = [("biSize", wintypes.DWORD), ("biWidth", wintypes.LONG), ("biHeight", wintypes.LONG),
+                ("biPlanes", wintypes.WORD), ("biBitCount", wintypes.WORD), ("biCompression", wintypes.DWORD),
+                ("biSizeImage", wintypes.DWORD), ("biXPelsPerMeter", wintypes.LONG),
+                ("biYPelsPerMeter", wintypes.LONG), ("biClrUsed", wintypes.DWORD), ("biClrImportant", wintypes.DWORD)]
+
+
+u32.GetWindowRect.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.RECT)]
+u32.GetWindowDC.argtypes = [wintypes.HWND]
+u32.GetWindowDC.restype = wintypes.HDC
+u32.ReleaseDC.argtypes = [wintypes.HWND, wintypes.HDC]
+u32.PrintWindow.argtypes = [wintypes.HWND, wintypes.HDC, wintypes.UINT]
+_gdi.CreateCompatibleDC.argtypes = [wintypes.HDC]
+_gdi.CreateCompatibleDC.restype = wintypes.HDC
+_gdi.CreateDIBSection.argtypes = [wintypes.HDC, ctypes.c_void_p, wintypes.UINT, ctypes.POINTER(ctypes.c_void_p),
+                                  wintypes.HANDLE, wintypes.DWORD]
+_gdi.CreateDIBSection.restype = wintypes.HBITMAP
+_gdi.SelectObject.argtypes = [wintypes.HDC, wintypes.HGDIOBJ]
+_gdi.SelectObject.restype = wintypes.HGDIOBJ
+_gdi.DeleteObject.argtypes = [wintypes.HGDIOBJ]
+_gdi.DeleteDC.argtypes = [wintypes.HDC]
+
+
+def capture_window(hwnd: int, frame: Rect):
+    """The window's own picture (PrintWindow), cropped to its visible frame `frame` (physical
+    px, DWM bounds). BGR numpy image, or None if Windows can't render it."""
+    import numpy as np
+    wr = wintypes.RECT()
+    if not u32.GetWindowRect(hwnd, ctypes.byref(wr)):
+        return None
+    w, h = wr.right - wr.left, wr.bottom - wr.top
+    if w <= 0 or h <= 0 or w * h > 16_000 * 16_000:
+        return None
+    wdc = u32.GetWindowDC(hwnd)
+    mdc = _gdi.CreateCompatibleDC(wdc)
+    bits = ctypes.c_void_p()
+    bmi = _BMIH(ctypes.sizeof(_BMIH), w, -h, 1, 32, 0, 0, 0, 0, 0, 0)
+    bmp = _gdi.CreateDIBSection(mdc, ctypes.byref(bmi), 0, ctypes.byref(bits), None, 0)
+    try:
+        if not bmp or not bits.value:
+            return None
+        old = _gdi.SelectObject(mdc, bmp)
+        ok = u32.PrintWindow(hwnd, mdc, PW_RENDERFULLCONTENT)
+        _gdi.SelectObject(mdc, old)
+        if not ok:
+            return None
+        img = np.ctypeslib.as_array(ctypes.cast(bits, ctypes.POINTER(ctypes.c_uint8)), shape=(h, w, 4))[:, :, :3].copy()
+    finally:
+        if bmp:
+            _gdi.DeleteObject(bmp)
+        _gdi.DeleteDC(mdc)
+        u32.ReleaseDC(hwnd, wdc)
+    x0, y0 = frame.x - wr.left, frame.y - wr.top           # the invisible resize border around it
+    crop = img[max(0, y0):max(0, y0) + frame.h, max(0, x0):max(0, x0) + frame.w]
+    return crop if crop.shape[:2] == (frame.h, frame.w) else None

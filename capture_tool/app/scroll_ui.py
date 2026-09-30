@@ -43,9 +43,9 @@ class ScrollResult(QWidget):
     """Shows the finished (tall) capture scaled to fit, with copy / save / PowerPoint."""
     action = Signal(str)
 
-    def __init__(self, image, dpr: float = 1.0):
+    def __init__(self, image, dpr: float = 1.0, title: str = "스크롤 캡처"):
         super().__init__(None, Qt.WindowStaysOnTopHint | Qt.Tool)
-        self.setWindowTitle("스크롤 캡처")
+        self.setWindowTitle(title)
         self.setAttribute(Qt.WA_DeleteOnClose, False)
         self.image = image
         v = QVBoxLayout(self)
@@ -66,7 +66,8 @@ class ScrollResult(QWidget):
         v.addWidget(area, 1)
         row = QHBoxLayout()
         self.buttons = {}
-        for name, label in [("copy", "다시 복사"), ("save_as", "저장…"), ("ppt", "PPT로"), ("close", "닫기 (Esc)")]:
+        for name, label in [("copy", "다시 복사"), ("save_as", "저장…"), ("ppt", "PPT로"), ("pin", "고정"),
+                            ("link_file", "파일 링크"), ("link_web", "인터넷 링크"), ("close", "닫기 (Esc)")]:
             b = QPushButton(label)
             b.clicked.connect(lambda _=False, n=name: self.trigger(n))
             row.addWidget(b)

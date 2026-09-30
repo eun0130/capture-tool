@@ -327,6 +327,7 @@ class OverlayWindow(QWidget):
         local = Rect(int(lr.x()), int(lr.y()), int(lr.width()), int(lr.height()))
         screen = Rect(0, 0, self.width(), self.height())
         sb = self.side_bar
+        sb.fit_height(int(self.height() * 0.6))
         (x, y), (sx, sy) = layout_bars(local, screen, (tb.width(), tb.height()), (sb.width(), sb.height()))
         tb.move(x, y)
         if self.ocr_lines is None:
@@ -420,7 +421,7 @@ class OverlayWindow(QWidget):
             if self._moved or (pos - press).manhattanLength() > 3:
                 self.c.on_drag(self.to_phys(press), self.to_phys(pos), self)
             elif self.hover_window is not None:
-                self.c.on_select_rect(self.hover_window.rect, self)
+                self.c.on_select_rect(self.hover_window.rect, self, window=self.hover_window)
         elif st is State.EDITING:
             doc = self.c.session.document
             if self.ocr_lines is not None:
@@ -561,7 +562,7 @@ class OverlayWindow(QWidget):
             p.setPen(QPen(ACCENT, 2, Qt.DashLine))
             p.fillRect(wr, QColor(76, 141, 255, 30))
             p.drawRect(wr)
-            self._label(p, wr.topLeft(), f"{self.hover_window.title or '창'} · 클릭하면 선택")
+            self._label(p, wr.topLeft(), self.hover_label())
         if hole is not None:
             p.setPen(QPen(ACCENT, 2))
             p.drawRect(hole)
@@ -675,9 +676,39 @@ class OverlayWindow(QWidget):
         p.drawText(QRectF(ox, oy + size + 22, size, 18), Qt.AlignLeft, "C: 색상 복사")
         p.restore()
 
+    def hover_label(self) -> str:
+        w = self.hover_window
+        if w is None:
+            return ""
+        name = (w.title or "창")[:40]
+        r, m = w.rect, self.monitor.rect
+        inside = r.x >= m.x and r.y >= m.y and r.right <= m.right and r.bottom <= m.bottom
+        if inside:
+            return f"{name} · 클릭하면 창 전체 선택"
+        return f"{name} · 클릭하면 창 전체 (다른 모니터·화면 밖에 걸친 부분까지 한 장으로)"
+
+    def tip_text(self) -> str:
+        if not getattr(self.c, "tip_active", False) or self.c.session.state is not State.SELECTING:
+            return ""
+        return ("팁: 창의 제목줄(또는 창 위 아무 곳)을 클릭하면 그 창 전체가 캡처됩니다. "
+                "두 모니터에 걸친 창도 한 장으로 찍힙니다.")
+
     def _paint_hint(self, p: QPainter, st):
+        tip = self.tip_text()
+        if tip and self.active is False and self.c.session.state is State.SELECTING:
+            f = QFont(FONT_FAMILY)
+            f.setPixelSize(15)
+            f.setBold(True)
+            p.setFont(f)
+            w = p.fontMetrics().horizontalAdvance(tip) + 40
+            r = QRectF((self.width() - w) / 2, 60, w, 40)
+            p.setPen(Qt.NoPen)
+            p.setBrush(QColor(31, 95, 209, 235))
+            p.drawRoundedRect(r, 10, 10)
+            p.setPen(QColor("#FFFFFF"))
+            p.drawText(r, Qt.AlignCenter, tip)
         if st is State.SELECTING:
-            text = "드래그로 영역 선택 · 클릭하면 창 선택 · C 색상 복사 · Esc 취소"
+            text = "드래그로 영역 선택 · 창(제목줄)을 클릭하면 그 창 전체 · C 색상 복사 · Esc 취소"
         elif self.active and self.ocr_lines is not None:
             text = "글자 위를 드래그하면 그 부분만 복사 · Enter 전체 복사 · Esc 그리기로 돌아가기"
         elif self.active and self.tool == "lasso":

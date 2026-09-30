@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from PySide6.QtCore import QSize, Qt, Signal
-from PySide6.QtWidgets import QToolButton, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QGridLayout, QToolButton, QWidget
 
 from . import icons
 
@@ -13,6 +13,8 @@ ACTIONS = [
     ("ppt", "ppt", "PPT로", "캡처한 그대로 PowerPoint에 넣기 — 그림(그린 것 포함), 텍스트 모드에서는 글자"),
     ("ppt_shapes", "shapes", "도형PPT", "도형을 알아봐서 PowerPoint에서 고칠 수 있는 도형으로 넣기"),
     ("scroll", "scroll", "스크롤", "아래로 자동 스크롤하며 길게 캡처 — 브라우저 창 전체를 고르면 페이지 처음부터 끝까지 (Esc 중지)"),
+    ("link", "link", "링크", "링크 복사 — ① 파일 링크: 저장한 파일 위치(인터넷에 올리지 않음, 같은 PC·공유 폴더에서 열림) "
+                             "② 인터넷 공유 링크: 누구나 열 수 있는 주소, 정해진 시간 뒤 자동 삭제"),
     ("pin", "pin", "고정", "캡처를 다른 모든 창 위에 계속 떠 있게 붙여 둡니다 — 자료를 보며 작업할 때 (F3)"),
 ]
 
@@ -33,9 +35,10 @@ class SideBar(QWidget):
         self.setObjectName("sidebar")
         self.setAttribute(Qt.WA_StyledBackground, True)
         self.setStyleSheet(STYLE)
-        v = QVBoxLayout(self)
-        v.setContentsMargins(6, 6, 6, 6)
-        v.setSpacing(4)
+        self._grid = QGridLayout(self)
+        self._grid.setContentsMargins(6, 6, 6, 6)
+        self._grid.setSpacing(4)
+        self.columns = 1
         self.buttons: dict[str, QToolButton] = {}
         for name, icon_name, label, tip in ACTIONS:
             b = QToolButton(self)
@@ -48,10 +51,35 @@ class SideBar(QWidget):
             b.setToolButtonStyle(Qt.ToolButtonTextUnderIcon)
             b.setFixedSize(QSize(56, 54))
             b.setFocusPolicy(Qt.NoFocus)
-            b.clicked.connect(lambda _=False, n=name: self.action.emit(n))
-            v.addWidget(b)
+            if name == "link":
+                b.clicked.connect(lambda _=False, btn=b: self._link_menu(btn))
+            else:
+                b.clicked.connect(lambda _=False, n=name: self.action.emit(n))
             self.buttons[name] = b
+        self.set_columns(1)
+
+    def set_columns(self, n: int) -> None:
+        """One column normally; two when one column would be too tall for the screen."""
+        self.columns = n
+        for i, b in enumerate(self.buttons.values()):
+            self._grid.removeWidget(b)
+            self._grid.addWidget(b, i // n, i % n)
         self.adjustSize()
+
+    def fit_height(self, max_height: int) -> None:
+        one = len(self.buttons) * 58 + 12
+        want = 1 if one <= max_height else 2
+        if want != self.columns:
+            self.set_columns(want)
 
     def trigger(self, name: str) -> None:
         self.action.emit(name)
+
+    def _link_menu(self, btn) -> None:
+        from PySide6.QtWidgets import QMenu
+        m = QMenu(self)
+        a = m.addAction("파일 링크 복사 — 저장한 위치 (인터넷에 올리지 않음)")
+        a.triggered.connect(lambda: self.action.emit("link_file"))
+        b = m.addAction("인터넷 공유 링크 만들기 — 누구나 열람, 정해진 시간 뒤 자동 삭제")
+        b.triggered.connect(lambda: self.action.emit("link_web"))
+        m.exec(btn.mapToGlobal(btn.rect().topRight()))

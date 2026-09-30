@@ -42,6 +42,9 @@ class Settings:
     ai_cloud_consent: bool = False       # agreed that text is sent to Google
     ai_key: str = ""                     # Gemini key, DPAPI-encrypted (never plain text)
     ai_target_lang: str = ""             # "" = automatic (Korean <-> English)
+    share_expiry: str = "24h"            # internet link: deleted by the host after 1h/12h/24h/72h
+    share_consent: bool = False          # agreed that internet links upload the picture
+    tip_count: int = 0                   # "click a title bar = whole window" tip shown this often
     version: int = SETTINGS_VERSION
 
 
@@ -94,7 +97,7 @@ def _apply(s: Settings, data: dict, warnings: list[str]) -> None:
                     raise TypeError
                 s.jpg_quality = min(100, max(1, v))
             elif name in ("auto_save", "launch_at_startup", "redact_pii", "drm_notice_shown", "ppt_new_slide",
-                          "ai_cloud_translate", "ai_cloud_consent"):
+                          "ai_cloud_translate", "ai_cloud_consent", "share_consent"):
                 if not isinstance(v, bool):
                     raise TypeError
                 setattr(s, name, v)
@@ -116,6 +119,15 @@ def _apply(s: Settings, data: dict, warnings: list[str]) -> None:
                 s.last_tool = v
             elif name == "last_color":
                 s.last_color = normalize_hex(v)
+            elif name == "share_expiry":
+                from .share import EXPIRIES
+                if v not in EXPIRIES:
+                    raise TypeError
+                s.share_expiry = v
+            elif name == "tip_count":
+                if not _is_int(v):
+                    raise TypeError
+                s.tip_count = max(0, min(100, v))
             elif name == "ai_summary_engine":
                 if v not in ("local", "cloud"):
                     raise TypeError

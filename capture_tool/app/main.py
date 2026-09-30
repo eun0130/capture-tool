@@ -130,6 +130,12 @@ class TrayApp:
             a.triggered.connect(lambda _=False, x=action: QTimer.singleShot(250, lambda: self.on_hotkey(x)))
             m.addAction(a)
         m.addSeparator()
+        auto = QAction("캡처 자동 저장 (캡처할 때마다 저장 폴더에)", m)
+        auto.setCheckable(True)
+        auto.setChecked(self.settings.auto_save)
+        auto.toggled.connect(self._set_auto_save)
+        m.addAction(auto)
+        self.auto_save_action = auto
         a = QAction("고정 이미지 모두 닫기", m)
         a.triggered.connect(self.controller.close_pins)
         m.addAction(a)
@@ -145,6 +151,15 @@ class TrayApp:
         m.addAction(a)
         self.menu = m
         self.tray.setContextMenu(m)
+
+    def _set_auto_save(self, on: bool) -> None:
+        self.settings.auto_save = on
+        try:
+            settings_io.save(self.settings, self.settings_path)
+        except OSError:
+            pass
+        self.toast("캡처 자동 저장을 켰습니다. 캡처할 때마다 저장 폴더에 저장합니다." if on
+                   else "캡처 자동 저장을 껐습니다.")
 
     def on_hotkey(self, action: str) -> None:
         mode = {"capture": "draw", "ocr": "text", "shapes": "shapes", "fullscreen": "fullscreen",

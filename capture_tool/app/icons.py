@@ -25,6 +25,7 @@ _P = {
     "undo": '<path d="M9 8L5 12l4 4M5 12h10a4 4 0 010 8h-3"/>',
     "redo": '<path d="M15 8l4 4-4 4M19 12H9a4 4 0 000 8h3"/>',
     "scroll": '<rect x="6" y="3" width="12" height="18" rx="2"/><path d="M12 8v8M9 13l3 3 3-3"/>',
+    "link": '<path d="M10 14a4 4 0 005.7 0l3-3a4 4 0 00-5.7-5.7l-1 1"/><path d="M14 10a4 4 0 00-5.7 0l-3 3a4 4 0 005.7 5.7l1-1"/>',
     "pin": '<path d="M9 4h6l-1 5 3 3H7l3-3zM12 12v8"/>',
     "save": '<path d="M5 4h11l3 3v13H5zM8 4v5h7V4M8 20v-6h8v6"/>',
     "copy": '<rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V5a1 1 0 00-1-1H5a1 1 0 00-1 1v10a1 1 0 001 1h3"/>',

@@ -112,7 +112,7 @@ class SettingsDialog(QDialog):
         self.quality.setValue(settings.jpg_quality)
         sform.addRow("JPG 품질", self.quality)
         v.addLayout(sform)
-        self.auto_save = QCheckBox("복사할 때 자동으로 폴더에도 저장")
+        self.auto_save = QCheckBox("캡처하면 자동으로 저장 폴더에 저장 (복사·PPT·고정·텍스트 등 무엇을 하든, Esc로 그냥 닫으면 저장 안 함)")
         self.auto_save.setChecked(settings.auto_save)
         self.redact = QCheckBox("텍스트 복사 시 개인정보 자동 가림")
         self.redact.setChecked(settings.redact_pii)
@@ -134,6 +134,16 @@ class SettingsDialog(QDialog):
         self.ai_cloud_translate.setChecked(settings.ai_cloud_translate)
         self._ai_key = settings.ai_key
         self._ai_consent = settings.ai_cloud_consent
+        from ..core.share import EXPIRIES, EXPIRY_NAMES
+        share_row = QHBoxLayout()
+        share_row.addWidget(QLabel("인터넷 공유 링크 보관 시간 (지나면 자동 삭제)"))
+        self.share_expiry = QComboBox()
+        for code in EXPIRIES:
+            self.share_expiry.addItem(EXPIRY_NAMES[code], code)
+        self.share_expiry.setCurrentIndex(max(0, self.share_expiry.findData(settings.share_expiry)))
+        share_row.addWidget(self.share_expiry)
+        share_row.addStretch(1)
+        v.addLayout(share_row)
         keyrow = QHBoxLayout()
         self.ai_key_status = QLabel()
         keyrow.addWidget(self.ai_key_status, 1)
@@ -227,6 +237,7 @@ class SettingsDialog(QDialog):
         s.ai_summary_engine = "cloud" if self.ai_cloud.isChecked() else "local"
         s.ai_cloud_translate = self.ai_cloud_translate.isChecked()
         s.ai_key = self._ai_key
+        s.share_expiry = self.share_expiry.currentData()
         return s
 
     def _accept(self):

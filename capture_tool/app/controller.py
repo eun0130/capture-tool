@@ -11,8 +11,8 @@ import numpy as np
 from PySide6.QtCore import QObject, QPoint, QRunnable, Qt, QThreadPool, QTimer, Signal
 
 from ..core import settings as settings_io
-from ..core.clipboard_payload import (UNICODE, dib_from_bgr, image_payload, png_with_dpi, shapes_payload,
-                                      text_payload)
+from ..core.clipboard_payload import (HTML, UNICODE, cf_html, dib_from_bgr, image_payload, png_with_dpi,
+                                      shapes_payload, text_payload)
 from ..core.clip import flatten, mask_outside
 from ..core.color import pixel_color, push_recent
 from ..core.convert import annotations_to_drawing
@@ -55,6 +55,7 @@ class Controller(QObject):
     _ai_partial = Signal(str)
     _ai_progress = Signal(object)
     _ai_dl = Signal(object)
+    _share_done = Signal(object)
 
     def __init__(self, screen, clipboard, ocr, settings, settings_path, fallback_dir, sync=False, notify=None):
         super().__init__()
@@ -81,6 +82,7 @@ class Controller(QObject):
         self._ai_partial.connect(lambda t: self.ai_window and self.ai_window.set_partial(t))
         self._ai_progress.connect(lambda p: self.ai_window and self.ai_window.show_progress(*p))
         self._ai_dl.connect(lambda r: self._ai_dl_done(r))
+        self._share_done.connect(lambda r: self._share_done_cb(r))
         self._ai_idle_timer = QTimer(self)
         self._ai_idle_timer.setSingleShot(True)
         self._ai_idle_timer.setInterval(90_000)      # models leave memory after 90 s unused
@@ -102,6 +104,12 @@ class Controller(QObject):
         self._scroll_stop = False
         self.scroll_indicator = None
         self.scroll_result = None
+        self.result_window = None          # whole-window capture result
+        self.tip_active = False
+        self._acted = False                 # the user did something with this capture (for auto-save on Esc)
+        self._taken_path = None             # file the current capture was saved to (auto-save / link)
+        self.ask_share_consent = None       # tests replace the dialog
+        self.uploader = None                # tests replace the upload
         self.scroll_limits: dict = {}   # tests: max_height / max_pixels / max_steps
         self.ask_save_path = self._ask_save_path_dialog
         from ..platform.powerpoint import PowerPointSender
@@ -147,7 +155,14 @@ class Controller(QObject):
         if mode == "fullscreen":
             img = np.ascontiguousarray(self.screen.grab(ordered[0].rect)[:, :, :3])
             self._copy_image(img, 96 * ordered[0].scale)
+            if self.settings.auto_save:
+                self._save(img)
             return True
+        self._acted, self._taken_path = False, None
+        self.tip_active = self.settings.tip_count < 3
+        if self.tip_active:
+            self.settings.tip_count += 1
+            self._persist()
         wins = self.screen.windows()
         self.session.hotkey(virtual_bounds(mons))
         self.mode = mode
@@ -212,6 +227,9 @@ class Controller(QObject):
     def close_all(self) -> None:
         if self.ai_window is not None:
             self.ai_window.close()
+        for w in (self.result_window, self.scroll_result):
+            if w is not None:
+                w.close()
         self.close_overlays()
         for ov in self._pool.values():
             ov.deleteLater()
@@ -229,7 +247,10 @@ class Controller(QObject):
         self.session.drag(self._clamp_point(p1, ov.monitor), self._clamp_point(p2, ov.monitor))
         self._after_select(ov)
 
-    def on_select_rect(self, rect: Rect, ov) -> None:
+    def on_select_rect(self, rect: Rect, ov, window=None) -> None:
+        if window is not None and clamp_rect(rect, ov.monitor.rect) != rect:
+            self._capture_whole_window(window, ov)       # spans monitors / goes off-screen
+            return
         r = clamp_rect(rect, ov.monitor.rect)
         if r is not None:
             self.session.select(r)
@@ -270,6 +291,10 @@ class Controller(QObject):
         ov.update()
 
     def cancel(self) -> None:
+        ov, sel, doc = self.active_overlay, self.session.selection, self.session.document
+        if (self.settings.auto_save and self._acted and ov is not None and sel is not None
+                and self.session.state is State.EDITING):
+            self._save(compose(ov.crop(sel), doc))       # used (e.g. text copied), then closed
         self.session.key("Escape")
         self.close_overlays()
 
@@ -281,7 +306,11 @@ class Controller(QObject):
 
     # --- finishing ---------------------------------------------------------------
     def on_toolbar_action(self, name: str) -> None:
-        if name in ("copy", "save", "save_as", "pin"):
+        if name not in ("undo", "redo"):
+            self._acted = True
+        if name in ("link_file", "link_web"):
+            self._link_from_capture(name)
+        elif name in ("copy", "save", "save_as", "pin"):
             self.finish(name)
         elif name == "cancel":
             self.cancel()
@@ -332,7 +361,7 @@ class Controller(QObject):
         local = ov.local_rect(rect)
         anchor = (ov.mapToGlobal(local.bottomLeft().toPoint()), ov.mapToGlobal(local.topLeft().toPoint()),
                   ov.geometry())
-        self._take()
+        self._take(autosave=False)
         if drew:
             self.notify("스크롤 캡처에는 그린 내용이 들어가지 않습니다. 결과를 고정하거나 저장한 뒤 다시 캡처해서 그려 주세요.")
         self._run_scroll(rect, to_top, what, dpi, anchor)
@@ -420,23 +449,156 @@ class Controller(QObject):
                     "blocked": "화면 캡처가 막혔습니다(보안 프로그램이나 보호된 영상이 캡처를 막고 있을 수 "
                                "있습니다). 막히기 전까지 "}.get(sc.reason, "")
             self.notify(f"스크롤 캡처({what}) {w}×{h}px를 {note}복사했습니다. 원하는 곳에 Ctrl+V")
-        if self.settings.auto_save:
-            self._save(img)
+        self._last_auto_path = self._save(img) if self.settings.auto_save else None
         if self.scroll_result is not None:
             self.scroll_result.close()
         win = ScrollResult(img)
-        win.action.connect(lambda name: self._scroll_result_action(name, img, dpi, win))
+        holder = {"path": self._last_auto_path}
+        win.action.connect(lambda name: self._result_action(name, img, dpi, win, holder))
         win.move(pos)
         win.show()
         self.scroll_result = win
 
-    def _scroll_result_action(self, name: str, img, dpi: float, win) -> None:
+    def _result_action(self, name: str, img, dpi: float, win, holder: dict) -> None:
+        """Buttons of a result window (scroll capture, whole-window capture)."""
         if name == "copy":
             self._copy_image(img, dpi)
         elif name == "save_as":
             self._save_as(img, win)
         elif name == "ppt":
-            self._send_item_to_ppt(Picture(img, dpi), "스크롤 캡처를")
+            self._send_item_to_ppt(Picture(img, dpi), "캡처를")
+        elif name == "pin":
+            self.pin(img, win.pos(), dpi / 96)
+        elif name == "link_file":
+            if holder.get("path") is None:
+                holder["path"] = self._save(img)
+            if holder["path"] is not None:
+                self._copy_file_link(holder["path"])
+        elif name == "link_web":
+            self._share_web(img, on_declined=lambda: None)
+
+    # --- whole window (one click, also across monitors) -----------------------------------------
+    def _capture_whole_window(self, win, ov) -> None:
+        from .scroll_ui import ScrollResult
+        img = self._screen("capture_window", win.hwnd, win.rect)
+        if img is None or img.shape[:2] != (win.rect.h, win.rect.w) or looks_blocked(img):
+            img = self._compose_from_screens(win.rect)
+        img = np.ascontiguousarray(img[:, :, :3])
+        dpi = 96 * ov.scale
+        self._acted = True
+        self.session.key("Escape")
+        pos = ov.mapToGlobal(QPoint(40, 40))
+        self.close_overlays()
+        payload = self._image_payload(img, dpi)
+        if payload:
+            self._set_clipboard(payload)
+        self.notify(f"'{win.title or '창'}' 창 전체({win.rect.w}×{win.rect.h}px)를 복사했습니다. 원하는 곳에 Ctrl+V")
+        path = self._save(img) if self.settings.auto_save else None
+        if self.result_window is not None:
+            self.result_window.close()
+        rw = ScrollResult(img, title=f"창 전체 캡처 — {win.title or '창'}")
+        holder = {"path": path}
+        rw.action.connect(lambda name: self._result_action(name, img, dpi, rw, holder))
+        rw.move(pos)
+        rw.show()
+        self.result_window = rw
+
+    def _compose_from_screens(self, rect: Rect):
+        """The window pieced together from each monitor's frozen picture (white where no monitor is)."""
+        out = np.full((rect.h, rect.w, 3), 255, np.uint8)
+        done = set()
+        for o in self.overlays:
+            m = o.monitor.rect
+            part = clamp_rect(rect, m)
+            if part is None:
+                continue
+            done.add(o.monitor.name)
+            src = o.image[part.y - m.y:part.y - m.y + part.h, part.x - m.x:part.x - m.x + part.w, :3]
+            out[part.y - rect.y:part.y - rect.y + part.h, part.x - rect.x:part.x - rect.x + part.w] = src
+        for mon in self.screen.monitors():
+            part = clamp_rect(rect, mon.rect)
+            if part is not None and mon.name not in done:
+                src = self.screen.grab(part)[:, :, :3]
+                out[part.y - rect.y:part.y - rect.y + part.h, part.x - rect.x:part.x - rect.x + part.w] = src
+        return out
+
+    # --- links -------------------------------------------------------------------------------------------
+    def _link_from_capture(self, kind: str) -> None:
+        if self.session.state is not State.EDITING:
+            return
+        if kind == "link_web" and not self._share_ok():
+            return                                         # declined: the capture stays open
+        ov, sel, doc, raw = self._take(autosave=False)
+        final = compose(raw, doc)
+        path = self._save(final) if (kind == "link_file" or self.settings.auto_save) else None
+        if kind == "link_file":
+            if path is not None:
+                self._copy_file_link(path)
+        else:
+            self._share_web(final, consent_done=True)
+
+    def _copy_file_link(self, path) -> None:
+        from ..core.share import file_link, link_html
+        text, url = file_link(path)
+        payload = {UNICODE: text, HTML: cf_html(link_html(url, Path(path).name))}
+        if self._set_clipboard(payload):
+            self.notify(f"파일 링크를 복사했습니다: {text}  (같은 PC나 이 폴더에 들어갈 수 있는 사람만 열 수 있습니다. "
+                        "여러 사람과 나누려면 '인터넷 공유 링크'를 쓰세요.)")
+
+    def _share_ok(self) -> bool:
+        if self.settings.share_consent:
+            return True
+        ask = self.ask_share_consent or self._ask_share_consent_dialog
+        if not ask():
+            return False
+        self.settings.share_consent = True
+        self._persist()
+        return True
+
+    def _ask_share_consent_dialog(self) -> bool:
+        from PySide6.QtWidgets import QMessageBox
+        from ..core.share import EXPIRY_NAMES
+        keep = EXPIRY_NAMES.get(self.settings.share_expiry, self.settings.share_expiry)
+        box = QMessageBox(QMessageBox.Question, "인터넷 공유 링크",
+                          "인터넷 공유 링크를 만들면 이 캡처가 인터넷(Litterbox 무료 임시 보관 서비스)에 올라갑니다.\n\n"
+                          "• 링크를 아는 사람은 누구나 볼 수 있습니다.\n"
+                          f"• {keep} 뒤 자동으로 삭제되고, 그 전에는 지울 수 없습니다.\n"
+                          "• 회사 기밀·개인정보가 보이는 캡처는 올리지 마세요 (모자이크로 가린 뒤 올리세요).\n\n"
+                          "계속할까요? (다음부터는 묻지 않습니다)", QMessageBox.Yes | QMessageBox.No)
+        box.setWindowFlag(Qt.WindowStaysOnTopHint, True)
+        return box.exec() == QMessageBox.Yes
+
+    def _share_web(self, img, on_declined=None, consent_done: bool = False) -> None:
+        from ..core.share import EXPIRY_NAMES, ShareError, link_html, upload_litterbox
+        if not consent_done and not self._share_ok():
+            return
+        ok, png = cv2.imencode(".png", img)
+        if not ok:
+            return
+        expiry = self.settings.share_expiry
+        keep = EXPIRY_NAMES.get(expiry, expiry)
+        upload = self.uploader or upload_litterbox
+
+        def work():
+            try:
+                return upload(png.tobytes(), expiry), None
+            except ShareError as e:
+                return None, str(e)
+
+        def done(result) -> None:
+            url, err = result if not isinstance(result, Exception) else (None, str(result))
+            if url is None:
+                self.notify(f"인터넷 링크를 만들지 못했습니다: {err}")
+                return
+            if self._set_clipboard({UNICODE: url, HTML: cf_html(link_html(url, url))}):
+                self.notify(f"인터넷 링크를 복사했습니다 ({keep} 뒤 자동 삭제): {url}")
+
+        if self.sync:
+            done(work())
+        else:
+            self.notify("인터넷 링크를 만드는 중…")
+            self._share_done_cb = done
+            QThreadPool.globalInstance().start(_Job(work, self._share_done))
 
     def _save_as(self, img, parent=None) -> bool:
         ext = ".jpg" if self.settings.image_format == "jpg" else ".png"
@@ -479,6 +641,7 @@ class Controller(QObject):
     def _start_text_mode(self) -> None:
         if self.session.state is not State.EDITING:
             return
+        self._acted = True
         ov, sel = self.active_overlay, self.session.selection
         ov.close_text_editor()
         doc = self.session.document
@@ -578,9 +741,11 @@ class Controller(QObject):
         self.text_panel.move(pos + QPoint(0, 8))
         self.text_panel.show()
 
-    def _take(self, close: bool = True):
+    def _take(self, close: bool = True, autosave: bool = True):
         """Grab selection + document + pixels and end the session. close=False lets the caller
-        put the result on the clipboard first and hide the (large) overlay windows afterwards."""
+        put the result on the clipboard first and hide the (large) overlay windows afterwards.
+        With auto-save on, the finished capture (drawings included) is saved as well — after
+        the caller's action, so copying is never slowed down."""
         ov = self.active_overlay
         ov.close_text_editor()        # keep what is being typed
         sel, doc = self.session.selection, self.session.document
@@ -590,6 +755,13 @@ class Controller(QObject):
         self.session.key("Escape")
         if close:
             self.close_overlays()
+        if autosave and self.settings.auto_save:
+            def save():
+                self._taken_path = self._save(compose(raw, doc))
+            if self.sync:
+                save()
+            else:
+                QTimer.singleShot(0, save)
         return ov, sel, doc, raw
 
     def _remember_style(self, ov) -> None:
@@ -627,7 +799,7 @@ class Controller(QObject):
                 return  # cancelled: keep the capture and the drawing
             if target.suffix.lower() not in (".png", ".jpg", ".jpeg"):
                 target = target.with_suffix(ext)
-        ov, sel, doc, raw = self._take(close=action != "copy")
+        ov, sel, doc, raw = self._take(close=action != "copy", autosave=action not in ("save", "save_as"))
         final = compose(raw, doc)
         dpi = 96 * ov.scale
         if action == "copy":
@@ -659,8 +831,6 @@ class Controller(QObject):
         payload = self._image_payload(img, dpi)
         if payload and self._set_clipboard(payload):
             self.notify("이미지를 클립보드에 복사했습니다. 원하는 곳에 Ctrl+V")
-        if self.settings.auto_save:
-            self._save(img)
 
     def _save(self, img, ask: bool = False) -> Path | None:
         s = self.settings
