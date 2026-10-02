@@ -26,7 +26,9 @@ def test_RES_01_blas_threads_limited_before_numpy_loads():
 
 def test_RES_02_ocr_engine_threads_capped():
     p = ocr_mod.ocr_params("korean")
-    assert 1 <= p["EngineConfig.onnxruntime.intra_op_num_threads"] <= 4
+    import os
+    n = p["EngineConfig.onnxruntime.intra_op_num_threads"]
+    assert 1 <= n <= 8 and n <= max(1, (os.cpu_count() or 2) // 2)     # half the cores at most
     assert p["EngineConfig.onnxruntime.inter_op_num_threads"] == 1
     assert p["Global.use_cls"] is False
 

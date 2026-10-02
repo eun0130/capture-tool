@@ -57,6 +57,7 @@ class Controller(QObject):
     _ai_progress = Signal(object)
     _ai_dl = Signal(object)
     _share_done = Signal(object)
+    _ai_preloaded = Signal(object)
 
     def __init__(self, screen, clipboard, ocr, settings, settings_path, fallback_dir, sync=False, notify=None):
         super().__init__()
@@ -101,6 +102,7 @@ class Controller(QObject):
         self.ask_yes_no = None      # tests replace these dialogs
         self.ask_consent = None
         self.download_packs = self._download_packs
+        self.bring_to_front = self._bring_ppt_to_front
         self.scrolling = False
         self._scroll_stop = False
         self.scroll_indicator = None
@@ -436,7 +438,7 @@ class Controller(QObject):
                 return
             QTimer.singleShot(ms, tick)
 
-        QTimer.singleShot(250, tick)   # let the overlays disappear from the screen first
+        QTimer.singleShot(150, tick)   # let the overlays disappear from the screen first
 
     def _finish_scroll(self, sc, what, dpi, error, pos) -> None:
         img = sc.result()
@@ -691,6 +693,26 @@ class Controller(QObject):
         self._last_text = self._last_raw = ""
         self._copy_text(lines, self._text_grid, drag_hint=True)
         ov.enter_ocr_mode(lines)
+        self._preload_ai(full_text(lines))
+
+    def _preload_ai(self, text: str) -> None:
+        """Text mode is open: translate / summary are likely next, so load their models now
+        (in the background; freed again after 90 s unused)."""
+        ai = self.ai if not self.sync else self._ai      # tests: only a service they put in
+        if ai is None or not hasattr(ai, "preload"):
+            return
+
+        def work():
+            try:
+                ai.preload(text)
+            except Exception as e:  # noqa: BLE001 - a preload must never disturb text mode
+                log.info("AI preload skipped: %s", e)
+            return None
+        if self.sync:
+            work()
+        else:
+            QThreadPool.globalInstance().start(_Job(work, self._ai_preloaded))
+        self._ai_idle_timer.start()
 
     @staticmethod
     def _grid_for(raw, lines):
@@ -1186,6 +1208,15 @@ class Controller(QObject):
         self._ai_dl_done = finished
         QThreadPool.globalInstance().start(_Job(work, self._ai_dl))
 
+    @staticmethod
+    def _bring_ppt_to_front(hwnd: int) -> None:
+        try:
+            from ..platform.powerpoint import bring_to_front
+            if not bring_to_front(hwnd):
+                log.info("PowerPoint could not be brought to the front")
+        except (OSError, AttributeError):
+            pass
+
     def ai_idle(self) -> None:
         """Free the AI models' memory after a while without use."""
         if self._ai is not None:
@@ -1237,6 +1268,9 @@ class Controller(QObject):
             elif added:
                 where = "새 슬라이드" if self.settings.ppt_new_slide else "보고 있는 슬라이드"
                 msg, ok = f"{what} PowerPoint에 넣었습니다 ({where}).", True
+                hwnd = int(getattr(self.powerpoint, "last_hwnd", 0) or 0)
+                if hwnd:
+                    self.bring_to_front(hwnd)       # PowerPoint in front, showing the new slide
             else:
                 msg = "PowerPoint에 들어가지 않았습니다. 클립보드에 있으니 슬라이드에서 Ctrl+V 하세요."
         self.notify(msg)

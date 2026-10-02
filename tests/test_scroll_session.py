@@ -1,4 +1,5 @@
 """Scroll capture driver: wheel, wait, grab, join — until the end, a stop, or a limit."""
+import pytest
 import numpy as np
 
 from capture_tool.core.scroll_session import ScrollCapture
@@ -203,3 +204,62 @@ def test_SCR_19_looks_blocked():
     img[150, 150] = 0
     assert not looks_blocked(img)
     assert not looks_blocked(np.full((20, 20, 3), 255, np.uint8))     # tiny areas can be plain
+
+
+# --- v0.6.1: speed -------------------------------------------------------------------------------------
+def step_waits(fp):
+    """Waits (ms) the driver asked for between consecutive wheel turns."""
+    marks, waits = [], []
+    real_wheel = fp.wheel
+
+    def wheel(n):
+        marks.append(len(waits))
+        real_wheel(n)
+    fp.wheel = wheel
+    sc = ScrollCapture(grab=fp.frame, wheel=fp.wheel)
+    for ms in sc.run():
+        waits.append(ms)
+    per = [sum(waits[a:b]) for a, b in zip(marks, marks[1:])]
+    return sc, per
+
+
+def test_SCR_20_view_that_moves_at_once_is_not_waited_on_for_long():
+    import statistics
+    fp = FakePage(make_page(4000), vh=500)
+    sc, per = step_waits(fp)
+    assert sc.reason == "end" and np.array_equal(sc.result(), fp.expected())
+    assert statistics.median(per) <= 100, per                # was 210 ms per step
+
+
+class Animated(FakePage):
+    """Smooth scrolling: after a wheel the view glides to its target over several grabs."""
+
+    def __init__(self, *a, glide=5, **k):
+        super().__init__(*a, **k)
+        self.glide, self.target, self.left = glide, self.offset, 0
+
+    def wheel(self, notches):
+        before = self.offset
+        super().wheel(notches)
+        self.target, self.offset, self.left = self.offset, before, self.glide
+
+    def frame(self):
+        if self.left:
+            self.left -= 1
+            self.offset += (self.target - self.offset) // max(1, self.left + 1) if self.left else self.target - self.offset
+        return super().frame()
+
+
+@pytest.mark.parametrize("glide", [1, 3, 6])
+def test_SCR_21_smooth_scrolling_views_are_still_joined_exactly(glide):
+    fp = Animated(make_page(3000), vh=500, glide=glide)
+    sc = cap(fp)
+    drive(sc)
+    assert sc.reason == "end" and np.array_equal(sc.result(), fp.expected())
+
+
+def test_SCR_22_fewer_steps_for_the_same_page():
+    fp = FakePage(make_page(6000), vh=500, px_per_notch=20)
+    sc = cap(fp)
+    drive(sc)
+    assert sc.reason == "end" and sc.steps <= 20                 # was 22: ~70% of the view per step

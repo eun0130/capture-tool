@@ -137,9 +137,9 @@ def _insert(app, item, new_presentation: bool, hook, new_slide: bool = False) ->
         fd, path = tempfile.mkstemp(prefix="capture_", suffix=".png")
         os.close(fd)
         try:
-            ok, buf = cv2.imencode(".png", item.image)
+            ok, buf = cv2.imencode(".png", item.image, [cv2.IMWRITE_PNG_COMPRESSION, 1])   # fast; temp file
             buf.tofile(path)
-            slide.Shapes.AddPicture(path, False, True, left, top, pw, ph)
+            new = slide.Shapes.AddPicture(path, False, True, left, top, pw, ph)
         finally:
             try:
                 os.remove(path)  # our own temporary file
@@ -152,7 +152,7 @@ def _insert(app, item, new_presentation: bool, hook, new_slide: bool = False) ->
         tw = min(sw * FIT, max(200.0, max(len(l) for l in lines) * item.font_size * 1.05))
         th = min(sh * FIT, len(lines) * item.font_size * 1.6 + 10)
         left, top, tw, th = place(tw, th, sw, sh)
-        box = slide.Shapes.AddTextbox(MSO_TEXT_HORIZONTAL, left, top, tw, th)
+        box = new = slide.Shapes.AddTextbox(MSO_TEXT_HORIZONTAL, left, top, tw, th)
         rng = box.TextFrame.TextRange
         rng.Text = "\r".join(lines)          # PowerPoint paragraphs are separated by \r
         rng.Font.Name = item.font_family
@@ -160,16 +160,28 @@ def _insert(app, item, new_presentation: bool, hook, new_slide: bool = False) ->
         rng.Font.Size = item.font_size
         added = 1
     elif isinstance(item, ClipboardShapes):
-        added = int(slide.Shapes.Paste().Count)
+        new = slide.Shapes.Paste()
+        added = int(new.Count)
     else:
         raise TypeError(f"unknown item {item!r}")
     try:
-        app.Activate()  # bring PowerPoint forward (best effort)
+        app.Activate()  # bring PowerPoint forward (best effort; our app also raises it)
     except Exception:  # noqa: BLE001
         pass
+    try:
+        new.Select()    # what was just added is selected: easy to see, move or delete
+    except Exception:  # noqa: BLE001 - slide sorter view, window not ready …
+        pass
+    try:
+        hwnd = int(app.HWND)                  # fakes in tests; PowerPoint itself has no HWND
+    except Exception:  # noqa: BLE001
+        try:
+            hwnd = find_window(str(pres.Windows(1).Caption))
+        except Exception:  # noqa: BLE001
+            hwnd = 0
     if hook is not None:
         hook(pres, slide, added)
-    return SendResult(added)
+    return SendResult(added, {"hwnd": hwnd})
 
 
 def send(item, app_factory: Callable | None = None, timeout: float = DEFAULT_TIMEOUT,
@@ -216,6 +228,7 @@ class PowerPointSender:
         self._lock = threading.Lock()
         self._busy = False
         self.new_slide = True      # each capture on its own new slide after the current one
+        self.last_hwnd = 0         # PowerPoint's window after the last insert (to bring it forward)
 
     @property
     def busy(self) -> bool:
@@ -227,6 +240,58 @@ class PowerPointSender:
                 raise PowerPointBusy("PowerPoint로 보내는 중입니다.")
             self._busy = True
         try:
-            return send(item, self.app_factory, self.timeout, new_slide=self.new_slide).added
+            r = send(item, self.app_factory, self.timeout, new_slide=self.new_slide)
+            self.last_hwnd = int(r.detail.get("hwnd") or 0)
+            return r.added
         finally:
             self._busy = False
+
+
+
+def find_window(caption: str) -> int:
+    """PowerPoint's document window (class PPTFrameClass) whose title starts with `caption`."""
+    import ctypes
+    from ctypes import wintypes
+    u32 = ctypes.WinDLL("user32", use_last_error=True)
+    proc = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+    found: list[int] = []
+
+    def cb(h, _):
+        cls = ctypes.create_unicode_buffer(64)
+        u32.GetClassNameW(h, cls, 64)
+        if cls.value == "PPTFrameClass" and u32.IsWindowVisible(h):
+            title = ctypes.create_unicode_buffer(512)
+            u32.GetWindowTextW(h, title, 512)
+            if title.value.startswith(caption):
+                found.append(int(h))
+        return True
+    u32.EnumWindows(proc(cb), 0)
+    return found[0] if found else 0
+
+
+def bring_to_front(hwnd: int) -> bool:
+    """Show PowerPoint in front, active. Called from the capture tool's own UI thread, which
+    received the user's last click, so Windows allows the switch; Alt is tapped as a fallback
+    (Windows lets the foreground change after a key press). True if it worked."""
+    import ctypes
+    from ctypes import wintypes
+    if not hwnd:
+        return False
+    u32 = ctypes.WinDLL("user32", use_last_error=True)
+    u32.IsIconic.argtypes = [wintypes.HWND]
+    u32.ShowWindow.argtypes = [wintypes.HWND, ctypes.c_int]
+    u32.SetForegroundWindow.argtypes = [wintypes.HWND]
+    u32.GetForegroundWindow.restype = wintypes.HWND
+    u32.BringWindowToTop.argtypes = [wintypes.HWND]
+    u32.AllowSetForegroundWindow.argtypes = [wintypes.DWORD]
+    SW_RESTORE, SW_SHOW, ASFW_ANY = 9, 5, 0xFFFFFFFF
+    u32.ShowWindow(hwnd, SW_RESTORE if u32.IsIconic(hwnd) else SW_SHOW)
+    u32.AllowSetForegroundWindow(ASFW_ANY)
+    if u32.SetForegroundWindow(hwnd) and int(u32.GetForegroundWindow() or 0) == hwnd:
+        return True
+    VK_MENU, KEYUP = 0x12, 0x0002
+    u32.keybd_event(VK_MENU, 0, 0, 0)
+    u32.keybd_event(VK_MENU, 0, KEYUP, 0)
+    u32.SetForegroundWindow(hwnd)
+    u32.BringWindowToTop(hwnd)
+    return int(u32.GetForegroundWindow() or 0) == hwnd

@@ -21,6 +21,10 @@ class Shape:
         self.TextFrame.TextRange.Font = type("F", (), {"Name": "", "NameFarEast": "", "Size": 18})()
         self.TextFrame.WordWrap = False
         self.TextFrame.AutoSize = 0
+        self.selected = False
+
+    def Select(self, replace=True):
+        self.selected = True
 
 
 class Shapes:
@@ -47,8 +51,11 @@ class Shapes:
     def Paste(self):
         self.slide.app.calls.append(("paste",))
         n = self.slide.app.paste_count
-        self.items.extend(Shape("pasted", 0, 0, 10, 10) for _ in range(n))
-        return type("Range", (), {"Count": n})()
+        new = [Shape("pasted", 0, 0, 10, 10) for _ in range(n)]
+        self.items.extend(new)
+        rng = type("Range", (), {"Count": n})()
+        rng.Select = lambda *a: [setattr(x, "selected", True) for x in new]
+        return rng
 
 
 class Slide:
@@ -103,6 +110,7 @@ class FakeApp:
         self.ActivePresentation = None
         self.view_fails = view_fails
         self.goto, self.goto_fails = [], False
+        self.HWND = 4242
         if with_deck:
             p = self.Presentations.Add()
             for i in range(3):
@@ -319,3 +327,33 @@ def test_PPT_22_sender_uses_its_new_slide_setting():
     sender.new_slide = False
     sender.send(Picture(IMG))
     assert app.ActivePresentation.Slides.Count == 4
+
+
+
+# --- v0.6.1: PowerPoint comes to the front with the new object selected ------------------------------
+def test_PPT_23_result_carries_the_powerpoint_window_and_selects_what_was_added():
+    for item in (Picture(IMG), TextItem("가"), ClipboardShapes()):
+        app = FakeApp(with_deck=True, current_slide=2)
+        r = send(item, app_factory=lambda: app, new_slide=True)
+        assert r.detail.get("hwnd") == 4242
+        added = app.ActivePresentation.Slides(3).Shapes.items
+        assert added and all(s.selected for s in added)
+
+
+def test_PPT_24_select_failure_is_harmless():
+    app = FakeApp(with_deck=True)
+    import types
+    def boom(self, *a):
+        raise RuntimeError("window not active")
+    Shape.Select, saved = boom, Shape.Select
+    try:
+        r = send(Picture(IMG), app_factory=lambda: app)
+        assert r.added == 1
+    finally:
+        Shape.Select = saved
+
+
+def test_PPT_25_sender_reports_the_window():
+    app = FakeApp(with_deck=True)
+    sender = pp.PowerPointSender(app_factory=lambda: app, timeout=5)
+    assert sender.send(Picture(IMG)) == 1 and sender.last_hwnd == 4242

@@ -288,3 +288,28 @@ def test_AIE_24_one_job_at_a_time():
     release.set()
     th.join(5)
     assert not svc.busy
+
+
+def test_AIE_25_preload_loads_the_translation_pair_and_local_summary_only():
+    FakeMT.loads = 0
+    summ, llm = make_summarizer()
+    svc, _ = service(summarizer=summ)
+    svc.preload("Quarterly revenue grew.")
+    assert FakeMT.loads == 1 and summ._llm is llm               # en->ko pair and the summary model
+    s = Settings(ai_summary_engine="cloud")
+    summ2, _ = make_summarizer()
+    svc2, _ = service(s, summarizer=summ2)
+    svc2.preload("안녕하세요.")
+    assert summ2._llm is None                                    # cloud summary: no 1.4 GB load
+
+
+def test_AIE_26_preload_skips_missing_models_and_busy_service():
+    t = make_translator(installed=())
+    summ, _ = make_summarizer(installed=False)
+    svc, _ = service(translator=t, summarizer=summ)
+    svc.preload("글")                                            # nothing installed: no error
+    svc._lock.acquire()
+    try:
+        svc.preload("Hello.")                                    # busy: skipped, no deadlock
+    finally:
+        svc._lock.release()

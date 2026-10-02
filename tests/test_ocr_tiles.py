@@ -38,11 +38,19 @@ def tagging_engine(rec):
     orig = eng._run_tile
 
     def run_tile(engine, img, x0, y0):
-        t = img.view(Tagged)
+        t = np.ascontiguousarray(img).view(Tagged)
         t.meta = (x0, y0)
         return orig(engine, t, x0, y0)
     eng._run_tile = run_tile
     return eng
+
+
+def inked(lines, h=9000, w=1300):
+    """White page with a dark block wherever a (fake) text line is."""
+    img = np.full((h, w, 3), 255, np.uint8)
+    for _, x, y, lw, lh in lines:
+        img[y:y + lh, x:x + lw] = 0
+    return img
 
 
 def test_TILE_01_small_image_is_one_call():
@@ -65,7 +73,7 @@ def test_TILE_03_very_wide_image_also_tiled_across():
 def test_TILE_04_lines_mapped_back_and_counted_once():
     lines = [(f"줄{i}", 40, 150 + i * 237, 300, 30) for i in range(36)]          # some fall in overlaps
     rec = Recorder(lines)
-    got = tagging_engine(rec).recognize(np.zeros((9000, 1300, 3), np.uint8))
+    got = tagging_engine(rec).recognize(inked(lines))
     assert [l.text for l in got] == [t for t, *_ in lines]
     assert [l.box[1] for l in got] == [y for _, _, y, _, _ in lines]
     assert len(rec.calls) > 4
@@ -74,8 +82,9 @@ def test_TILE_04_lines_mapped_back_and_counted_once():
 def test_TILE_05_line_exactly_on_a_tile_boundary():
     t = tiles(1300, 9000)
     boundary = t[1][1] + 100                                   # middle of the first overlap
-    rec = Recorder([("경계", 40, boundary - 15, 300, 30)])
-    got = tagging_engine(rec).recognize(np.zeros((9000, 1300, 3), np.uint8))
+    lines = [("경계", 40, boundary - 15, 300, 30)]
+    rec = Recorder(lines)
+    got = tagging_engine(rec).recognize(inked(lines))
     assert [l.text for l in got] == ["경계"]
 
 
@@ -92,3 +101,29 @@ def test_TILE_REAL_01_real_ocr_reads_every_line_of_a_7000px_page(qt_app):
     got = [l.text.replace(" ", "") for l in OcrEngine().recognize(img)]
     found = [w for w in want if any(w.replace(" ", "") in g for g in got)]
     assert len(found) >= len(want) - 1, (want, got)
+
+
+# --- v0.6.1: speed -------------------------------------------------------------------------------------
+def test_TILE_06_thread_count_scales_with_the_pc_but_never_takes_every_core():
+    from capture_tool.core.ocr import ocr_threads
+    assert ocr_threads(2) == 1 and ocr_threads(4) == 2 and ocr_threads(8) == 4
+    assert ocr_threads(16) == 8 and ocr_threads(32) == 8 and ocr_threads(None) >= 1
+
+
+def test_TILE_07_blank_parts_of_a_tall_image_are_not_sent_to_the_recognizer():
+    lines = [("위", 40, 200, 300, 30), ("아래", 40, 8500, 300, 30)]
+    rec = Recorder(lines)
+    img = np.full((9000, 1300, 3), 255, np.uint8)
+    for _, x, y, w, h in lines:
+        img[y:y + h, x:x + w] = 0                       # ink where the text is; the rest is white
+    got = tagging_engine(rec).recognize(img)
+    assert [l.text for l in got] == ["위", "아래"]
+    assert sum(h for _, _, _, h in rec.calls) < 9000 * 0.5   # most of the white page skipped
+
+
+def test_TILE_08_tile_trimmed_to_its_ink_keeps_coordinates():
+    rec = Recorder([("가운데", 600, 4000, 200, 30)])
+    img = np.full((9000, 1300, 3), 255, np.uint8)
+    img[4000:4030, 600:800] = 0
+    got = tagging_engine(rec).recognize(img)
+    assert [(l.text, l.box[:2]) for l in got] == [("가운데", (600, 4000))]

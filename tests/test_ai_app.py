@@ -299,3 +299,61 @@ def test_TOAST_01_toast_shows_message_and_hides_itself(qt_app):
     t._timer.timeout.emit()
     assert not t.isVisible()
     assert t.testAttribute(Qt.WA_ShowWithoutActivating)   # never steals focus from the capture
+
+
+
+def test_AAPP_19_powerpoint_is_brought_to_the_front_after_inserting(make):
+    c, ov = text_mode(make)
+    ppt = FakePpt()
+    ppt.last_hwnd = 777
+    c.powerpoint = ppt
+    shown = []
+    c.bring_to_front = shown.append
+    ov.ocr_bar.trigger("summarize")
+    c.ai_window.trigger("ppt")
+    assert shown == [777]
+
+
+def test_AAPP_20_capture_ppt_button_also_brings_powerpoint_forward(make):
+    c, ov = _editing(make)
+    ppt = FakePpt()
+    ppt.last_hwnd = 778
+    c.powerpoint = ppt
+    shown = []
+    c.bring_to_front = shown.append
+    ov.side_bar.trigger("ppt")
+    assert shown == [778]
+
+
+def test_AAPP_21_failed_insert_does_not_switch_windows(make):
+    c, ov = _editing(make)
+    c.powerpoint = FakePpt(ok=False)
+    shown = []
+    c.bring_to_front = shown.append
+    ov.side_bar.trigger("ppt")
+    assert shown == []
+
+
+def test_AAPP_22_models_start_loading_when_text_mode_opens(make):
+    class PreAi(FakeAi):
+        def __init__(self):
+            super().__init__()
+            self.preloaded = []
+
+        def preload(self, text):
+            self.preloaded.append(text)
+    ai = PreAi()
+    c, ov = _editing(make, ocr=FakeOcr(LINES))
+    c.ai = ai
+    ov.side_bar.trigger("text")
+    assert ai.preloaded and "Quarterly" in ai.preloaded[0]
+
+
+def test_AAPP_23_preload_never_breaks_text_mode(make):
+    class Broken(FakeAi):
+        def preload(self, text):
+            raise RuntimeError("model file damaged")
+    c, ov = _editing(make, ocr=FakeOcr(LINES))
+    c.ai = Broken()
+    ov.side_bar.trigger("text")
+    assert ov.ocr_lines is not None

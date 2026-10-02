@@ -11,12 +11,16 @@ import numpy as np
 
 from .stitch import ADDED, FULL, NOMATCH, SAME, Stitcher
 
-WAIT_AFTER_WHEEL = 150     # ms: smooth scrolling animates for ~100-150 ms
+WAIT_AFTER_WHEEL = 150     # ms: only used while going to the top
+POLL = 30                  # ms between grabs while waiting for the view to move and stop
+NO_MOVE = 300              # ms without any change after a wheel: the view did not move
+LAST_PROBE = 500           # ms: second "is this the end?" check (lazy-loading pages)
+STABLE = 2                 # polls in a row without change = the (smooth) scroll has finished
 WAIT_SETTLE = 60           # ms between grabs until two in a row are identical
 SETTLE_TRIES = 6
 WAIT_LAZY = 400            # ms: a page that loads more content at the bottom gets one more chance
-MAX_NOTCHES = 15
-STEP_FRACTION = 0.6        # scroll ~60% of the view per step: the rest overlaps for matching
+MAX_NOTCHES = 25        # wheel notches in one step (step size comes from the measured px per notch)
+STEP_FRACTION = 0.7        # scroll ~70% of the view per step: the rest overlaps for matching
 TOP_TRIES = 60
 LATE_TRIES = 3             # x WAIT_LAZY: a page viewer may draw newly revealed pages late
 BLOCK_TRIES = 10           # x WAIT_LAZY: how long a blanked-out screen grab is waited out
@@ -74,9 +78,38 @@ class ScrollCapture:
         h = len(detail)
         return detail[int(h * 0.65):].mean() < 0.03 and detail[:int(h * 0.65)].mean() > 0.1
 
-    def _settle_drawn(self):
+    def _after_wheel(self, before: np.ndarray, no_move: int = NO_MOVE):
+        """Generator: poll until the view has moved and stopped (or clearly didn't move), instead
+        of a fixed wait. Sets self._f to the settled frame."""
+        import time
+        cur, nominal, moved, stable = before, 0, False, 0
+        start = time.perf_counter()
+        while True:
+            yield POLL
+            nominal += POLL
+            # timers fire late (~50 ms for a 30 ms wait): count real time, not just the requests
+            waited = max(nominal, (time.perf_counter() - start) * 1000)
+            if waited >= 2000:
+                break
+            nxt = self._frame()
+            if np.array_equal(nxt, cur):
+                stable += 1
+                if (moved and stable >= STABLE) or (not moved and waited >= no_move):
+                    break
+            else:
+                moved = moved or not np.array_equal(nxt, before)
+                stable = 0
+            cur = nxt
+        self._f = cur
+
+    def _settle_drawn(self, before: np.ndarray | None = None, no_move: int = NO_MOVE):
         """Generator: settle, then give a viewer that draws pages late a moment to do so."""
-        yield from self._settle()
+        if before is None:
+            yield from self._settle()
+        else:
+            yield from self._after_wheel(before, no_move)
+            if np.array_equal(self._f, before):
+                return                              # nothing moved: nothing new to wait for
         for _ in range(LATE_TRIES):
             if not self._bottom_blank(self._f):
                 return
@@ -86,9 +119,9 @@ class ScrollCapture:
             if np.array_equal(before, self._f):
                 return                          # really blank (an empty page)
 
-    def _settle_unblocked(self):
+    def _settle_unblocked(self, before: np.ndarray | None = None, no_move: int = NO_MOVE):
         """Generator: like _settle, but waits out a blanked grab; sets self._blocked if it stays."""
-        yield from self._settle_drawn()
+        yield from self._settle_drawn(before, no_move)
         self._blocked = False
         for _ in range(BLOCK_TRIES):
             if not looks_blocked(self._f):
@@ -133,10 +166,11 @@ class ScrollCapture:
             if not self.still_visible():
                 self.reason = "covered"
                 return
+            before = self._f
             self.wheel(-notches)
             self.steps += 1
-            yield WAIT_AFTER_WHEEL
-            yield from self._settle_unblocked()
+            # after one "didn't move", the last probe waits longer: pages that load more at the end
+            yield from self._settle_unblocked(before, LAST_PROBE if same else NO_MOVE)
             if self._blocked:
                 self.reason = "blocked"
                 return
@@ -146,7 +180,6 @@ class ScrollCapture:
                 if same >= 2:
                     self.reason = "end" if self.stitcher.pieces else "noscroll"
                     return
-                yield WAIT_LAZY
                 continue
             if r.status == NOMATCH:
                 # the view may still have been moving (smooth scroll, page-end bounce, a late

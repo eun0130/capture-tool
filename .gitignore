@@ -12,3 +12,4 @@ assets/app.ico
 .pytest_tmp*/
 
 ai_models/
+bench-results.json

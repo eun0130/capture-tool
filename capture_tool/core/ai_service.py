@@ -107,6 +107,23 @@ class AiService:
             out = self.summarizer.summarize(text, lang, on_text=on_text, cancel=cancel)
             return AiResult(out, "local", tgt=lang, note=note)
 
+    def preload(self, text: str) -> None:
+        """Load the models the next translate / summary of `text` would need, ahead of time
+        (call in the background). Skipped while a job runs; missing models are left alone."""
+        if not self._lock.acquire(blocking=False):
+            return
+        try:
+            src = detect_lang(text)
+            tgt = self.settings.ai_target_lang or default_target(src)
+            if not self.settings.ai_cloud_translate and not self.translator.missing(src, tgt):
+                from .ai_text import route
+                for a, b in route(src, tgt):
+                    self.translator._get(f"{a}_{b}")
+            if self.settings.ai_summary_engine == "local" and self.summarizer.available():
+                self.summarizer._get()
+        finally:
+            self._lock.release()
+
     def unload(self) -> None:
         """Free model memory (called after the AI has been idle for a while)."""
         if not self.busy:
