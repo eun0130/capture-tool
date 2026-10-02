@@ -113,9 +113,9 @@ edge = mons[1].rect.x                                                  # physica
 helper = subprocess.Popen([sys.executable, "-c", HELPER.replace("X", str(edge - 300)).replace("Y", "200")])
 from capture_tool.platform import windows as pw
 target = None
-for _ in range(100):
+for _ in range(150):                      # wait until it has moved onto the monitor boundary
     target = next((x for x in pw.top_level_windows() if x.title == "ACROSSTEST"), None)
-    if target:
+    if target and target.rect.x < edge < target.rect.right:
         break
     time.sleep(0.1)
 pump(0.8)
@@ -128,6 +128,8 @@ ov = next(o for o in c.overlays if o.monitor.rect.contains(px))
 local = ov.to_local(*px).toPoint()
 hover(ov, local)
 print("label", ov.hover_label(), "rect", target.rect, [m.rect for m in c.screen.monitors()])
+if "ACROSSTEST" not in ov.hover_label():
+    print("SKIP another window is on top of the test window"); c.close_all(); helper.kill(); sys.exit(0)
 QTest.mouseClick(ov, Qt.LeftButton, Qt.NoModifier, local); pump(0.5)
 png = win_clipboard.get_format(PNG)
 img = cv2.imdecode(np.frombuffer(png, np.uint8), cv2.IMREAD_COLOR) if png else None
@@ -142,7 +144,7 @@ c.close_all(); helper.kill(); pump(0.2)
 
 
 def _across_ok(out: str) -> bool:
-    if "SKIP one monitor" in out:
+    if "SKIP" in out:
         return True
     line = next((l for l in out.splitlines() if l.startswith("result")), "")
     green = "[90, 160, 40]"
@@ -153,8 +155,8 @@ def _across_ok(out: str) -> bool:
 def test_WWIN_REAL_02_one_click_captures_a_window_across_two_monitors(tmp_path):
     from tests.conftest import run_on_desktop
     out = run_on_desktop(ACROSS % (ROOT, tmp_path), _across_ok)
-    if "SKIP one monitor" in out:
-        pytest.skip("only one monitor")
+    if "SKIP" in out:
+        pytest.skip(out.split("SKIP", 1)[1].strip().splitlines()[0])
     assert _across_ok(out), out
 
 

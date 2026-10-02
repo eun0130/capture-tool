@@ -10,6 +10,8 @@ from typing import Callable
 _FORBIDDEN = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
 _RESERVED = {"CON", "PRN", "AUX", "NUL"} | {f"COM{i}" for i in range(1, 10)} | {f"LPT{i}" for i in range(1, 10)}
 MAX_LEN = 200
+PATH_LIMIT = 250          # a little under Windows' 260-character MAX_PATH
+MIN_STEM = 8
 
 
 class SaveDirError(OSError):
@@ -48,6 +50,11 @@ def unique_path(directory, stem: str, ext: str, exists: Callable[[Path], bool] |
     d = Path(directory)
     base = sanitize(stem)
     e = normalize_ext(ext)
+    # Windows refuses paths over 260 characters (without long-path support): shorten the name so
+    # folder + name + "_123" + extension stays well inside
+    room = PATH_LIMIT - len(str(d)) - 1 - len(e) - 6
+    if len(base) > room:
+        base = base[:max(MIN_STEM, room)].rstrip(" .") or "Capture"
     p = d / f"{base}{e}"
     i = 1
     while exists(p):

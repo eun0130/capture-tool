@@ -68,10 +68,15 @@ jobs:
           "working set MB: " + [math]::Round($p.WorkingSet64 / 1MB)
           Stop-Process -Id $p.Id
 
+      - name: Collect logs
+        if: always()
+        shell: pwsh
+        run: Copy-Item "$env:LOCALAPPDATA\CaptureTool\capture.log" . -ErrorAction SilentlyContinue
+
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: compat-${{ matrix.os }}
           path: |
             selftest*.txt
-            ~/AppData/Local/CaptureTool/capture.log
+            capture.log

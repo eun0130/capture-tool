@@ -189,3 +189,12 @@ def test_STI_16_tolerant_match_is_fast_enough():
     r = st.add(f)
     assert r.status == ADDED and r.shift == 500
     assert time.perf_counter() - t < 1.5
+
+
+def test_STI_17_very_narrow_area_does_not_crash():
+    fp = FakePage(make_page(1500, w=480), vh=300)
+    st = Stitcher()
+    for _ in range(6):
+        st.add(fp.frame()[:, 100:110])                        # a 10 px wide strip
+        fp.wheel(-3)
+    assert st.result().shape[1] <= 10

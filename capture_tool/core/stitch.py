@@ -60,7 +60,9 @@ class Stitcher:
     # --- row signatures --------------------------------------------------------------
     def _cols(self, w: int) -> slice:
         m = max(16, int(w * 0.03))
-        return slice(m, max(m + 1, w - m))
+        if w < 3 * m:                     # a very narrow area: use every column
+            return slice(0, max(1, w))
+        return slice(m, w - m)
 
     def _signature(self, img: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
         gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)[:, self._cols(img.shape[1])]

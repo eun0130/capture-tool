@@ -85,3 +85,14 @@ def test_default_is_writable_creates_dir(tmp_path):
     target = tmp_path / "new" / "dir"
     d, used = resolve_save_dir(target, tmp_path)
     assert d == target and used is False and target.is_dir()
+
+
+def test_NAME_LONG_01_full_path_stays_under_the_windows_limit(tmp_path):
+    from capture_tool.core.naming import unique_path
+    deep = tmp_path / ("하위폴더" * 8) / ("folder" * 6)
+    deep.mkdir(parents=True)
+    p = unique_path(deep, "회의록_" * 80, ".png")
+    assert len(str(p)) <= 250 and p.suffix == ".png" and p.stem.startswith("회의록")
+    p.write_bytes(b"x")                                     # really writable
+    q = unique_path(deep, "회의록_" * 80, ".png")             # the next one gets _1, still short
+    assert q != p and len(str(q)) <= 256
