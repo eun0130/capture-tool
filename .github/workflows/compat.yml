@@ -1,0 +1,77 @@
+name: compatibility
+
+# Install a released Setup.exe on clean Windows images (no Office, nothing of ours) and run the
+# app's own self-test there. Run from the Actions tab or: gh workflow run compatibility -f tag=v0.6.1
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to test (e.g. v0.6.1)"
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  install-and-selftest:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-2022, windows-2025]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: System
+        shell: pwsh
+        run: |
+          Get-CimInstance Win32_OperatingSystem | Select-Object Caption, Version, OSArchitecture | Format-List
+          Add-Type -AssemblyName System.Windows.Forms
+          [System.Windows.Forms.Screen]::AllScreens | ForEach-Object { "$($_.DeviceName) $($_.Bounds) primary=$($_.Primary)" }
+          "Office: " + (Test-Path "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\POWERPNT.EXE")
+
+      - name: Download installer
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release download "${{ inputs.tag }}" --repo "${{ github.repository }}" --pattern "*.exe" --dir dl
+
+      - name: Install (per-user, silent)
+        shell: pwsh
+        run: |
+          $exe = Get-ChildItem dl\*.exe | Select-Object -First 1
+          $p = Start-Process $exe.FullName -ArgumentList "/VERYSILENT","/SUPPRESSMSGBOXES","/NORESTART" -Wait -PassThru
+          "installer exit $($p.ExitCode)"
+          if ($p.ExitCode -ne 0) { throw "installer failed" }
+          Get-ChildItem "$env:LOCALAPPDATA\Programs\CaptureTool\CaptureTool.exe"
+
+      - name: Self-test
+        shell: pwsh
+        run: |
+          $app = "$env:LOCALAPPDATA\Programs\CaptureTool\CaptureTool.exe"
+          $p = Start-Process $app -ArgumentList "--selftest" -PassThru -RedirectStandardOutput selftest.txt -RedirectStandardError selftest-err.txt
+          if (-not $p.WaitForExit(300000)) { $p.Kill(); throw "self-test hung" }
+          Get-Content selftest.txt
+          Get-Content selftest-err.txt -ErrorAction SilentlyContinue | Select-Object -Last 20
+          Get-Content "$env:LOCALAPPDATA\CaptureTool\capture.log" -ErrorAction SilentlyContinue | Select-Object -Last 15
+          # timing limits are for a real PC; on a shared CI VM only the functional checks must pass
+          $line = (Get-Content selftest.txt | Where-Object { $_ -like "monitors=*" }) -join ""
+          foreach ($k in "ocr_korean=True", "shapes=True", "translate=True") { if ($line -notlike "*$k*") { throw "missing $k" } }
+          if ($line -notmatch "png_bytes=[1-9]") { throw "copy produced no image" }
+
+      - name: Start, stay up, quit
+        shell: pwsh
+        run: |
+          $app = "$env:LOCALAPPDATA\Programs\CaptureTool\CaptureTool.exe"
+          $p = Start-Process $app -PassThru
+          Start-Sleep 15
+          if ($p.HasExited) { throw "app exited on its own (code $($p.ExitCode))" }
+          $p.Refresh()
+          "working set MB: " + [math]::Round($p.WorkingSet64 / 1MB)
+          Stop-Process -Id $p.Id
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: compat-${{ matrix.os }}
+          path: |
+            selftest*.txt
+            ~/AppData/Local/CaptureTool/capture.log
