@@ -36,19 +36,31 @@ def bgr_to_pixmap(img: np.ndarray, dpr: float = 1.0) -> QPixmap:
     return pm
 
 
+def mosaic_region(s: Shape, w: int, h: int) -> tuple[int, int, int, int] | None:
+    x1, y1, x2, y2 = (int(round(v)) for v in s.bbox())
+    x1, y1, x2, y2 = max(0, x1), max(0, y1), min(w, x2), min(h, y2)
+    if x2 - x1 < 2 or y2 - y1 < 2:
+        return None
+    return x1, y1, x2, y2
+
+
+def pixelate(roi: np.ndarray, block: int = 12) -> np.ndarray:
+    h, w = roi.shape[:2]
+    small = cv2.resize(roi, (max(1, w // block), max(1, h // block)), interpolation=cv2.INTER_AREA)
+    return cv2.resize(small, (w, h), interpolation=cv2.INTER_NEAREST)
+
+
 def apply_mosaic(img: np.ndarray, shapes: list[Shape], block: int = 12) -> np.ndarray:
     out = img.copy()
     h, w = out.shape[:2]
     for s in shapes:
         if s.kind != "mosaic":
             continue
-        x1, y1, x2, y2 = (int(round(v)) for v in s.bbox())
-        x1, y1, x2, y2 = max(0, x1), max(0, y1), min(w, x2), min(h, y2)
-        if x2 - x1 < 2 or y2 - y1 < 2:
+        r = mosaic_region(s, w, h)
+        if r is None:
             continue
-        roi = out[y1:y2, x1:x2]
-        small = cv2.resize(roi, (max(1, (x2 - x1) // block), max(1, (y2 - y1) // block)), interpolation=cv2.INTER_AREA)
-        out[y1:y2, x1:x2] = cv2.resize(small, (x2 - x1, y2 - y1), interpolation=cv2.INTER_NEAREST)
+        x1, y1, x2, y2 = r
+        out[y1:y2, x1:x2] = pixelate(out[y1:y2, x1:x2], block)
     return out
 
 

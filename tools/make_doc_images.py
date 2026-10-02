@@ -219,11 +219,17 @@ def main():
     # 5b) how pinning is used: a pinned table floats over the window you are typing in
     pin_scene().save(str(OUT / "09-pin-usage.png"))
     # 5c) scroll capture result window
-    from capture_tool.app.scroll_ui import ScrollIndicator, ScrollResult
+    from capture_tool.app.scroll_ui import ScrollIndicator
     from tests.scrollsim import make_page
-    res = ScrollResult(make_page(2600, w=900, seed=3))
-    res.show()
-    res.grab().save(str(OUT / "13-scroll-result.png"))
+    c = controller(img)
+    c.open_editor(make_page(2600, w=900, seed=3), 96, "스크롤 캡처 · 선택한 영역")
+    ed = c.editor
+    ed.resize(1100, 720)
+    ed.set_zoom(1.0)
+    ed.canvas.set_tool("rect")
+    drag(ed.canvas, (60, 120), (420, 260))
+    ed.grab().save(str(OUT / "13-scroll-result.png"))
+    c.close_all()
     ind = ScrollIndicator()
     ind.show_progress(7, 5320)
     ind.show()

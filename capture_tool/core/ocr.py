@@ -52,6 +52,7 @@ def ocr_params(lang: str) -> dict:
 
     return {
         "Global.log_level": "error",
+        "Global.max_side_len": 4000,       # tiles are at most 3800 wide; never shrink them
         "Global.use_cls": False,  # screenshots are upright; the classifier flips digit lines
         "Det.ocr_version": OCRVersion.PPOCRV5,
         "Det.model_type": ModelType.MOBILE,
@@ -182,21 +183,39 @@ class OcrEngine:
         return t
 
     def recognize(self, img: np.ndarray | None) -> list[OcrLine]:
+        """Big images (scroll captures, 4K screens) go in overlapping tiles: the recognizer
+        shrinks anything over 2000 px, which garbles text. A line is kept from the tile that
+        owns its centre, so lines in an overlap are reported once."""
         if img is None or img.size == 0 or min(img.shape[:2]) < 4:
             return []
         engine = self._load()
-        r = engine(img)
+        h, w = img.shape[:2]
+        parts = tiles(w, h)
+        lines = []
+        for x0, y0, tw, th in parts:
+            own = _owned(x0, y0, tw, th, w, h)
+            for line in self._run_tile(engine, img[y0:y0 + th, x0:x0 + tw], x0, y0):
+                bx, by, bw, bh = line.box
+                cx, cy = bx + bw / 2, by + bh / 2
+                if own[0] <= cx < own[2] and own[1] <= cy < own[3]:
+                    lines.append(line)
+        return reading_order(lines)
+
+    def _run_tile(self, engine, img: np.ndarray, x0: int, y0: int) -> list[OcrLine]:
+        r = engine(np.ascontiguousarray(img) if not img.flags["C_CONTIGUOUS"] else img)
         if r is None or r.txts is None or r.boxes is None:
             return []
-        lines = []
+        out = []
         for quad, text, score in zip(r.boxes, r.txts, r.scores):
             if float(score) < MIN_SCORE or not str(text).strip():
                 continue
             q = np.asarray(quad, float)
             x, y = q[:, 0].min(), q[:, 1].min()
             box = (int(round(x)), int(round(y)), int(round(q[:, 0].max() - x)), int(round(q[:, 1].max() - y)))
-            lines.append(self._second_reading(img, OcrLine(str(text), box, float(score))))
-        return reading_order(lines)
+            line = self._second_reading(img, OcrLine(str(text), box, float(score)))
+            bx, by, bw, bh = line.box
+            out.append(OcrLine(line.text, (bx + x0, by + y0, bw, bh), line.score))
+        return out
 
     def _second_reading(self, img, line: OcrLine) -> OcrLine:
         if not needs_latin(line.text):
@@ -217,6 +236,42 @@ class OcrEngine:
         if score >= line.score - SECOND_READING_MARGIN:
             return OcrLine(text, line.box, score)
         return line
+
+
+TILE_H = 1900            # tile height (rows); stays under the recognizer's 2000 px shrink limit
+TILE_W = 3800            # tile width (Global.max_side_len is raised to 4000 for wide screens)
+TILE_OVERLAP = 220       # >= the tallest text line, so every line is whole in the tile owning it
+
+
+def _starts(total: int, size: int) -> list[int]:
+    if total <= size:
+        return [0]
+    step = size - TILE_OVERLAP
+    starts = list(range(0, total - size, step))
+    starts.append(total - size)
+    return starts
+
+
+def tiles(w: int, h: int) -> list[tuple[int, int, int, int]]:
+    """(x, y, w, h) tiles covering the image, overlapping by at least TILE_OVERLAP."""
+    tw, th = min(w, TILE_W), min(h, TILE_H)
+    return [(x, y, tw, th) for y in _starts(h, th) for x in _starts(w, tw)]
+
+
+def _bounds(starts: list[int], size: int, total: int) -> list[tuple[float, float]]:
+    """Per tile, the span whose line centres it reports: up to the middle of each overlap."""
+    out = []
+    for i, s in enumerate(starts):
+        lo = 0 if i == 0 else (starts[i - 1] + size + s) / 2
+        hi = total + 1 if i == len(starts) - 1 else (s + size + starts[i + 1]) / 2
+        out.append((lo, hi))
+    return out
+
+
+def _owned(x0, y0, tw, th, w, h) -> tuple[float, float, float, float]:
+    xs, ys = _starts(w, tw), _starts(h, th)
+    (xl, xh), (yl, yh) = _bounds(xs, tw, w)[xs.index(x0)], _bounds(ys, th, h)[ys.index(y0)]
+    return xl, yl, xh, yh
 
 
 def reading_order(lines: list[OcrLine]) -> list[OcrLine]:

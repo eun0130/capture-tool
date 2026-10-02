@@ -133,7 +133,7 @@ png = win_clipboard.get_format(PNG)
 img = cv2.imdecode(np.frombuffer(png, np.uint8), cv2.IMREAD_COLOR) if png else None
 import glob
 wi = next(x for x in __import__("capture_tool.platform.windows", fromlist=["x"]).top_level_windows() if x.title == "ACROSSTEST") if False else None
-print("result", None if img is None else img.shape[:2], "win", c.result_window is not None and c.result_window.isVisible(),
+print("result", None if img is None else img.shape[:2], "win", c.editor is not None and c.editor.isVisible(),
       "saved", len(glob.glob(tmp + "/*.png")),
       "center", None if img is None else img[img.shape[0] // 2, img.shape[1] // 2].tolist(),
       "right", None if img is None else img[img.shape[0] // 2, img.shape[1] - 30].tolist())

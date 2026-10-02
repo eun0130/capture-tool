@@ -15,7 +15,7 @@ from ..core.clip import polygon
 from ..core.color import pixel_color
 from ..core.geometry import Rect, layout_bars, match_screen
 from ..core.session import State
-from .render import FONT_FAMILY, apply_mosaic, bgr_to_pixmap, bgr_to_qimage, paint_document
+from .render import FONT_FAMILY, bgr_to_pixmap, bgr_to_qimage, mosaic_region, paint_document, pixelate
 from .side_bar import SideBar
 from .toolbar import Toolbar
 
@@ -111,8 +111,12 @@ class OcrBar(QWidget):
 
 
 class OverlayWindow(QWidget):
-    def __init__(self, controller, monitor, image, windows=()):
-        super().__init__(None, Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.Tool)
+    def __init__(self, controller, monitor, image, windows=(), embedded=None):
+        if embedded is None:
+            super().__init__(None, Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.Tool)
+        else:                      # the canvas of an edit window (scroll capture, big window)
+            super().__init__(None)
+        self.embedded = embedded
         self.c = controller
         self.monitor = monitor
         self.image = image
@@ -314,6 +318,16 @@ class OverlayWindow(QWidget):
         self.setCursor(Qt.ArrowCursor if name == "select" else Qt.CrossCursor)
 
     def show_toolbar(self) -> None:
+        if self.embedded is not None:              # bars live in the edit window's layout
+            self.toolbar.arrange(max(400, self.embedded.width() - 260))
+            if self.ocr_lines is None:
+                self.ocr_bar.hide()
+                self.toolbar.show()
+            else:
+                self.toolbar.hide()
+                self.ocr_bar.show()
+            self.side_bar.show()
+            return
         sel = self._selection_here()
         if sel is None:
             self.toolbar.hide()
@@ -563,7 +577,7 @@ class OverlayWindow(QWidget):
             p.fillRect(wr, QColor(76, 141, 255, 30))
             p.drawRect(wr)
             self._label(p, wr.topLeft(), self.hover_label())
-        if hole is not None:
+        if hole is not None and self.embedded is None:
             p.setPen(QPen(ACCENT, 2))
             p.drawRect(hole)
             w = sel.w if sel else round(hole.width() * self.scale)
@@ -580,9 +594,17 @@ class OverlayWindow(QWidget):
         doc = self.c.session.document
         shapes = list(doc.shapes) + ([self._current] if self._current else [])
         lr = self.local_rect(sel)
-        if any(s.kind == "mosaic" for s in shapes):
-            mosaic = apply_mosaic(self.crop(sel), shapes)
-            p.drawImage(lr, bgr_to_qimage(mosaic))
+        ox, oy = sel.x - self.monitor.rect.x, sel.y - self.monitor.rect.y
+        for s in shapes:                          # only the mosaic areas, never the whole image
+            if s.kind != "mosaic":
+                continue
+            r = mosaic_region(s, sel.w, sel.h)
+            if r is None:
+                continue
+            x1, y1, x2, y2 = r
+            patch = pixelate(np.ascontiguousarray(self.image[oy + y1:oy + y2, ox + x1:ox + x2, :3]))
+            p.drawImage(QRectF(lr.x() + x1 / self.scale, lr.y() + y1 / self.scale,
+                               (x2 - x1) / self.scale, (y2 - y1) / self.scale), bgr_to_qimage(patch))
         p.save()
         p.setClipRect(lr)
         p.translate(lr.topLeft())
@@ -693,7 +715,16 @@ class OverlayWindow(QWidget):
         return ("팁: 창의 제목줄(또는 창 위 아무 곳)을 클릭하면 그 창 전체가 캡처됩니다. "
                 "두 모니터에 걸친 창도 한 장으로 찍힙니다.")
 
+    def wheelEvent(self, e):
+        if self.embedded is not None and e.modifiers() & Qt.ControlModifier:
+            self.embedded.zoom_by(1 if e.angleDelta().y() > 0 else -1)
+            e.accept()
+            return
+        super().wheelEvent(e)
+
     def _paint_hint(self, p: QPainter, st):
+        if self.embedded is not None:
+            return                                 # the edit window shows its own help line
         tip = self.tip_text()
         if tip and self.active is False and self.c.session.state is State.SELECTING:
             f = QFont(FONT_FAMILY)

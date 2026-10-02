@@ -184,8 +184,9 @@ def test_WIN_02_window_across_two_monitors_is_captured_whole(make):
     assert img.shape[:2] == (300, 500)                   # the whole window, not just monitor A's part
     assert tuple(img[150, 50]) == (200, 60, 30)            # left part from monitor A
     assert tuple(img[150, 450]) == (30, 60, 200)           # right part from monitor B
-    assert c.overlays == [] and c.result_window is not None and c.result_window.isVisible()
-    assert "창 전체" in c.result_window.windowTitle()
+    assert c.editor is not None and c.editor.isVisible() and c.overlays == [c.editor.canvas]
+    assert "창 전체" in c.editor.windowTitle()
+    assert c.editor.canvas.image.shape[:2] == (300, 500)
 
 
 def test_WIN_03_window_picture_from_windows_is_preferred(make):
@@ -242,16 +243,17 @@ def test_WIN_08_first_captures_show_a_tip_then_stop(make):
             assert "제목줄" in tip and "창 전체" in tip
 
 
-def test_WIN_09_result_window_actions(make, tmp_path):
+def test_WIN_09_editor_actions(make, tmp_path):
     c = make(screen=TwoScreens(wins=(WIN_ACROSS,)))
     c.powerpoint = FakePpt()
     click_window(c, WIN_ACROSS, (650, 110))
-    win = c.result_window
-    win.trigger("save_as")
+    c.editor.canvas.side_bar.trigger("save_as")
     assert (tmp_path / "picked.png").exists()
-    win.trigger("ppt")
+    click_window(c, WIN_ACROSS, (650, 110))
+    c.editor.canvas.side_bar.trigger("ppt")
     assert c.powerpoint.items
-    win.trigger("pin")
+    click_window(c, WIN_ACROSS, (650, 110))
+    c.editor.canvas.side_bar.trigger("pin")
     assert c.pins
 
 
@@ -372,9 +374,10 @@ def test_LINK_10_result_window_links(make):
     c = make(screen=TwoScreens(wins=(WIN_ACROSS,)), share_consent=True)
     c.uploader = lambda png, expiry: "https://litter.catbox.moe/zz.png"
     click_window(c, WIN_ACROSS, (650, 110))
-    c.result_window.trigger("link_web")
+    c.editor.canvas.side_bar.trigger("link_web")
     assert c.clipboard.last[UNICODE] == "https://litter.catbox.moe/zz.png"
-    c.result_window.trigger("link_file")
+    click_window(c, WIN_ACROSS, (650, 110))
+    c.editor.canvas.side_bar.trigger("link_file")
     assert c.clipboard.last[UNICODE].endswith(".png")
 
 

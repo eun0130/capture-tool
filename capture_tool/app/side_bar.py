@@ -66,6 +66,15 @@ class SideBar(QWidget):
             self._grid.addWidget(b, i // n, i % n)
         self.adjustSize()
 
+    def remove_action(self, name: str) -> None:
+        b = self.buttons.pop(name, None)
+        if b is not None:
+            self._grid.removeWidget(b)
+            b.hide()                       # gone right away, not only when Qt deletes it later
+            b.setParent(None)
+            b.deleteLater()
+            self.set_columns(self.columns)
+
     def fit_height(self, max_height: int) -> None:
         one = len(self.buttons) * 58 + 12
         want = 1 if one <= max_height else 2

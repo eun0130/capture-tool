@@ -9,6 +9,7 @@ from pathlib import Path
 import cv2
 import numpy as np
 from PySide6.QtCore import QObject, QPoint, QRunnable, Qt, QThreadPool, QTimer, Signal
+from PySide6.QtGui import QCursor
 
 from ..core import settings as settings_io
 from ..core.clipboard_payload import (HTML, UNICODE, cf_html, dib_from_bgr, image_payload, png_with_dpi,
@@ -105,6 +106,8 @@ class Controller(QObject):
         self.scroll_indicator = None
         self.scroll_result = None
         self.result_window = None          # whole-window capture result
+        self.editor = None                  # edit window for captures bigger than a screen
+        self._editor_path = None            # file it was auto-saved to when it opened
         self.tip_active = False
         self._acted = False                 # the user did something with this capture (for auto-save on Esc)
         self._taken_path = None             # file the current capture was saved to (auto-save / link)
@@ -146,6 +149,10 @@ class Controller(QObject):
     def start_capture(self, mode: str = "draw") -> bool:
         t0 = time.perf_counter()
         if self.session.state is not State.IDLE:
+            if self.editor is not None:
+                self.editor.raise_()
+                self.editor.activateWindow()
+                self.notify("캡처 편집 창이 열려 있습니다. 편집 창에서 복사·저장하거나 닫은 뒤 다시 캡처하세요.")
             return False
         mons = self.screen.monitors()
         if not mons:
@@ -223,13 +230,16 @@ class Controller(QObject):
             ov.release()
         self.overlays = []
         self.active_overlay = None
+        if self.editor is not None:
+            ed, self.editor = self.editor, None
+            ed.close_from_controller()
+            ed.deleteLater()
 
     def close_all(self) -> None:
         if self.ai_window is not None:
             self.ai_window.close()
-        for w in (self.result_window, self.scroll_result):
-            if w is not None:
-                w.close()
+        if self.editor is not None:
+            self.close_overlays()
         self.close_overlays()
         for ov in self._pool.values():
             ov.deleteLater()
@@ -294,7 +304,7 @@ class Controller(QObject):
         ov, sel, doc = self.active_overlay, self.session.selection, self.session.document
         if (self.settings.auto_save and self._acted and ov is not None and sel is not None
                 and self.session.state is State.EDITING):
-            self._save(compose(ov.crop(sel), doc))       # used (e.g. text copied), then closed
+            self._autosave(ov.crop(sel), doc)            # used (e.g. text copied), then closed
         self.session.key("Escape")
         self.close_overlays()
 
@@ -353,8 +363,6 @@ class Controller(QObject):
             self.notify("스크롤 캡처가 이미 진행 중입니다.")
             return
         ov, sel = self.active_overlay, self.session.selection
-        if self.scroll_result is not None:     # an old result window must not sit over the page
-            self.scroll_result.close()
         rect, to_top, what = self._scroll_target(ov, sel)
         drew = bool(self.session.document and self.session.document.shapes)
         dpi = 96 * ov.scale
@@ -431,7 +439,6 @@ class Controller(QObject):
         QTimer.singleShot(250, tick)   # let the overlays disappear from the screen first
 
     def _finish_scroll(self, sc, what, dpi, error, pos) -> None:
-        from .scroll_ui import ScrollResult
         img = sc.result()
         h, w = img.shape[:2]
         payload = self._image_payload(img, dpi)
@@ -449,15 +456,29 @@ class Controller(QObject):
                     "blocked": "화면 캡처가 막혔습니다(보안 프로그램이나 보호된 영상이 캡처를 막고 있을 수 "
                                "있습니다). 막히기 전까지 "}.get(sc.reason, "")
             self.notify(f"스크롤 캡처({what}) {w}×{h}px를 {note}복사했습니다. 원하는 곳에 Ctrl+V")
-        self._last_auto_path = self._save(img) if self.settings.auto_save else None
-        if self.scroll_result is not None:
-            self.scroll_result.close()
-        win = ScrollResult(img)
-        holder = {"path": self._last_auto_path}
-        win.action.connect(lambda name: self._result_action(name, img, dpi, win, holder))
-        win.move(pos)
-        win.show()
-        self.scroll_result = win
+        self.open_editor(img, dpi, f"스크롤 캡처 · {what}")
+
+    # --- edit window ---------------------------------------------------------------------------------
+    def open_editor(self, img, dpi: float, title: str) -> None:
+        """Show a big capture (scroll, whole window) with every normal capture tool. It is already
+        on the clipboard; with auto-save on it is saved now (and updated if drawn on)."""
+        from .editor import EditorWindow
+        h, w = img.shape[:2]
+        self._editor_path = self._save(img) if self.settings.auto_save else None
+        self.session.hotkey(Rect(0, 0, w, h))
+        self.session.select(Rect(0, 0, w, h))
+        self.mode = "draw"
+        self._acted = True
+        ed = EditorWindow(self, np.ascontiguousarray(img), title)
+        self.editor = ed
+        self.overlays = [ed.canvas]
+        self.active_overlay = ed.canvas
+        ed.show()
+        ed.initial_zoom()
+        ed.canvas.show_toolbar()
+        ed.raise_()
+        ed.activateWindow()
+        ed.canvas.setFocus()
 
     def _result_action(self, name: str, img, dpi: float, win, holder: dict) -> None:
         """Buttons of a result window (scroll capture, whole-window capture)."""
@@ -479,7 +500,6 @@ class Controller(QObject):
 
     # --- whole window (one click, also across monitors) -----------------------------------------
     def _capture_whole_window(self, win, ov) -> None:
-        from .scroll_ui import ScrollResult
         img = self._screen("capture_window", win.hwnd, win.rect)
         if img is None or img.shape[:2] != (win.rect.h, win.rect.w) or looks_blocked(img):
             img = self._compose_from_screens(win.rect)
@@ -493,15 +513,7 @@ class Controller(QObject):
         if payload:
             self._set_clipboard(payload)
         self.notify(f"'{win.title or '창'}' 창 전체({win.rect.w}×{win.rect.h}px)를 복사했습니다. 원하는 곳에 Ctrl+V")
-        path = self._save(img) if self.settings.auto_save else None
-        if self.result_window is not None:
-            self.result_window.close()
-        rw = ScrollResult(img, title=f"창 전체 캡처 — {win.title or '창'}")
-        holder = {"path": path}
-        rw.action.connect(lambda name: self._result_action(name, img, dpi, rw, holder))
-        rw.move(pos)
-        rw.show()
-        self.result_window = rw
+        self.open_editor(img, dpi, f"창 전체 · {win.title or '창'}")
 
     def _compose_from_screens(self, rect: Rect):
         """The window pieced together from each monitor's frozen picture (white where no monitor is)."""
@@ -728,7 +740,7 @@ class Controller(QObject):
             ov.exit_ocr_mode()
         elif name == "window" and ov is not None:
             sel = self.session.selection
-            pos = ov.local_rect(sel).bottomLeft().toPoint() + ov.geometry().topLeft()
+            pos = self._below(ov, sel)
             lines, grid = self._text_lines, self._text_grid
             self._take()
             self._show_text_panel(lines, None, pos, grid)
@@ -757,12 +769,22 @@ class Controller(QObject):
             self.close_overlays()
         if autosave and self.settings.auto_save:
             def save():
-                self._taken_path = self._save(compose(raw, doc))
+                self._taken_path = self._autosave(raw, doc)
             if self.sync:
                 save()
             else:
                 QTimer.singleShot(0, save)
         return ov, sel, doc, raw
+
+    def _autosave(self, raw, doc):
+        """Save the finished capture. An edit window was saved when it opened: then only rewrite
+        that same file if something was drawn (no second copy)."""
+        path, self._editor_path = self._editor_path, None
+        if path is not None:
+            if doc is not None and doc.shapes and self._write_image(compose(raw, doc), Path(path)):
+                return Path(path)
+            return Path(path)
+        return self._save(compose(raw, doc))
 
     def _remember_style(self, ov) -> None:
         tb = ov.toolbar
@@ -875,8 +897,30 @@ class Controller(QObject):
         if ok:
             self._set_clipboard(image_payload(png.tobytes(), dib_from_bgr(img)))
 
+    def _below(self, ov, sel) -> QPoint:
+        """Global point under the selection, kept on screen (a tall edit canvas ends far below)."""
+        from PySide6.QtGui import QGuiApplication
+        pos = ov.mapToGlobal(ov.local_rect(sel).bottomLeft().toPoint())
+        scr = QGuiApplication.screenAt(QCursor.pos()) or QGuiApplication.primaryScreen()
+        if scr is not None:
+            g = scr.availableGeometry()
+            if not g.contains(pos):
+                pos = QPoint(g.x() + 60, g.y() + 60)
+        return pos
+
     def pin(self, img, pos: QPoint, dpr: float = 1.0, screen=None) -> PinWindow:
         p = PinWindow(img, pos, dpr)
+        from PySide6.QtGui import QGuiApplication
+        scr = screen or QGuiApplication.screenAt(pos) or QGuiApplication.primaryScreen()
+        if scr is not None:                       # a tall capture is pinned shrunk to fit the screen
+            g = scr.availableGeometry()
+            if p.height() > g.height() * 0.8 or p.width() > g.width() * 0.8:
+                from .pin import MIN_ZOOM
+                p.zoom = max(MIN_ZOOM, min(g.height() * 0.8 / p.height(), g.width() * 0.8 / p.width()))
+                p._resize()
+                if not g.contains(pos):
+                    pos = QPoint(g.x() + 40, g.y() + 40)
+                p.move(pos)
         if screen is not None:
             p.setScreen(screen)
             p.move(pos)
@@ -902,7 +946,7 @@ class Controller(QObject):
         user_shapes = list(doc.shapes) if doc else []
         final = compose(raw, doc)
         raw = mask_outside(raw, doc.clip if doc else None)   # recognize only what is kept
-        pos = ov.local_rect(sel).bottomLeft().toPoint() + ov.geometry().topLeft()
+        pos = self._below(ov, sel)
 
         def work():
             lines, err = [], None

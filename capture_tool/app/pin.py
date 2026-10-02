@@ -12,6 +12,9 @@ from . import icons
 from .render import bgr_to_pixmap
 
 
+MIN_ZOOM = 0.05          # a tall scroll capture pinned to fit the screen
+
+
 class PinWindow(QWidget):
     closed = Signal(object)
     copyRequested = Signal(object)
@@ -54,7 +57,7 @@ class PinWindow(QWidget):
         self.close_button.move(self.width() - self.close_button.width() - 4, 4)
 
     def zoom_by(self, steps: int) -> None:
-        self.zoom = min(4.0, max(0.2, self.zoom * (1.1 ** steps)))
+        self.zoom = min(4.0, max(MIN_ZOOM, self.zoom * (1.1 ** steps)))
         self._resize()
         self.update()
 

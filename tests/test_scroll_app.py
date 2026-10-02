@@ -102,7 +102,8 @@ def test_SAPP_01_region_scroll_from_where_it_is(make):
     c = make(scr)
     ov = select_view(c)
     ov.side_bar.trigger("scroll")
-    assert c.overlays == []                              # overlays are out of the way while scrolling
+    assert not ov.isVisible()                            # the capture screen is out of the way
+    assert c.overlays == [c.editor.canvas]               # ... and the result opens in the editor
     assert np.array_equal(clip_img(c), fp.expected(top=200))
     assert all(p == (VIEW.x + VIEW.w // 2, VIEW.y + VIEW.h // 2) for p in scr.wheel_at)
     assert any("스크롤 캡처" in m and "1300" in m for m in c.messages)
@@ -205,21 +206,24 @@ def test_SAPP_11_cursor_is_put_back(make):
     assert scr.cursor_moves[-1] == (33, 44)
 
 
-def test_SAPP_12_result_window_save_ppt_and_close(make, tmp_path):
+def test_SAPP_12_result_opens_in_the_editor_with_save_and_ppt(make, tmp_path):
     from capture_tool.platform.powerpoint import Picture
     fp = FakePage(make_page(1500), vh=400)
     scr = ScrollScreen(fp, wins=(), browsers=())
     c = make(scr)
     c.powerpoint = FakePpt()
     select_view(c).side_bar.trigger("scroll")
-    win = c.scroll_result
-    assert win is not None and win.isVisible() and win.image.shape[0] == 1500
-    win.trigger("save_as")
-    assert (tmp_path / "scroll.png").exists()
-    win.trigger("ppt")
+    ed = c.editor
+    assert ed is not None and ed.isVisible() and ed.canvas.image.shape[0] == 1500
+    ed.canvas.side_bar.trigger("ppt")
     assert isinstance(c.powerpoint.items[-1], Picture) and c.powerpoint.items[-1].image.shape[0] == 1500
-    QTest.keyClick(win, Qt.Key_Escape)
-    assert not win.isVisible()
+    select_view(c).side_bar.trigger("scroll")
+    c.editor.canvas.side_bar.trigger("save_as")
+    assert (tmp_path / "scroll.png").exists()
+    select_view(c).side_bar.trigger("scroll")
+    ed = c.editor
+    QTest.keyClick(ed.canvas, Qt.Key_Escape)
+    assert not ed.isVisible() and c.editor is None
 
 
 def test_SAPP_13_drawings_are_not_part_of_a_scroll_capture_and_user_is_told(make):
