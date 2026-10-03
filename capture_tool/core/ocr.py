@@ -31,7 +31,7 @@ class OcrLine:
 # from the internet; we refuse instead (the app promises to work offline).
 REQUIRED_MODELS = ["ch_PP-OCRv5_det_mobile.onnx", "ch_ppocr_mobile_v2.0_cls_mobile.onnx",
                    "korean_PP-OCRv5_rec_mobile.onnx"]
-LATIN_MODELS = ["latin_PP-OCRv5_rec_mobile.onnx"]
+LATIN_MODELS = ["PP-OCRv6_rec_small.onnx"]          # one reader for English and European languages
 # ONNX Runtime defaults to one thread per core per model (≈45 threads per engine on 32 cores).
 def ocr_threads(cores: int | None) -> int:
     """Half the cores, at most 8: recognition is short and bursty, so more threads finish it
@@ -64,9 +64,9 @@ def ocr_params(lang: str) -> dict:
         "Det.ocr_version": OCRVersion.PPOCRV5,
         "Det.model_type": ModelType.MOBILE,
         # Korean dictionary also covers plain Latin letters/digits; LATIN covers é ç ñ ß ¿ ...
-        "Rec.lang_type": LangRec.KOREAN if lang == "korean" else LangRec.LATIN,
-        "Rec.ocr_version": OCRVersion.PPOCRV5,
-        "Rec.model_type": ModelType.MOBILE,
+        "Rec.lang_type": LangRec.KOREAN if lang == "korean" else LangRec.EN,
+        "Rec.ocr_version": OCRVersion.PPOCRV5 if lang == "korean" else OCRVersion.PPOCRV6,
+        "Rec.model_type": ModelType.MOBILE if lang == "korean" else ModelType.SMALL,
         "EngineConfig.onnxruntime.intra_op_num_threads": OCR_THREADS,
         "EngineConfig.onnxruntime.inter_op_num_threads": 1,
     }
@@ -130,6 +130,7 @@ def latin_recognize(engine, crop, _primary_text):
 
 _HANGUL = re.compile(r"[ᄀ-ᇿ㄰-㆏가-힣]")
 _LATIN_LETTER = re.compile(r"[A-Za-zÀ-ɏ]")
+SMALL_LINE_PX = 48            # English/European lines lower than this are enlarged before the second reading
 SECOND_READING_MARGIN = 0.05  # prefer the Latin reading unless clearly less confident
 
 
@@ -180,6 +181,32 @@ def fix_mixed_line(original: str, latin: str) -> str | None:
         return None
     it = iter(parts_n)
     return "".join((next(it) if (k % 2 == 0 and p) else p) for k, p in enumerate(parts_o))
+
+
+_PRONOUN_L = re.compile(r"(?<![\w.,'’])l(?=(['’](m|ll|ve|d))?(?![\w'’]))")
+_CAPS_WORD = re.compile(r"(?<![\w'’-])[A-Za-z]{2,6}(?![\w'’-])")     # "Al-Rashid" is a name
+_SHORT_CAPS = {"Al": "AI", "Cl": "CI", "Ul": "UI"}      # "El" (Spanish) and the like stay
+
+
+def fix_capital_i(text: str) -> str:
+    """In sans-serif fonts capital I and small l look the same. "Al"/"Cl"/"Ul" are AI/CI/UI, a
+    longer word of capitals with an l in it ("KPl", "APl") gets an I, and in English a lone
+    "l" ("so l can", "l'm") is the pronoun I. Ordinary words are left alone."""
+    if not text:
+        return text
+
+    def repl(m):
+        w = m.group(0)
+        if w in _SHORT_CAPS:
+            return _SHORT_CAPS[w]
+        rest = w.replace("l", "")
+        if len(w) >= 3 and "l" in w and rest.isupper() and sum(c.isupper() for c in rest) >= 2:
+            return w.replace("l", "I")
+        return w
+    text = _CAPS_WORD.sub(repl, text)
+    if re.search(r"[A-Za-z]", text.replace("l", "")) and not _HANGUL.search(text):
+        text = _PRONOUN_L.sub("I", text)
+    return text
 
 
 def _latin_runs(word: str) -> list[tuple[int, int]]:
@@ -291,6 +318,7 @@ class OcrEngine:
                 cx, cy = bx + bw / 2, by + bh / 2
                 if own[0] <= cx < own[2] and own[1] <= cy < own[3]:
                     lines.append(line)
+        lines = [OcrLine(fix_capital_i(l.text), l.box, l.score) for l in lines]
         return reading_order(lines)
 
     def _run_margined(self, engine, piece: np.ndarray, x0: int, y0: int, w: int, h: int) -> list[OcrLine]:
@@ -311,23 +339,28 @@ class OcrEngine:
 
     def _run_tile(self, engine, img: np.ndarray, x0: int, y0: int) -> list[OcrLine]:
         img = np.ascontiguousarray(img) if not img.flags["C_CONTIGUOUS"] else img
-        try:
-            r = engine(img, return_word_box=True)
-        except TypeError:                         # engines without word boxes (older / test fakes)
-            r = engine(img)
+        try:                                      # flags every time: RapidOCR keeps the last call's
+            r = engine(img, use_det=True, use_cls=False, use_rec=True, return_word_box=True)
+        except TypeError:
+            try:
+                r = engine(img, return_word_box=True)
+            except TypeError:                     # engines without word boxes (older / test fakes)
+                r = engine(img)
         if r is None or r.txts is None or r.boxes is None:
             return []
-        words_all = getattr(r, "word_results", None) or ()
-        out = []
+        words_all = list(getattr(r, "word_results", None) or ())
+        pieces = []
         for k, (quad, text, score) in enumerate(zip(r.boxes, r.txts, r.scores)):
             if float(score) < MIN_SCORE or not str(text).strip():
                 continue
             q = np.asarray(quad, float)
             x, y = q[:, 0].min(), q[:, 1].min()
             box = (int(round(x)), int(round(y)), int(round(q[:, 0].max() - x)), int(round(q[:, 1].max() - y)))
-            text = str(text)
-            if _HANGUL.search(text) and _LATIN_LETTER.search(text) and k < len(words_all):
-                text = self._fix_latin_words(img, text, words_all[k] or ())
+            pieces.append([str(text), box, float(score), words_all[k] if k < len(words_all) else ()])
+        out = []
+        for text, box, score, words in self._join_pieces(engine, img, pieces):
+            if _HANGUL.search(text) and _LATIN_LETTER.search(text) and words:
+                text = self._fix_latin_words(img, text, words or ())
             line = self._second_reading(img, OcrLine(text, box, float(score)))
             bx, by, bw, bh = line.box
             out.append(OcrLine(line.text, (bx + x0, by + y0, bw, bh), line.score))
@@ -380,6 +413,52 @@ class OcrEngine:
                 text = text.replace(wtext, new_word, 1)
         return text
 
+    def _join_pieces(self, engine, img, pieces):
+        """The text finder sometimes cuts one line into overlapping pieces ("Act as my" | "elite" |
+        "academic advisor."); read apart, the edges get read twice ("e elite"). Pieces of one
+        row that overlap or touch are read again as one line."""
+        pieces = sorted(pieces, key=lambda p: (p[1][1], p[1][0]))
+        groups: list[list] = []
+        for p in sorted(pieces, key=lambda p: p[1][0]):
+            x, y, w, h = p[1]
+            for g in groups:
+                gx, gy, gw, gh = g[-1][1]
+                v = min(y + h, gy + gh) - max(y, gy)
+                if v >= 0.6 * min(h, gh) and x <= gx + gw + 2 and x + w > gx + gw:
+                    g.append(p)
+                    break
+            else:
+                groups.append([p])
+        out = []
+        for g in groups:
+            if len(g) > 1 and any(_HANGUL.search(p[0]) for p in g):
+                out.extend(tuple(p) for p in g)          # Korean lines keep their word boxes
+                continue
+            if len(g) == 1:
+                out.append(tuple(g[0]))
+                continue
+            x1 = min(p[1][0] for p in g)
+            y1 = min(p[1][1] for p in g)
+            x2 = max(p[1][0] + p[1][2] for p in g)
+            y2 = max(p[1][1] + p[1][3] for p in g)
+            box = (x1, y1, x2 - x1, y2 - y1)
+            joined = " ".join(p[0] for p in g)
+            low = min(p[2] for p in g)
+            text, score, words = joined, low, ()
+            try:
+                crop = np.ascontiguousarray(img[max(0, y1 - 2):y2 + 2, max(0, x1 - 2):x2 + 2])
+                r = engine(crop, use_det=False, use_cls=False, use_rec=True, return_word_box=True)
+                if r is not None and r.txts and str(r.txts[0]).strip() and float(r.scores[0]) >= low - 0.05:
+                    text, score = str(r.txts[0]), float(r.scores[0])
+                    wr = getattr(r, "word_results", None)
+                    if wr:
+                        dx, dy = max(0, x1 - 2), max(0, y1 - 2)
+                        words = tuple((wt, ws, (np.asarray(wq, float) + [dx, dy]).tolist()) for wt, ws, wq in wr[0])
+            except Exception:  # noqa: BLE001 - engines that can't read a given line: keep the pieces' text
+                pass
+            out.append((text, box, score, words))
+        return out
+
     def _second_reading(self, img, line: OcrLine) -> OcrLine:
         if not needs_latin(line.text):
             return line
@@ -389,6 +468,9 @@ class OcrEngine:
         x, y, w, h = line.box
         pad = 3
         crop = img[max(0, y - pad):y + h + pad, max(0, x - pad):x + w + pad]
+        if 0 < crop.shape[0] < SMALL_LINE_PX:          # small print reads better a little bigger
+            k = SMALL_LINE_PX / crop.shape[0]
+            crop = cv2.resize(crop, None, fx=k, fy=k, interpolation=cv2.INTER_CUBIC)
         try:
             res = self._secondary_call(eng, crop, line.text)
         except Exception:  # noqa: BLE001 - a failed second reading keeps the first one

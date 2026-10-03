@@ -50,7 +50,7 @@ class Shapes:
 
     def AddTable(self, rows, cols, left, top, width, height):
         s = Shape("table", left, top, width, height)
-        s.Table = FakeTable(rows, cols)
+        s.Table = FakeTable(rows, cols, self.slide.app.calls)
         s.HasTable = True
         self.items.append(s)
         return s
@@ -66,7 +66,8 @@ class Shapes:
 
 
 class FakeTable:
-    def __init__(self, rows, cols):
+    def __init__(self, rows, cols, calls=None):
+        self.calls = calls if calls is not None else []
         self.Rows = type("Rows", (), {"Count": rows})()
         self.Columns = type("Cols", (), {"Count": cols})()
         self.cells = {(r, c): Shape("cell", 0, 0, 0, 0) for r in range(1, rows + 1) for c in range(1, cols + 1)}
@@ -74,6 +75,8 @@ class FakeTable:
     def Cell(self, r, c):
         cell = type("Cell", (), {})()
         cell.Shape = self.cells[(r, c)]
+        cell.pos = (r, c)
+        cell.Merge = lambda other: self.calls.append(("merge", (r, c), other.pos))
         return cell
 
 
@@ -417,3 +420,33 @@ def test_PPT_28_com_is_released_after_every_send(monkeypatch):
         monkeypatch.setattr(pp, "_real_app", lambda: (_ for _ in ()).throw(RuntimeError("boom")))
         send(Picture(IMG))
     assert calls == ["init", "uninit", "init", "uninit"]
+
+
+def test_PPT_30_screen_tables_go_in_as_real_tables():
+    from capture_tool.core.shapes import ScreenCell, ScreenTable
+    t = ScreenTable(x=100, y=200, w=300, h=80, rows=2, cols=3, col_widths=[100, 100, 100], row_heights=[40, 40],
+                    line="#B0D2D6",
+                    cells=[ScreenCell(0, 0, 1, 2, "은행명", "#EDF8F7", "#111111", 11, True, "ctr"),
+                           ScreenCell(0, 2, 1, 1, "계좌번호", "#EDF8F7", "#111111", 11, False, "ctr"),
+                           ScreenCell(1, 0, 1, 1, "", None, "#000000", 11, False, "ctr"),
+                           ScreenCell(1, 1, 1, 1, "", None, "#000000", 11, False, "ctr"),
+                           ScreenCell(1, 2, 1, 1, "", None, "#000000", 11, False, "ctr")])
+    app = FakeApp(with_deck=True)
+    r = send(ClipboardShapes(tables=[t], origin=(50, 100), dpi=96), app_factory=lambda: app)
+    tables = [s for s in app.ActivePresentation.Slides(2).Shapes.items if getattr(s, "HasTable", False)]
+    assert len(tables) == 1 and r.added == 4                    # 3 pasted + 1 table
+    tb = tables[0]
+    assert (tb.Table.Rows.Count, tb.Table.Columns.Count) == (2, 3)
+    assert abs(tb.Left - (0 + 50 * 0.75)) < 0.01 and abs(tb.Top - (0 + 100 * 0.75)) < 0.01   # beside the pasted shapes
+    assert tb.Table.Cell(1, 1).Shape.TextFrame.TextRange.Text == "은행명"
+    assert ("merge", (1, 1), (1, 2)) in app.calls
+
+
+def test_PPT_31_only_tables_no_paste():
+    from capture_tool.core.shapes import ScreenCell, ScreenTable
+    t = ScreenTable(x=0, y=0, w=200, h=40, rows=1, cols=2, col_widths=[100, 100], row_heights=[40], line=None,
+                    cells=[ScreenCell(0, 0, 1, 1, "a", None, "#000000", 11, False, "ctr"),
+                           ScreenCell(0, 1, 1, 1, "b", None, "#000000", 11, False, "ctr")])
+    app = FakeApp(with_deck=True)
+    r = send(ClipboardShapes(tables=[t], origin=None, dpi=96, paste=False), app_factory=lambda: app)
+    assert ("paste",) not in app.calls and r.added == 1

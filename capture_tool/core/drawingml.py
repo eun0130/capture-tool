@@ -14,6 +14,7 @@ from xml.sax.saxutils import escape
 from .color import normalize_hex
 
 A_NS = "http://schemas.openxmlformats.org/drawingml/2006/main"
+R_NS = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
 LC_NS = "http://schemas.openxmlformats.org/drawingml/2006/lockedCanvas"
 KINDS = ("rect", "roundRect", "ellipse", "triangle", "diamond")
 TOP, LEFT, BOTTOM, RIGHT = "top", "left", "bottom", "right"
@@ -52,6 +53,7 @@ class DShape:
     font_family: str | None = None   # None = PowerPoint theme font
     wrap: bool = True                # False: a free text box sized to its text (no re-wrapping)
     align: str = "ctr"               # "ctr" inside shapes, "l" for free text
+    image: bytes | None = None       # PNG: a small picture (an icon) instead of a drawn shape
 
     def __post_init__(self):
         if self.kind not in KINDS:
@@ -196,7 +198,17 @@ def drawing_xml(shapes: list[DShape], connectors: list[DConnector], dpi: float =
     e = lambda v, o: emu(v - o)  # noqa: E731
     ids = {i: i + 2 for i in range(len(shapes))}
     parts = []
+    pic = 0
     for i, s in enumerate(shapes):
+        if s.image:
+            pic += 1
+            parts.append(
+                f'<a:pic><a:nvPicPr><a:cNvPr id="{ids[i]}" name="icon {pic}"/><a:cNvPicPr/></a:nvPicPr>'
+                f'<a:blipFill><a:blip xmlns:r="{R_NS}" r:embed="rIdImg{pic}"/><a:stretch><a:fillRect/></a:stretch>'
+                f'</a:blipFill><a:spPr><a:xfrm><a:off x="{e(s.x, minx)}" y="{e(s.y, miny)}"/>'
+                f'<a:ext cx="{emu(s.w)}" cy="{emu(s.h)}"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom>'
+                f'</a:spPr></a:pic>')
+            continue
         parts.append(
             f'<a:sp><a:nvSpPr><a:cNvPr id="{ids[i]}" name="{s.kind} {i + 1}"/><a:cNvSpPr/></a:nvSpPr>'
             f'<a:spPr><a:xfrm><a:off x="{e(s.x, minx)}" y="{e(s.y, miny)}"/>'
@@ -244,11 +256,25 @@ _RELS = ('<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
 
 
 def gvml_package(shapes: list[DShape], connectors: list[DConnector], dpi: float = 96) -> bytes:
+    images = [s.image for s in shapes if s.image]
+    ct = _CT
+    if images:
+        ct = ct.replace('<Default Extension="xml"', '<Default Extension="png" ContentType="image/png"/>'
+                                                    '<Default Extension="xml"')
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
-        z.writestr("[Content_Types].xml", _CT)
+        z.writestr("[Content_Types].xml", ct)
         z.writestr("_rels/.rels", _RELS)
         z.writestr("clipboard/drawings/drawing1.xml", drawing_xml(shapes, connectors, dpi))
+        if images:
+            rels = "".join(f'<Relationship Id="rIdImg{k}" Type="{R_NS}/image" Target="../media/image{k}.png"/>'
+                           for k in range(1, len(images) + 1))
+            z.writestr("clipboard/drawings/_rels/drawing1.xml.rels",
+                       '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+                       '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+                       + rels + "</Relationships>")
+            for k, data in enumerate(images, 1):
+                z.writestr(f"clipboard/media/image{k}.png", data)
     return buf.getvalue()
 
 
@@ -267,6 +293,11 @@ def svg(shapes: list[DShape], connectors: list[DConnector], dpi: float = 96) -> 
            f'viewBox="0 0 {f(W)} {f(H)}">']
     for s in shapes:
         x, y = s.x - ox, s.y - oy
+        if s.image:
+            import base64
+            out.append(f'<image x="{f(x)}" y="{f(y)}" width="{f(s.w)}" height="{f(s.h)}" '
+                       f'href="data:image/png;base64,{base64.b64encode(s.image).decode()}"/>')
+            continue
         style = f'fill="{s.fill or "none"}" stroke="{s.stroke or "none"}" stroke-width="{f(s.stroke_width)}"'
         if s.kind in ("rect", "roundRect"):
             rx = f' rx="{f(min(s.w, s.h) * 0.16)}"' if s.kind == "roundRect" else ""

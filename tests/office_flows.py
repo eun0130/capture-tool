@@ -226,6 +226,51 @@ def ppt_form(src_png: str, out_png: str) -> None:
     print("RESULT done")
 
 
+def ppt_form_send(src_png: str, out_png: str) -> None:
+    """Like 도형PPT straight into PowerPoint: shapes pasted, ruled tables added as real tables;
+    the slide is exported to out_png and the tables are printed."""
+    import cv2
+    from capture_tool.core.clipboard_payload import shapes_payload
+    from capture_tool.core.drawingml import _bounds, _resolve, gvml_package, svg
+    from capture_tool.core.ocr import OcrEngine
+    from capture_tool.core.shapes import recognize_layout, screen_tables, to_drawing
+    from capture_tool.platform import win_clipboard
+    from capture_tool.platform.powerpoint import ClipboardShapes, send
+    img = cv2.imread(src_png)
+    eng = OcrEngine()
+    scored = [(l.text, l.box, l.score) for l in eng.recognize(img)]
+    det = recognize_layout(img, scored, lambda c: [(l.text, l.box) for l in eng.recognize(c)], 96)
+    tables, used = screen_tables(det)
+    det = [d for d in det if not any(d is u for u in used)]
+    shapes, conns = to_drawing(det)
+    ok, pngb = cv2.imencode(".png", img)
+    win_clipboard.set_formats(shapes_payload(gvml_package(shapes, conns, 96), svg(shapes, conns, 96),
+                                             pngb.tobytes()), retries=10, delay=0.05)
+    minx, miny, _, _ = _bounds(shapes, _resolve(shapes, conns))
+    out = {}
+
+    def hook(pres, slide, added):
+        try:
+            out["shapes"] = [(s.Type, round(s.Left), round(s.Top), round(s.Width), round(s.Height)) for s in slide.Shapes]
+            out["tables"] = [(s.Table.Rows.Count, s.Table.Columns.Count, round(s.Left), round(s.Top),
+                              s.Table.Cell(1, 1).Shape.TextFrame.TextRange.Text) for s in slide.Shapes if s.HasTable]
+            dx = 10 - min(float(s.Left) for s in slide.Shapes)      # into view for the picture only
+            for s in slide.Shapes:
+                s.Left = float(s.Left) + dx
+            slide.Export(out_png, "PNG", int(pres.PageSetup.SlideWidth * 2), int(pres.PageSetup.SlideHeight * 2))
+        finally:
+            pres.Saved = True
+            pres.Close()
+    try:
+        send(ClipboardShapes(tables=tables, origin=(minx, miny), dpi=96), new_presentation=True, hook=hook, timeout=120)
+    finally:
+        win_clipboard.set_formats({"CF_UNICODETEXT": ""}, retries=10, delay=0.05)
+    for t in out.get("tables", []):
+        print("TABLE", t)
+    print("SHAPES", len(out.get("shapes", [])), "LEFTMOST", min(out.get("shapes", [(0, 0, 0)]), key=lambda v: v[1]))
+    print("RESULT done")
+
+
 def ppt_table() -> None:
     from capture_tool.core.text_table import find_text_table
     from capture_tool.platform.powerpoint import TableItem, send

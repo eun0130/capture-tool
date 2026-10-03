@@ -4,7 +4,7 @@ import os
 from PyInstaller.utils.hooks import collect_data_files, collect_dynamic_libs
 
 ROOT = os.path.abspath(os.path.join(SPECPATH, ".."))
-UNUSED_MODELS = ("PP-OCRv6_det_small", "PP-OCRv6_rec_small")
+UNUSED_MODELS = ("PP-OCRv6_det_small", "latin_PP-OCRv5_rec_mobile")   # v6 small reader replaces the v5 Latin one
 
 datas = [d for d in collect_data_files("rapidocr") if not any(m in d[0] for m in UNUSED_MODELS)]
 datas += collect_data_files("sacremoses")            # tokenizer rules of some translation packs

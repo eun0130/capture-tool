@@ -24,7 +24,7 @@ from ..core.naming import SaveDirError, render, resolve_save_dir, unique_path
 from ..core.ocr import OcrUnavailable, full_text, select_text
 from ..core.scroll_session import ScrollCapture, looks_blocked
 from ..core.session import CaptureSession, State
-from ..core.shapes import detect, recognize_layout, split_doubtful, to_drawing
+from ..core.shapes import detect, recognize_layout, screen_tables, split_doubtful, to_drawing
 from ..core.table import detect_grid, grid_from_cells, table_is_plausible
 from ..core.table_capture import CapturedTable, find_table
 from ..core.text_table import find_text_table
@@ -1631,9 +1631,17 @@ class Controller(QObject):
         self._show_text_panel(lines, qr, pos, grid)
 
     def _finish_shapes(self, det, user_shapes, final, err, send: bool = False, dpi: float = 96) -> None:
+        tables = []
+        if send and self.settings.keep_style:          # ruled tables -> real PowerPoint tables
+            tables, used = screen_tables(det)
+            if tables:
+                det = [d for d in det if not any(d is u for u in used)]
         shapes, conns = to_drawing(det, keep_style=self.settings.keep_style)
         us, uc = annotations_to_drawing(user_shapes, scale=dpi / 96)
         shapes, conns = shapes + us, conns + uc
+        if not shapes and not conns and tables:
+            self._send_item_to_ppt(ClipboardShapes(tables=tables, dpi=dpi, paste=False), f"표 {len(tables)}개를")
+            return
         if not shapes and not conns:
             if send:  # nothing to convert: still deliver the picture to PowerPoint
                 payload = self._image_payload(final, dpi)
@@ -1651,8 +1659,12 @@ class Controller(QObject):
         note = " (텍스트 인식 없이)" if err else ""
         boxes = sum(1 for d in det if d.kind == "text")
         what = f"도형 {len(shapes) - boxes}개" + (f", 글상자 {boxes}개" if boxes else "") + f", 연결선 {len(conns)}개"
+        if tables:
+            what += f", 표 {len(tables)}개"
         if send:
-            self._send_item_to_ppt(ClipboardShapes(), f"{what}를{note}")
+            from ..core.drawingml import _bounds, _resolve
+            minx, miny, _, _ = _bounds(shapes, _resolve(shapes, conns))
+            self._send_item_to_ppt(ClipboardShapes(tables=tables, origin=(minx, miny), dpi=dpi), f"{what}를{note}")
         else:
             self.notify(f"{what}를 복사했습니다{note}. PowerPoint에서 Ctrl+V 하면 하나씩 고칠 수 있습니다.")
 

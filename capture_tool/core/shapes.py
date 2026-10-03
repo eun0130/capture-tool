@@ -56,6 +56,8 @@ class Detected:
     text_color: str | None = None     # measured from the pixels (None: pick by contrast)
     font_size: float = 14             # points
     bold: bool = False
+    image: bytes | None = None        # kind "picture": PNG of a small piece (icon) copied as is
+    table: int | None = None          # cells (and the frame) of one ruled table share this number
 
 
 @dataclass
@@ -228,6 +230,7 @@ def _detect_in(img, region, bg, out, depth, budget: _Budget, threshold: int = FG
 
 
 MIN_CELLS = 2           # a box split by ruling lines into this many rectangles or more is a table
+_TABLE_IDS = __import__("itertools").count(1)
 
 
 def _cells(img, contours, hier, i, d: Detected, bg) -> list[Detected]:
@@ -252,8 +255,10 @@ def _cells(img, contours, hier, i, d: Detected, bg) -> list[Detected]:
         return []
     line = d.stroke
     out = []
+    tid = next(_TABLE_IDS)
+    d.table = tid
     for x, y, w, hh in boxes:
-        c = Detected("rect", x - 1, y - 1, w + 2, hh + 2, stroke=line, stroke_width=1.0)
+        c = Detected("rect", x - 1, y - 1, w + 2, hh + 2, stroke=line, stroke_width=1.0, table=tid)
         f = _fill_color(img[y:y + hh, x:x + w], np.full((hh, w), 255, np.uint8))
         if f is not None and max(abs(a_ - b_) for a_, b_ in zip(f, bg)) > 4:
             c.fill = _hex(f)
@@ -626,8 +631,8 @@ def to_drawing(detected: list[Detected], keep_style: bool = True) -> tuple[list[
     """keep_style=False: plain look (white fill, black outline and text, no bold) - same
     shapes, sizes and text, for decks with their own design."""
     closed = [d for d in detected if d.kind not in ("line", "arrow")]
-    # back to front: big empty panels, then the boxes on them, then free text on top
-    closed.sort(key=lambda d: (d.kind == "text", bool(d.text), -d.w * d.h))
+    # back to front: big empty panels, then the boxes on them, then icons and free text on top
+    closed.sort(key=lambda d: (d.kind == "text", d.kind == "picture" or bool(d.text), -d.w * d.h))
 
     def color(d: Detected) -> str:
         if not keep_style:
@@ -637,7 +642,9 @@ def to_drawing(detected: list[Detected], keep_style: bool = True) -> tuple[list[
     shapes = []
     for d in closed:
         bold = d.bold and keep_style
-        if d.kind == "text":
+        if d.kind == "picture":
+            shapes.append(DShape("rect", d.x, d.y, d.w, d.h, fill=None, stroke=None, image=d.image))
+        elif d.kind == "text":
             shapes.append(DShape("rect", d.x, d.y, d.w, d.h, fill=d.fill if keep_style else None, stroke=None,
                                  text=d.text, text_color=color(d), font_size=d.font_size, bold=bold,
                                  wrap=False, align="l"))
@@ -659,7 +666,7 @@ def to_drawing(detected: list[Detected], keep_style: bool = True) -> tuple[list[
         def near(p):
             best = None
             for i, s in enumerate(closed):
-                if s.kind == "text":
+                if s.kind in ("text", "picture"):
                     continue                            # arrows point at shapes, not at labels
                 dist = _edge_distance(p, s)
                 if dist <= LINK_DISTANCE and (best is None or dist < best[0]):
@@ -721,6 +728,9 @@ SYMBOLS = set("OoㅇΟ○◯0¸Vv˅∨⌄⌵=<>‹›◀▶◁▷")   # what OCR
 WIDGET_MIN, WIDGET_MAX = 12, 28                # px; radio buttons and check boxes
 WIDGET_THRESHOLD = 10
 RING_LETTERS = set("ㅇOo○◯0")
+ICON_MIN, ICON_MAX = 6, 64      # px; leftover marks this size go in as small pictures
+ICON_DIFF = 40                  # how far a pixel must be from what the shapes explain
+MAX_ICONS = 60
 
 
 def _ink_box(img: np.ndarray, box, pad: int = 2):
@@ -871,6 +881,51 @@ def release_labels(detected: list[Detected], lines: list[tuple[str, tuple]]) -> 
     return [l for j, l in enumerate(lines) if j in free]
 
 
+def find_icons(img: np.ndarray, det: list[Detected], text_boxes) -> list[Detected]:
+    """What the shapes and the text don't explain (icons, dropdown arrows, a skipped "(") ->
+    small pictures cut from the capture. The 'expected' screen is the background with every
+    shape's fill painted in; ink that differs from it, away from outlines, lines and words, is left."""
+    bg = _background(img)
+    expect = np.empty_like(img)
+    expect[:] = bg
+    covered = np.zeros(img.shape[:2], np.uint8)
+    closed = sorted((d for d in det if d.kind not in ("line", "arrow", "text", "picture")), key=lambda d: -d.w * d.h)
+    for d in closed:
+        if d.fill:
+            expect[d.y:d.y + d.h, d.x:d.x + d.w] = _parse(d.fill)
+        band = int(d.stroke_width) + 3                 # the outline (and rounded corners) with a margin
+        cv2.rectangle(covered, (d.x, d.y), (d.x + d.w - 1, d.y + d.h - 1), 255, 2 * band)
+        if (d.text and d.fill) or (d.w <= WIDGET_MAX + 4 and d.h <= WIDGET_MAX + 4):   # a button with words, a radio
+            covered[max(0, d.y - 2):d.y + d.h + 2, max(0, d.x - 2):d.x + d.w + 2] = 255
+    for d in det:
+        if d.kind in ("line", "arrow") and len(d.points) == 2:
+            cv2.line(covered, tuple(map(int, d.points[0])), tuple(map(int, d.points[1])), 255,
+                     int(d.stroke_width) * 2 + 8)
+    for (x, y, w, h) in text_boxes:
+        x, y, w, h = (int(round(v)) for v in (x, y, w, h))
+        covered[max(0, y - 1):y + h + 1, max(0, x - 1):x + w + 1] = 255
+    left = (np.abs(img.astype(np.int16) - expect.astype(np.int16)).max(axis=2)
+            > ICON_DIFF) & (covered == 0)
+    m = cv2.dilate(left.astype(np.uint8) * 255, np.ones((3, 3), np.uint8))
+    n, labels, stats, _ = cv2.connectedComponentsWithStats(m)
+    out: list[Detected] = []
+    order = sorted(range(1, n), key=lambda j: -stats[j, cv2.CC_STAT_AREA])
+    for j in order:
+        x, y, w, h, area = (int(v) for v in stats[j])
+        if area < 12 or max(w, h) < ICON_MIN or max(w, h) > ICON_MAX:
+            continue
+        if left[y:y + h, x:x + w].sum() < 8:
+            continue
+        x0, y0 = max(0, x - 1), max(0, y - 1)
+        x1, y1 = min(img.shape[1], x + w + 1), min(img.shape[0], y + h + 1)
+        ok, png = cv2.imencode(".png", img[y0:y1, x0:x1])
+        if ok:
+            out.append(Detected("picture", x0, y0, x1 - x0, y1 - y0, fill=None, stroke=None, image=png.tobytes()))
+        if len(out) >= MAX_ICONS:
+            break
+    return out
+
+
 def recognize_layout(img: np.ndarray, lines, recognize, dpi: float = 96, find_again: bool = True) -> list[Detected]:
     """Screen capture -> shapes and text boxes in their places. lines: (text, box, score) from OCR;
     recognize(crop) -> [(text, box)] reads one coloured shape again (None: don't)."""
@@ -914,6 +969,7 @@ def recognize_layout(img: np.ndarray, lines, recognize, dpi: float = 96, find_ag
         rest = attach_found_text(img, det, taken, recognize, dpi, skip=holders)
     else:
         rest = attach_text(det, taken, img=img, dpi=dpi)
+    det += find_icons(img, det, [b for _, b, _ in kept])
     for t in text_boxes_for(rest + free, img, dpi):
         cx, cy = t.x + t.w / 2, t.y + t.h / 2
         if t.fill and any(d.fill and d.kind not in ("line", "arrow", "text")
@@ -921,3 +977,96 @@ def recognize_layout(img: np.ndarray, lines, recognize, dpi: float = 96, find_ag
             t.fill = None                              # the button behind already has that colour
         det.append(t)
     return det
+
+
+# --- ruled tables on a screen -> real PowerPoint tables -------------------------------------
+
+@dataclass
+class ScreenCell:
+    r: int
+    c: int
+    rs: int                 # rows spanned
+    cs: int                 # columns spanned
+    text: str
+    fill: str | None
+    text_color: str
+    font_size: float
+    bold: bool
+    align: str              # "ctr" | "l"
+
+
+@dataclass
+class ScreenTable:
+    x: int
+    y: int
+    w: int
+    h: int
+    rows: int
+    cols: int
+    col_widths: list
+    row_heights: list
+    line: str | None
+    cells: list
+
+
+def _edges(values: list[float], tol: float = 4) -> list[float]:
+    out: list[float] = []
+    for v in sorted(values):
+        if not out or v - out[-1] > tol:
+            out.append(v)
+    return out
+
+
+def _at(edges: list[float], v: float) -> int:
+    return min(range(len(edges)), key=lambda i: abs(edges[i] - v))
+
+
+def screen_tables(det: list[Detected]) -> tuple[list[ScreenTable], list[Detected]]:
+    """Group the cells found in ruled tables into row/column grids (merged cells span). Returns
+    the tables and every detection they replace (cells, frame, and the words lying in cells)."""
+    groups: dict[int, list[Detected]] = {}
+    for d in det:
+        if d.table is not None and d.kind == "rect":
+            groups.setdefault(d.table, []).append(d)
+    tables, used = [], []
+    for tid, items in groups.items():
+        cells = [d for d in items if d.stroke_width <= 1.0 and not (d.fill is None and d.text is None and
+                                                                    any(o is not d and o.x >= d.x and o.y >= d.y and
+                                                                        o.x + o.w <= d.x + d.w and o.y + o.h <= d.y + d.h
+                                                                        for o in items))]
+        if len(cells) < MIN_CELLS:
+            continue
+        xs = _edges([d.x for d in cells] + [d.x + d.w for d in cells])
+        ys = _edges([d.y for d in cells] + [d.y + d.h for d in cells])
+        if len(xs) < 2 or len(ys) < 2 or (len(xs) - 1) * (len(ys) - 1) > 50 * 15:
+            continue
+        taken, out_cells, ok = set(), [], True
+        for d in sorted(cells, key=lambda d: (d.y, d.x)):
+            r0, r1 = _at(ys, d.y), _at(ys, d.y + d.h)
+            c0, c1 = _at(xs, d.x), _at(xs, d.x + d.w)
+            if r1 <= r0 or c1 <= c0 or any((r, c) in taken for r in range(r0, r1) for c in range(c0, c1)):
+                ok = False
+                break
+            taken.update((r, c) for r in range(r0, r1) for c in range(c0, c1))
+            out_cells.append((d, r0, c0, r1 - r0, c1 - c0))
+        if not ok:
+            continue
+        frame = [d for d in items if d not in cells]
+        words = [t for t in det if t.kind == "text" and t.text and any(
+            d.x <= t.x + t.w / 2 <= d.x + d.w and d.y <= t.y + t.h / 2 <= d.y + d.h for d in cells)]
+        sc = []
+        for d, r, c, rs, cs in out_cells:
+            mine = [t for t in words if d.x <= t.x + t.w / 2 <= d.x + d.w and d.y <= t.y + t.h / 2 <= d.y + d.h]
+            if d.text:
+                sc.append(ScreenCell(r, c, rs, cs, d.text, d.fill, d.text_color or "#000000", d.font_size, d.bold, "ctr"))
+            elif mine:
+                t0 = mine[0]
+                sc.append(ScreenCell(r, c, rs, cs, "\n".join(t.text for t in mine), d.fill, t0.text_color or "#000000",
+                                     t0.font_size, t0.bold, "l"))
+            else:
+                sc.append(ScreenCell(r, c, rs, cs, "", d.fill, "#000000", 11, False, "ctr"))
+        tables.append(ScreenTable(int(xs[0]), int(ys[0]), int(xs[-1] - xs[0]), int(ys[-1] - ys[0]),
+                                  len(ys) - 1, len(xs) - 1, [b - a for a, b in zip(xs, xs[1:])],
+                                  [b - a for a, b in zip(ys, ys[1:])], cells[0].stroke, sc))
+        used += cells + frame + words
+    return tables, used

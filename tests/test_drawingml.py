@@ -202,3 +202,25 @@ def test_colors_written():
     root = parse(drawing_xml([DShape("rect", 0, 0, 10, 10, fill="#f1f3f5", stroke="#343a40")], []))
     vals = [c.get("val") for c in root.findall(".//a:sp/a:spPr//a:srgbClr", NS)]
     assert vals == ["F1F3F5", "343A40"]
+
+
+def test_DML_PIC_01_picture_goes_into_the_package():
+    import zipfile, io
+    from capture_tool.core.drawingml import DShape, gvml_package, svg, drawing_xml
+    png = b"\x89PNG\r\n\x1a\n" + b"0" * 20
+    shapes = [DShape("rect", 0, 0, 100, 50), DShape("rect", 10, 10, 16, 16, image=png)]
+    xml = drawing_xml(shapes, [])
+    assert "<a:pic>" in xml and 'r:embed="rIdImg1"' in xml and xml.count("<a:sp>") == 1
+    z = zipfile.ZipFile(io.BytesIO(gvml_package(shapes, [])))
+    assert z.read("clipboard/media/image1.png") == png
+    rels = z.read("clipboard/drawings/_rels/drawing1.xml.rels").decode()
+    assert 'Id="rIdImg1"' in rels and "../media/image1.png" in rels
+    assert 'Extension="png"' in z.read("[Content_Types].xml").decode()
+    assert "data:image/png;base64," in svg(shapes, [])
+
+
+def test_DML_PIC_02_no_pictures_no_media():
+    import zipfile, io
+    from capture_tool.core.drawingml import DShape, gvml_package
+    z = zipfile.ZipFile(io.BytesIO(gvml_package([DShape("rect", 0, 0, 10, 10)], [])))
+    assert not [n for n in z.namelist() if "media" in n or "drawing1.xml.rels" in n]

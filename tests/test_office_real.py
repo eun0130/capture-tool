@@ -78,3 +78,17 @@ def test_OFFICE_05_dark_table_into_powerpoint_styled_and_plain():
     assert "TITLE ['측정값(haiku 1회):']" in styled
     plain = flow("ppt_dark_table", "0", ok=lambda o: "RESULT width" in o)
     assert "'#2F2D2B'" not in plain and "CELL (2, 1, '전체 평균'" in plain, plain
+
+
+@ppt
+def test_OFFICE_06_screen_tables_go_in_as_real_tables(tmp_path):
+    """도형PPT straight into PowerPoint: the screen's ruled tables are real, editable tables placed
+    where they were (left edge with the other shapes), icons come in as pictures."""
+    src = str(ROOT / "tests" / "data" / "form_tax_tables.png")
+    out = flow("ppt_form_send", src, str(tmp_path / "slide.png"), ok=lambda o: "RESULT done" in o)
+    tables = [l for l in out.splitlines() if l.startswith("TABLE")]
+    assert len(tables) == 2, out
+    assert "'과세년월'" in out and "'은행명'" in out
+    lefts = {int(l.split(",")[2]) for l in tables}
+    left_all = int(out.split("LEFTMOST (")[1].split(",")[1])
+    assert all(abs(x - left_all) <= 3 for x in lefts), out

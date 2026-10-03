@@ -88,7 +88,13 @@ def table_fits(rows: list) -> bool:
 
 @dataclass
 class ClipboardShapes:
-    """Native shapes already on the clipboard (Art::GVML ClipFormat)."""
+    """Native shapes already on the clipboard (Art::GVML ClipFormat), plus ruled tables from the
+    capture added as real PowerPoint tables at the same place (the clipboard format can't hold
+    tables). origin: the pasted drawing's top-left in capture pixels."""
+    tables: list = field(default_factory=list)       # core.shapes.ScreenTable
+    origin: tuple | None = None
+    dpi: float = 96
+    paste: bool = True
 
 
 @dataclass
@@ -241,8 +247,21 @@ def _insert(app, item, new_presentation: bool, hook, new_slide: bool = False) ->
                             b.Weight = 0.75
         added = 1
     elif isinstance(item, ClipboardShapes):
-        new = slide.Shapes.Paste()
-        added = int(new.Count)
+        new, added, base = None, 0, None
+        if item.paste:
+            new = slide.Shapes.Paste()
+            added = int(new.Count)
+            base = _range_origin(new)
+        pt = 72.0 / item.dpi
+        for t in item.tables:
+            if base is not None and item.origin is not None:
+                left, top = base[0] + (t.x - item.origin[0]) * pt, base[1] + (t.y - item.origin[1]) * pt
+            else:
+                left, top, _, _ = place(t.w * pt, t.h * pt, sw, sh)
+            shp = _add_screen_table(slide, t, left, top, pt)
+            added += 1
+            if new is None:
+                new = shp
     else:
         raise TypeError(f"unknown item {item!r}")
     try:
@@ -263,6 +282,76 @@ def _insert(app, item, new_presentation: bool, hook, new_slide: bool = False) ->
     if hook is not None:
         hook(pres, slide, added)
     return SendResult(added, {"hwnd": hwnd})
+
+
+def _range_origin(rng):
+    """Top-left (points) of what was just pasted."""
+    try:
+        items = [rng.Item(i) for i in range(1, int(rng.Count) + 1)]
+        return min(float(i.Left) for i in items), min(float(i.Top) for i in items)
+    except Exception:  # noqa: BLE001 - fakes / odd ranges: line the tables up with the slide corner
+        return 0.0, 0.0
+
+
+def _add_screen_table(slide, t, left: float, top: float, pt: float):
+    """A ScreenTable -> a PowerPoint table: same column widths / row heights, merged cells,
+    cell colours, ruling colour and text look."""
+    shp = slide.Shapes.AddTable(t.rows, t.cols, left, top, t.w * pt, t.h * pt)
+    table = shp.Table
+    try:
+        table.ApplyStyle("{5940675A-B579-460E-94D1-54222C63F5DA}", False)   # "No Style, Table Grid"
+    except Exception:  # noqa: BLE001
+        pass
+    for c, w in enumerate(t.col_widths, 1):
+        try:
+            table.Columns(c).Width = w * pt
+        except Exception:  # noqa: BLE001
+            pass
+    for cell in t.cells:
+        if cell.rs > 1 or cell.cs > 1:
+            try:
+                table.Cell(cell.r + 1, cell.c + 1).Merge(table.Cell(cell.r + cell.rs, cell.c + cell.cs))
+            except Exception:  # noqa: BLE001
+                pass
+    for cell in t.cells:
+        sh_ = table.Cell(cell.r + 1, cell.c + 1).Shape
+        rng = sh_.TextFrame.TextRange
+        rng.Text = cell.text.replace("\n", "\r")
+        try:
+            rng.Font.Name = rng.Font.NameFarEast = "Malgun Gothic"
+            rng.Font.Size = cell.font_size
+            rng.Font.Bold = bool(cell.bold)
+            rng.Font.Color.RGB = _bgr_int(cell.text_color)
+            rng.ParagraphFormat.Alignment = 1 if cell.align == "l" else 2          # left / centre
+            tf = sh_.TextFrame
+            tf.VerticalAnchor = 3                                                  # middle
+            tf.MarginTop = tf.MarginBottom = 1
+            tf.MarginLeft = tf.MarginRight = 4
+            if cell.fill:
+                sh_.Fill.Visible = True
+                sh_.Fill.Solid()
+                sh_.Fill.ForeColor.RGB = _bgr_int(cell.fill)
+            else:
+                sh_.Fill.Visible = False
+            if t.line:
+                cl = table.Cell(cell.r + 1, cell.c + 1)
+                for side in (1, 2, 3, 4):
+                    b = cl.Borders(side)
+                    b.Visible = True
+                    b.ForeColor.RGB = _bgr_int(t.line)
+                    b.Weight = 0.75
+        except Exception:  # noqa: BLE001 - fakes and old versions: text is in, looks are best effort
+            pass
+    for r, h in enumerate(t.row_heights, 1):
+        try:
+            table.Rows(r).Height = h * pt
+        except Exception:  # noqa: BLE001
+            pass
+    try:
+        shp.Left, shp.Top = left, top          # PowerPoint moves a new table wider than the slide
+    except Exception:  # noqa: BLE001
+        pass
+    return shp
 
 
 def send(item, app_factory: Callable | None = None, timeout: float = DEFAULT_TIMEOUT,

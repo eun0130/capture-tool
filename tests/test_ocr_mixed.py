@@ -121,3 +121,96 @@ def test_PAD_02_boxes_stay_in_the_capture_coordinates():
     for l in OcrEngine().recognize(img):
         x, y, w, h = l.box
         assert 0 <= x and 0 <= y and x + w <= img.shape[1] and y + h <= img.shape[0], l.box
+
+
+def test_CAPS_01_capital_i_in_short_capital_words():
+    """Sans-serif I and l look the same: "AI", "CI", "UI" were read "Al", "Cl", "Ul"."""
+    from capture_tool.core.ocr import fix_capital_i
+    assert fix_capital_i("Al 매출") == "AI 매출"
+    assert fix_capital_i("Cl/CD 구성") == "CI/CD 구성"
+    assert fix_capital_i("KPl") == "KPI"
+    assert fix_capital_i("Hello all") == "Hello all"           # ordinary words untouched
+    assert fix_capital_i("Excel 파일") == "Excel 파일"
+    assert fix_capital_i("A1 셀, B12") == "A1 셀, B12"           # cell references stay
+    assert fix_capital_i("l") == "l" and fix_capital_i("") == ""
+    assert fix_capital_i("ml 단위") == "ml 단위"
+
+
+ENGLISH_TRUTH = [
+    "Act as my elite academic advisor. We want to build a six-week custom course. I want",
+    "to learn about how finance works in business, so I can understand how to use those",
+    "skills to build my own business.",
+    "1. Interview me to find my weaknesses - my baseline.",
+    "2. I want to define the destination.",
+    "3. Build the sequence.",
+    "4. List what I should ignore for now.",
+    "5. Give me weekly milestones so I can prove that I'm ready to move on.",
+    "Ask me up to five questions for each of these five steps, one question at a time.",
+]
+
+
+def _norm(s):
+    return " ".join(s.replace("’", "'").replace(". ", ".").replace(".", ". ").split())
+
+
+def test_EN_01_english_paragraph_reads_cleanly():
+    """User (v0.7.8): a plain English paragraph came out "e elite", "a advisor", "h t how" -
+    letters from the neighbouring piece of a split line were read twice."""
+    import cv2
+    from capture_tool.core.ocr import full_text
+    img = cv2.imread(str(DATA / "english_paragraph.png"))
+    got = full_text(OcrEngine().recognize(img)).splitlines()
+    assert len(got) == len(ENGLISH_TRUTH), got
+    bad = [(g, t) for g, t in zip(got, ENGLISH_TRUTH) if _norm(g) != _norm(t)]
+    assert not bad, bad
+
+
+def test_EN_02_pronoun_i_not_l():
+    from capture_tool.core.ocr import fix_capital_i
+    assert fix_capital_i("so l can prove that l'm ready") == "so I can prove that I'm ready"
+    assert fix_capital_i("5 l 물") == "5 l 물"                # a unit after a number stays
+    assert fix_capital_i("l") == "l"
+
+
+def test_CAPS_02_other_languages_untouched():
+    from capture_tool.core.ocr import fix_capital_i
+    for t in ("El niño comió", "crème brûlée", "à côté de l'église", "Al-Rashid"):
+        assert fix_capital_i(t) == t, t
+
+
+EN_SAMPLE = ("Please review the attached file before Friday's meeting and send your comments to the team lead. "
+             "All invoices must be approved by the finance department. The quarterly report shows revenue of "
+             "1,250,000 dollars, up 12% from Q2. I want to learn how finance works so I can build my own business.")
+
+
+@pytest.mark.skipif(not Path("C:/Windows/Fonts/segoeui.ttf").exists(), reason="Windows fonts")
+@pytest.mark.parametrize("font,size", [("segoeui", 14), ("arial", 13), ("calibri", 15), ("times", 16),
+                                       ("consola", 14), ("verdana", 13), ("tahoma", 13), ("malgun", 14)])
+def test_EN_03_english_in_common_fonts(font, size):
+    """English paragraphs in the usual Windows fonts: at most 1 word in 25 wrong."""
+    import cv2
+    from PIL import Image, ImageDraw, ImageFont
+    f = ImageFont.truetype(f"C:/Windows/Fonts/{font}.ttf", size)
+    img = Image.new("RGB", (640, 200), "white")
+    d = ImageDraw.Draw(img)
+    lines, line = [], []
+    for w in EN_SAMPLE.split():
+        if d.textlength(" ".join(line + [w]), font=f) > 610:
+            lines.append(" ".join(line))
+            line = []
+        line.append(w)
+    lines.append(" ".join(line))
+    for i, t in enumerate(lines):
+        d.text((10, 8 + i * int(size * 1.6)), t, font=f, fill=(25, 25, 25))
+    bgr = cv2.cvtColor(np.array(img), cv2.COLOR_RGB2BGR)
+    got = " ".join(l.text for l in OcrEngine().recognize(bgr)).split()
+    bag = {}
+    for w in got:
+        bag[w] = bag.get(w, 0) + 1
+    miss = 0
+    for w in EN_SAMPLE.split():
+        if bag.get(w, 0):
+            bag[w] -= 1
+        else:
+            miss += 1
+    assert miss <= len(EN_SAMPLE.split()) / 25, (miss, got)
