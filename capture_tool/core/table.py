@@ -190,7 +190,9 @@ def detect_grid(img: np.ndarray) -> tuple[list[int], list[int]] | None:
     if img is None or img.size == 0 or min(img.shape[:2]) < 10:
         return None
     gray = img if img.ndim == 2 else cv2.cvtColor(img[:, :, :3], cv2.COLOR_BGR2GRAY)
-    dark = (gray < 235).astype(np.uint8)
+    # ink = pixels that differ from the page: dark rules on a light sheet, light rules on a dark page
+    page = int(np.median(gray))
+    dark = (np.abs(gray.astype(np.int16) - page) > 20).astype(np.uint8)
     h, w = dark.shape
     horiz = cv2.morphologyEx(dark, cv2.MORPH_OPEN, np.ones((1, max(20, w // 4)), np.uint8))
     vert = cv2.morphologyEx(dark, cv2.MORPH_OPEN, np.ones((max(12, h // 4), 1), np.uint8))

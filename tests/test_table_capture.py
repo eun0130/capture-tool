@@ -181,3 +181,55 @@ def test_TCAP_11_text_mode_hides_table_copy_for_plain_text(make):
     assert ov.ocr_bar.buttons["table"].isHidden()
     ov.ocr_bar.trigger("table")
     assert any("표 모양" in m for m in c.messages)
+
+
+# --- v0.6.6: tables with ruling lines on dark pages, other text around, OCR junk --------------
+@pytest.fixture(scope="module")
+def ocr():
+    from capture_tool.core.ocr import OcrEngine
+    return OcrEngine()
+
+
+def _scored(ocr, img):
+    return [(l.text, l.box, l.score) for l in ocr.recognize(img)]
+
+
+def _check_dark_grid(t):
+    assert t is not None
+    assert len(t.rows) == 3 and len(t.rows[0]) == 4, t.rows
+    assert t.rows[0][0] == "모델" and t.rows[0][1] == "결과" and "오류" in t.rows[0][2] and "시간" in t.rows[0][3]
+    assert "8b" in t.rows[1][0] and "EQ-003" in t.rows[1][1] and "고침" in t.rows[1][2] and "67" in t.rows[1][3]
+    assert "4b" in t.rows[2][0] and "886" in t.rows[2][3]
+
+
+def test_TCAP_12_dark_table_with_light_ruling_lines(ocr):
+    """Bug (v0.6.5): this table (light lines on a dark page) gave no 표로 복사 button."""
+    img = cv2.imread(str(DATA / "dark_grid_table.png"))
+    _check_dark_grid(find_table(img, _scored(ocr, img), [], 96))
+
+
+def test_TCAP_13_other_text_around_the_table_is_left_out(ocr):
+    """The capture also held lines of another window above, beside and below the table."""
+    img = cv2.imread(str(DATA / "dark_grid_table_context.png"))
+    t = find_table(img, _scored(ocr, img), [], 96)
+    _check_dark_grid(t)
+    assert all("설정에" not in c for r in t.rows for c in r)
+
+
+def test_TCAP_14_symbol_only_ocr_bits_are_ignored(ocr):
+    """The table's edge read as '−−−−' / '·다−−' / '¶' / '‖'."""
+    img = cv2.imread(str(DATA / "dark_grid_table_edge.png"))
+    lines = _scored(ocr, img) + [("¶", (2, 2, 8, 20), 0.6), ("‖", (1080, 3, 6, 20), 0.55)]
+    _check_dark_grid(find_table(img, lines, [], 96))
+
+
+def test_TCAP_15_two_row_table_counts_when_it_has_ruling_lines():
+    img, lines = grid_table(rows=2, cols=3)
+    t = find_table(img, lines, [], 96)
+    assert t is not None and len(t.rows) == 2
+
+
+def test_TCAP_16_text_mode_button_for_the_dark_grid_table(make, ocr):
+    img = cv2.imread(str(DATA / "dark_grid_table_context.png"))
+    c, ov = _text_mode(make, img, _scored(ocr, img))
+    assert not ov.ocr_bar.buttons["table"].isHidden()

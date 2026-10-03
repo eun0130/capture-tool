@@ -218,3 +218,14 @@ def test_TBL_24_sheet_headers_tolerate_one_unread_number():
     from capture_tool.core.table import drop_sheet_headers
     g = [["", "A", "B"], ["", "품목", "수량"], ["2", "사과", "3"], ["3", "배", "5"]]   # "1" not read (selected)
     assert drop_sheet_headers(g) == [["품목", "수량"], ["사과", "3"], ["배", "5"]]
+
+
+def test_TBL_25_light_lines_on_a_dark_page_are_a_grid():
+    import numpy as np
+    img = np.full((200, 500, 3), 30, np.uint8)
+    for y in (20, 70, 120, 170):
+        img[y, 20:481] = 220
+    for x in (20, 180, 330, 480):
+        img[20:171, x] = 220
+    xs, ys = detect_grid(img)
+    assert xs == [20, 180, 330, 480] and ys == [20, 70, 120, 170]

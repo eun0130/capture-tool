@@ -9,7 +9,7 @@ from statistics import median
 import numpy as np
 
 from .shapes import _dist, _hex, _to_bgr, text_style
-from .table import _bands, _rows, to_grid
+from .table import _bands, _rows, detect_grid, grid_from_cells, to_grid
 
 MIN_ROWS = 3
 MIN_COLS = 2
@@ -46,6 +46,58 @@ def _median_color(img, mask):
     return None if len(px) == 0 else tuple(int(v) for v in np.median(px, axis=0))
 
 
+def _real_text(t: str) -> bool:
+    """OCR bits of borders and corners ('−−−−', '¶', '‖', '|') hold no letter or digit."""
+    return any(ch.isalnum() for ch in t)
+
+
+def _table_ok(rows, min_rows: int):
+    """Grid of a run of OCR rows if it reads as a table, else None."""
+    if len(rows) < min_rows or len(rows) > MAX_ROWS:
+        return None
+    if sum(len(r) >= 2 for r in rows) < MIN_MULTI * len(rows):
+        return None
+    centers = [median(i[2] + i[4] / 2 for i in r) for r in rows]
+    gaps = [b - a for a, b in zip(centers, centers[1:])]
+    if gaps and np.std(gaps) > MAX_SPACING_CV * np.mean(gaps):
+        return None
+    grid = to_grid([i for r in rows for i in r])
+    if not grid or len(grid) < min_rows or not (MIN_COLS <= len(grid[0]) <= MAX_COLS):
+        return None
+    if sum(1 for r in grid for c in r if c) < MIN_FILL * len(grid) * len(grid[0]):
+        return None
+    return grid
+
+
+def _best_block(rows):
+    """The run of consecutive rows that makes the biggest table: other text captured above,
+    beside or below it (another window, a heading) stays out."""
+    n = len(rows)
+    spans = [(0, n)] if n > 120 else [(a, b) for a in range(n) for b in range(a + MIN_ROWS, n + 1)]
+    best = None
+    for a, b in spans:
+        if len(rows[a]) < 2 or len(rows[b - 1]) < 2:
+            continue                                   # a one-line title/note sits outside the table
+        grid = _table_ok(rows[a:b], MIN_ROWS)
+        if grid is None:
+            continue
+        score = (len(grid) * len(grid[0]), -(b - a))
+        if best is None or score > best[0]:
+            best = (score, a, b, grid)
+    return None if best is None else best[1:]
+
+
+def _caption(rows, a, b, gap):
+    """Single-line rows right above / below the table (its title or note)."""
+    out = []
+    cy = lambda r: median(i[2] + i[4] / 2 for i in r)     # noqa: E731
+    if a > 0 and len(rows[a - 1]) == 1 and cy(rows[a]) - cy(rows[a - 1]) <= 2.0 * gap:
+        out.append(rows[a - 1][0])
+    if b < len(rows) and len(rows[b]) == 1 and cy(rows[b]) - cy(rows[b - 1]) <= 2.0 * gap:
+        out.append(rows[b][0])
+    return [(i[0], tuple(i[1:])) for i in out]
+
+
 def find_table(img, lines, shapes, dpi: float = 96) -> CapturedTable | None:
     """lines: (text, (x, y, w, h), score); shapes: Detected from the shape search."""
     if img is None or img.size == 0:
@@ -55,33 +107,39 @@ def find_table(img, lines, shapes, dpi: float = 96) -> CapturedTable | None:
     for s in shapes or []:
         if s.kind not in ("line", "arrow", "text") and s.w * s.h >= DIAGRAM_SHARE * W * H:
             return None
-    items = [(t.strip(), *b) for t, b, _ in lines if t and t.strip()]
-    if len(items) < MIN_ROWS * MIN_COLS:
+    items = [(t.strip(), *b) for t, b, _ in lines if t and t.strip() and _real_text(t)]
+    if len(items) < 2 * MIN_COLS:
         return None
     h = median(i[4] for i in items)
-    rows = _rows(items, tol=h * 0.5)
-    outside: list[tuple[str, tuple]] = []
-    while len(rows) > MIN_ROWS and len(rows[0]) == 1:
-        outside.extend((i[0], tuple(i[1:])) for i in rows.pop(0))
-    while len(rows) > MIN_ROWS and len(rows[-1]) == 1:
-        outside.extend((i[0], tuple(i[1:])) for i in rows.pop())
-    if len(rows) < MIN_ROWS or len(rows) > MAX_ROWS:
-        return None
-    if sum(len(r) >= 2 for r in rows) < MIN_MULTI * len(rows):
-        return None
-    centers = [median(i[2] + i[4] / 2 for i in r) for r in rows]
-    gaps = [b - a for a, b in zip(centers, centers[1:])]
-    if np.std(gaps) > MAX_SPACING_CV * np.mean(gaps):
-        return None
-    table_items = [i for r in rows for i in r]
-    grid = to_grid(table_items)
-    if not grid or len(grid) < MIN_ROWS or not (MIN_COLS <= len(grid[0]) <= MAX_COLS):
-        return None
-    cells = len(grid) * len(grid[0])
-    if sum(1 for r in grid for c in r if c) < MIN_FILL * cells:
-        return None
 
-    gap = float(np.mean(gaps))
+    found = detect_grid(img)                        # ruling lines (light or dark page): exact cells
+    if found is not None:
+        xs, ys = found
+        inside = [i for i in items if xs[0] <= i[1] + i[3] / 2 <= xs[-1] and ys[0] <= i[2] + i[4] / 2 <= ys[-1]]
+        grid = grid_from_cells(inside, xs, ys) if inside else []
+        if (grid and len(grid) >= 2 and MIN_COLS <= len(grid[0]) <= MAX_COLS
+                and sum(1 for r in grid for c in r if c) >= 0.5 * len(grid) * len(grid[0])):
+            rows = _rows(inside, tol=h * 0.5)
+            centers = [(a + b) / 2 for a, b in zip(ys, ys[1:])]
+            gap = float(np.mean(np.diff(ys)))
+            above = [i for i in items if i not in inside and ys[0] - 2.0 * gap <= i[2] + i[4] / 2 < ys[0]]
+            outside = [(i[0], tuple(i[1:])) for i in above if len(above) == 1]
+            style = _style(img, rows, centers, gap, inside, xs[0], xs[-1], ys[0], ys[-1], dpi)
+            widths = [(b - a) * 72 / dpi for a, b in zip(xs, xs[1:])]
+            if len(widths) != len(grid[0]):
+                widths = [(xs[-1] - xs[0]) * 72 / dpi / len(grid[0])] * len(grid[0])
+            return CapturedTable(grid, (xs[0], ys[0], xs[-1] - xs[0], ys[-1] - ys[0]), outside, style, widths)
+
+    all_rows = _rows(items, tol=h * 0.5)
+    block = _best_block(all_rows)
+    if block is None:
+        return None
+    a, b, grid = block
+    rows = all_rows[a:b]
+    centers = [median(i[2] + i[4] / 2 for i in r) for r in rows]
+    gap = float(np.mean(np.diff(centers)))
+    outside = _caption(all_rows, a, b, gap)
+    table_items = [i for r in rows for i in r]
     x1 = min(i[1] for i in table_items)
     x2 = max(i[1] + i[3] for i in table_items)
     y1 = int(max(0, centers[0] - gap / 2))
@@ -97,10 +155,10 @@ def find_table(img, lines, shapes, dpi: float = 96) -> CapturedTable | None:
             x1, x2 = min(x1, int(on.min())), max(x2, int(on.max()) + 1)
     pad = int(h * 0.4)
     bx1, bx2 = max(0, x1 - pad), min(W, x2 + pad)
-    starts = [b[0] for b in _bands(rows)]
+    starts = [band[0] for band in _bands(rows)]
     if len(starts) == len(grid[0]):
-        lefts = [bx1] + [s - pad for s in starts[1:]]
-        widths = [max(1.0, b - a) for a, b in zip(lefts, lefts[1:] + [bx2])]
+        lefts = [bx1] + [st - pad for st in starts[1:]]
+        widths = [max(1.0, r - l) for l, r in zip(lefts, lefts[1:] + [bx2])]
     else:
         widths = [(bx2 - bx1) / len(grid[0])] * len(grid[0])
     return CapturedTable(grid, (bx1, y1, bx2 - bx1, y2 - y1), outside, style, [w * 72 / dpi for w in widths])
