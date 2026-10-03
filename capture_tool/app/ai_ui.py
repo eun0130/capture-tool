@@ -8,12 +8,13 @@ from PySide6.QtWidgets import (QComboBox, QDialog, QHBoxLayout, QLabel, QLineEdi
 
 from ..core.ai_text import LANGS, NAMES_KO
 from ..core.gemini import KEY_PAGE, GeminiError, find_key
+from ..core.text_table import find_text_table
 
 ENGINE = {"local": "오프라인 AI (PC 안에서 처리)", "cloud": "Gemini (Google 무료 AI)"}
 
 
 class AiWindow(QWidget):
-    action = Signal(str)            # copy, ppt, cancel
+    action = Signal(str)            # copy, table, ppt, cancel
     targetChanged = Signal(str)
 
     def __init__(self):
@@ -43,12 +44,19 @@ class AiWindow(QWidget):
         v.addWidget(self.status)
         btns = QHBoxLayout()
         self.buttons: dict[str, QPushButton] = {}
-        for name, label in [("copy", "복사"), ("ppt", "PPT로"), ("cancel", "중지"), ("close", "닫기 (Esc)")]:
+        for name, label in [("copy", "복사"), ("table", "표로 복사"), ("ppt", "PPT로"), ("cancel", "중지"),
+                            ("close", "닫기 (Esc)")]:
             b = QPushButton(label)
             b.clicked.connect(lambda _=False, n=name: self.trigger(n))
             btns.addWidget(b)
             self.buttons[name] = b
         v.addLayout(btns)
+        self.buttons["table"].setToolTip("답변이 표 모양(| 구분, 탭, 칸 맞춤, '항목: 값')이면 Excel·PowerPoint 표로 복사합니다.")
+        self.edit.textChanged.connect(self._update_table_button)
+        self._update_table_button()
+
+    def _update_table_button(self) -> None:
+        self.buttons["table"].setEnabled(find_text_table(self.edit.toPlainText()) is not None)
 
     # --- state ------------------------------------------------------------------------------------
     def start(self, mode: str, tgt: str | None = None) -> None:

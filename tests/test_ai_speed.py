@@ -178,3 +178,50 @@ def test_SPD_16_random_text_never_breaks_the_new_helpers():
         summary_should_stop(s)
         c = clean_summary(s)
         assert "<text>" not in c and c.count("•") <= len(s)
+
+
+# --- preload must not block a request ----------------------------------------------------------
+def test_SPD_17_request_during_preload_waits_instead_of_busy():
+    """Text mode preloads the 1.4 GB model; pressing 요약 meanwhile must wait for it, not fail
+    with "번역·요약을 하는 중" (it left the result empty and the PPT button did nothing)."""
+    import threading
+    loading, release = threading.Event(), threading.Event()
+    llm = FakeLLM()
+
+    def slow_loader(d, t):
+        loading.set()
+        release.wait(5)
+        return llm
+    summ = LocalSummarizer(find=lambda: "d", loader=slow_loader)
+    svc, _ = service(summarizer=summ)
+    th = threading.Thread(target=svc.preload, args=("안녕하세요.",))
+    th.start()
+    assert loading.wait(2)
+    assert not svc.busy                                   # preloading is not a user job
+    out = {}
+    job = threading.Thread(target=lambda: out.setdefault("r", svc.summarize("요약할 글입니다.")))
+    job.start()
+    release.set()
+    job.join(5); th.join(5)
+    assert out["r"].text == "• 요점 1"
+
+
+def test_SPD_18_unload_and_second_preload_skip_while_preloading():
+    import threading
+    loading, release = threading.Event(), threading.Event()
+    loads = []
+
+    def slow_loader(d, t):
+        loads.append(1)
+        loading.set()
+        release.wait(5)
+        return FakeLLM()
+    summ = LocalSummarizer(find=lambda: "d", loader=slow_loader)
+    svc, _ = service(summarizer=summ)
+    th = threading.Thread(target=svc.preload, args=("안녕하세요.",))
+    th.start()
+    assert loading.wait(2)
+    svc.preload("또.")                                      # returns at once, no second load
+    svc.unload()                                           # must not drop the model being loaded
+    release.set(); th.join(5)
+    assert len(loads) == 1 and summ._llm is not None

@@ -20,6 +20,11 @@ MAX_LINE_THICK = 10     # px; median thickness of a line/arrow body
 LINK_DISTANCE = 14      # px; arrow endpoint to shape edge to count as connected
 MAX_COMPONENTS = 300    # a busy web page can hold thousands of blobs; keep the largest
 TIME_BUDGET = 3.0       # seconds; never keep the CPU busy longer than this
+SAME_COLOR = 30         # outline this close to the fill is just the fill's edge (no outline)
+MAX_REREAD = 8          # coloured shapes whose missed text is read again (one OCR call each)
+# common PowerPoint font sizes; a measured size snaps to the nearest
+FONT_SIZES = (8, 9, 10, 10.5, 11, 12, 14, 16, 18, 20, 22, 24, 26, 28, 32, 36, 40, 44, 48, 54, 60, 66, 72, 80, 96)
+BOLD_STROKE = 0.098     # stroke width / font size above this reads as bold (measured: 0.084 vs 0.113)
 
 
 class _Budget:
@@ -48,6 +53,55 @@ class Detected:
     stroke_width: float = 2
     points: list = field(default_factory=list)
     text: str | None = None
+    text_color: str | None = None     # measured from the pixels (None: pick by contrast)
+    font_size: float = 14             # points
+    bold: bool = False
+
+
+@dataclass
+class TextStyle:
+    color: str = "#000000"
+    size: float = 14
+    bold: bool = False
+
+
+def _em_factor(text: str) -> float:
+    """Ink height of a line as a share of its font size: Hangul/CJK fill the em box; Latin
+    depends on capitals/ascenders and descenders."""
+    if any("\uac00" <= c <= "\ud7a3" or "\u3040" <= c <= "\u9fff" for c in text):
+        return 0.95
+    asc = any(c.isupper() or c.isdigit() or c in "bdfhklt'\"([{/|" for c in text)
+    desc = any(c in "gjpqy,;()[]{}|" for c in text)
+    return (0.72 if asc else 0.53) + (0.28 if desc else 0.0)
+
+
+def _snap(size: float) -> float:
+    return min(FONT_SIZES, key=lambda v: abs(v - size))
+
+
+def text_style(img: np.ndarray, box, text: str, dpi: float = 96) -> TextStyle:
+    """Colour, size (pt) and boldness of the text inside an OCR box, read from its pixels."""
+    img = _to_bgr(img)
+    x, y, w, h = (int(round(v)) for v in box)
+    x0, y0 = max(0, x), max(0, y)
+    c = img[y0:max(y0, y + h), x0:max(x0, x + w)].astype(np.int16)
+    if c.shape[0] < 3 or c.shape[1] < 3:
+        return TextStyle()
+    bg = np.median(np.concatenate([c[0], c[-1], c[:, 0], c[:, -1]]), axis=0)
+    d = np.abs(c - bg).max(axis=2)
+    m = d > max(40, int(d.max() * 0.5))
+    if m.sum() < 6:
+        return TextStyle()
+    strong = c[d >= np.percentile(d[m], 70)]
+    col = np.median(strong, axis=0)
+    rows = np.where(m.any(axis=1))[0]
+    ink_h = rows[-1] - rows[0] + 1
+    em_px = ink_h / _em_factor(text)
+    mk = m.astype(np.uint8)
+    contours, _ = cv2.findContours(mk, cv2.RETR_LIST, cv2.CHAIN_APPROX_NONE)
+    per = sum(cv2.arcLength(k, True) for k in contours)
+    stroke = 2 * float(mk.sum()) / max(per, 1.0)
+    return TextStyle(_hex(col), _snap(em_px * 72 / dpi), stroke / max(em_px, 1.0) > BOLD_STROKE)
 
 
 def _to_bgr(img: np.ndarray) -> np.ndarray:
@@ -291,6 +345,14 @@ def _line_from_points(img, pts: np.ndarray) -> Detected | None:
     return d
 
 
+def _is_diamond(approx, x, y, w, h) -> bool:
+    """Four corners sitting on the middles of the bounding box's sides."""
+    mids = [(x + w / 2, y), (x + w, y + h / 2), (x + w / 2, y + h), (x, y + h / 2)]
+    tol = 0.12 * max(w, h)
+    pts = [tuple(p[0]) for p in approx]
+    return all(min(abs(px - mx) + abs(py - my) for px, py in pts) <= tol for mx, my in mids)
+
+
 def _corner_gap(contour, x, y, w, h) -> float:
     pts = contour.reshape(-1, 2).astype(np.float64)
     gaps = []
@@ -318,6 +380,8 @@ def _classify(img, contour, fg, has_hole, bg) -> Detected | None:
     kind = None
     if len(approx) == 3 and 0.4 <= extent <= 0.62:
         kind = "triangle"
+    elif len(approx) == 4 and 0.42 <= extent <= 0.62 and _is_diamond(approx, x, y, w, h):
+        kind = "diamond"
     elif (extent >= 0.965 or (len(approx) == 4 and extent >= 0.93)) and _corner_gap(contour, x, y, w, h) < 2.5:
         kind = "rect"
         if len(approx) == 4:  # ignore small bumps (noise touching the edge)
@@ -371,13 +435,17 @@ def _colors(img, contour, bg, d: Detected) -> Detected:
         d.fill = None
     else:
         d.fill = _hex(fill)
+        if stroke is not None and max(abs(a - b) for a, b in zip(fill, stroke)) <= SAME_COLOR:
+            d.stroke = None                          # a plain fill: its edge is not an outline
     return d
 
 
 # --- PowerPoint mapping -------------------------------------------------------
 
-def attach_text(shapes: list[Detected], lines: list[tuple[str, tuple]]) -> list[tuple[str, tuple]]:
-    """Put each OCR line into the smallest closed shape containing its center.
+def attach_text(shapes: list[Detected], lines: list[tuple[str, tuple]], img=None,
+                dpi: float = 96) -> list[tuple[str, tuple]]:
+    """Put each OCR line into the smallest closed shape containing its center; with the image,
+    the shape also takes the text's colour, size and boldness (from its biggest line).
     Returns the lines that fall outside every shape."""
     rest = []
     buckets: dict[int, list] = {}
@@ -390,10 +458,85 @@ def attach_text(shapes: list[Detected], lines: list[tuple[str, tuple]]) -> list[
             rest.append((text, (x, y, w, h)))
             continue
         best = min(inside, key=lambda i: shapes[i].w * shapes[i].h)
-        buckets.setdefault(best, []).append((y, x, text))
+        buckets.setdefault(best, []).append((y, x, text, (x, y, w, h)))
     for i, items in buckets.items():
-        shapes[i].text = "\n".join(t for _, _, t in sorted(items))
+        shapes[i].text = "\n".join(t for _, _, t, _ in sorted(items))
+        if img is not None:
+            big = max((it for it in items), key=lambda it: it[3][3])
+            st = text_style(img, big[3], big[2], dpi)
+            shapes[i].text_color, shapes[i].font_size, shapes[i].bold = st.color, st.size, st.bold
     return rest
+
+
+def _near_color(a: str, b: str, tol: int = 60) -> bool:
+    return max(abs(int(a[k:k + 2], 16) - int(b[k:k + 2], 16)) for k in (1, 3, 5)) <= tol
+
+
+def text_boxes_for(lines: list[tuple[str, tuple]], img, dpi: float = 96) -> list[Detected]:
+    """Text outside every shape -> free text boxes keeping colour, size and boldness; lines of
+    one paragraph (same left edge, same look, close together) stay in one box."""
+    items = []
+    for text, box in sorted(lines, key=lambda l: (l[1][1], l[1][0])):
+        if text and text.strip():
+            items.append((text.strip(), box, text_style(img, box, text, dpi)))
+    groups: list[list] = []
+    for it in items:
+        _, (x, y, w, h), st = it
+        g = groups[-1] if groups else None
+        if g:
+            _, (gx, gy, gw, gh), gst = g[-1]
+            if (abs(x - g[0][1][0]) <= 0.6 * h and 0.75 <= h / max(gh, 1) <= 1.33
+                    and 0 <= y - (gy + gh) <= 0.9 * h and gst.size == st.size and gst.bold == st.bold
+                    and _near_color(gst.color, st.color)):
+                g.append(it)
+                continue
+        groups.append([it])
+    pad_x, pad_y = 0.1 * dpi, 0.05 * dpi                 # PowerPoint's text box insets
+    out = []
+    for g in groups:
+        x1 = min(b[0] for _, b, _ in g)
+        y1 = min(b[1] for _, b, _ in g)
+        x2 = max(b[0] + b[2] for _, b, _ in g)
+        y2 = max(b[1] + b[3] for _, b, _ in g)
+        st = g[0][2]
+        out.append(Detected("text", int(x1 - pad_x), int(y1 - pad_y), int(x2 - x1 + 2 * pad_x),
+                            int(y2 - y1 + 2 * pad_y), text="\n".join(t for t, _, _ in g),
+                            text_color=st.color, font_size=st.size, bold=st.bold))
+    return out
+
+
+def find_missed_text(img, detected: list[Detected], recognize) -> list[tuple[str, tuple]]:
+    """A coloured shape with ink inside but no text: OCR on the whole screen can miss it (dark
+    text on a saturated fill), so read just that shape again. Bits of those letters that were
+    taken for tiny shapes are removed from `detected`. Returns the new (text, box) lines in
+    whole-image coordinates. recognize(crop) -> [(text, (x, y, w, h)), ...]."""
+    img = _to_bgr(img)
+    found: list[tuple[str, tuple]] = []
+    tries = 0
+    for d in sorted(detected, key=lambda d: -d.w * d.h):
+        if tries >= MAX_REREAD:
+            break
+        if d.kind in ("line", "arrow", "text") or d.text or not d.fill or d.w < 30 or d.h < 20:
+            continue
+        ix, iy = d.x + d.w // 5, d.y + d.h // 5
+        inner = img[iy:iy + max(1, d.h * 3 // 5), ix:ix + max(1, d.w * 3 // 5)]
+        if inner.size == 0:
+            continue
+        fill = tuple(int(d.fill[k:k + 2], 16) for k in (5, 3, 1))
+        if (_dist(inner, fill) > 60).mean() < 0.01:
+            continue                                    # nothing written inside
+        tries += 1
+        crop = img[d.y:d.y + d.h, d.x:d.x + d.w]
+        for text, (x, y, w, h) in recognize(crop) or []:
+            if text and text.strip():
+                found.append((text, (d.x + x, d.y + y, w, h)))
+    if found:
+        def inside_text(o: Detected) -> bool:
+            cx, cy = o.x + o.w / 2, o.y + o.h / 2
+            return any(x - 2 <= cx <= x + w + 2 and y - 2 <= cy <= y + h + 2 and o.w * o.h < w * h * 1.5
+                       for _, (x, y, w, h) in found)
+        detected[:] = [o for o in detected if not inside_text(o)]
+    return found
 
 
 def _edge_distance(p, s: Detected) -> float:
@@ -404,9 +547,20 @@ def _edge_distance(p, s: Detected) -> float:
 
 def to_drawing(detected: list[Detected]) -> tuple[list[DShape], list[DConnector]]:
     closed = [d for d in detected if d.kind not in ("line", "arrow")]
-    shapes = [DShape(d.kind, d.x, d.y, d.w, d.h, fill=d.fill, stroke=d.stroke or "#000000",
-                     stroke_width=d.stroke_width, text=d.text,
-                     text_color="#000000" if not d.fill else _text_color(d.fill)) for d in closed]
+
+    def color(d: Detected) -> str:
+        return d.text_color or ("#000000" if not d.fill else _text_color(d.fill))
+
+    shapes = []
+    for d in closed:
+        if d.kind == "text":
+            shapes.append(DShape("rect", d.x, d.y, d.w, d.h, fill=None, stroke=None, text=d.text,
+                                 text_color=color(d), font_size=d.font_size, bold=d.bold, wrap=False, align="l"))
+        else:
+            stroke = d.stroke if (d.stroke or d.fill) else "#000000"
+            shapes.append(DShape(d.kind, d.x, d.y, d.w, d.h, fill=d.fill, stroke=stroke,
+                                 stroke_width=d.stroke_width, text=d.text, text_color=color(d),
+                                 font_size=d.font_size, bold=d.bold))
     conns = []
     for d in detected:
         if d.kind not in ("line", "arrow"):
@@ -416,6 +570,8 @@ def to_drawing(detected: list[Detected]) -> tuple[list[DShape], list[DConnector]
         def near(p):
             best = None
             for i, s in enumerate(closed):
+                if s.kind == "text":
+                    continue                            # arrows point at shapes, not at labels
                 dist = _edge_distance(p, s)
                 if dist <= LINK_DISTANCE and (best is None or dist < best[0]):
                     best = (dist, i)
@@ -432,3 +588,36 @@ def to_drawing(detected: list[Detected]) -> tuple[list[DShape], list[DConnector]
 def _text_color(fill_hex: str) -> str:
     r, g, b = int(fill_hex[1:3], 16), int(fill_hex[3:5], 16), int(fill_hex[5:7], 16)
     return "#000000" if (0.299 * r + 0.587 * g + 0.114 * b) > 140 else "#FFFFFF"
+
+
+def attach_found_text(img, detected: list[Detected], lines: list[tuple[str, tuple]], recognize,
+                      dpi: float = 96) -> list[tuple[str, tuple]]:
+    """OCR lines into their shapes (with style), then a second look only inside coloured
+    shapes that are still empty. Returns the lines outside every shape."""
+    rest = attach_text(detected, lines, img=img, dpi=dpi)
+    extra = find_missed_text(img, detected, recognize)
+    if extra:
+        rest += attach_text(detected, extra, img=img, dpi=dpi)
+    return rest
+
+
+SURE_OCR = 0.8          # OCR lines below this score may be half-read words with oversized boxes
+
+
+def split_doubtful(lines) -> tuple[list[tuple], list[tuple[str, tuple]]]:
+    """lines: (text, box, score). Returns (boxes to hide from the shape search - sure lines only,
+    since a doubtful box can cover and cut a whole shape -, all lines as (text, box))."""
+    return [b for _, b, sc in lines if sc >= SURE_OCR], [(t, b) for t, b, _ in lines]
+
+
+def drop_doubtful_inside(detected: list[Detected], lines) -> list[tuple[str, tuple]]:
+    """(text, box) of the lines to use: a doubtful line inside a coloured shape is left out so
+    that shape is read again on its own."""
+    filled = [d for d in detected if d.kind not in ("line", "arrow", "text") and d.fill]
+    out = []
+    for text, (x, y, w, h), sc in lines:
+        cx, cy = x + w / 2, y + h / 2
+        if sc < SURE_OCR and any(d.x <= cx <= d.x + d.w and d.y <= cy <= d.y + d.h for d in filled):
+            continue
+        out.append((text, (x, y, w, h)))
+    return out

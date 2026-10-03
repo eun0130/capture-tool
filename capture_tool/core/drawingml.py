@@ -15,7 +15,7 @@ from .color import normalize_hex
 
 A_NS = "http://schemas.openxmlformats.org/drawingml/2006/main"
 LC_NS = "http://schemas.openxmlformats.org/drawingml/2006/lockedCanvas"
-KINDS = ("rect", "roundRect", "ellipse", "triangle")
+KINDS = ("rect", "roundRect", "ellipse", "triangle", "diamond")
 TOP, LEFT, BOTTOM, RIGHT = "top", "left", "bottom", "right"
 # PowerPoint connection-site indexes per geometry
 _SITE_IDX = {
@@ -23,6 +23,7 @@ _SITE_IDX = {
     "roundRect": {TOP: 0, LEFT: 1, BOTTOM: 2, RIGHT: 3},
     "ellipse": {TOP: 0, LEFT: 2, BOTTOM: 4, RIGHT: 6},
     "triangle": {TOP: 0, LEFT: 1, BOTTOM: 3, RIGHT: 5},
+    "diamond": {TOP: 0, LEFT: 1, BOTTOM: 2, RIGHT: 3},
 }
 _CTRL = re.compile(r"[\x00-\x08\x0b-\x1f\x7f]")
 
@@ -49,6 +50,8 @@ class DShape:
     underline: bool = False
     strike: bool = False
     font_family: str | None = None   # None = PowerPoint theme font
+    wrap: bool = True                # False: a free text box sized to its text (no re-wrapping)
+    align: str = "ctr"               # "ctr" inside shapes, "l" for free text
 
     def __post_init__(self):
         if self.kind not in KINDS:
@@ -174,10 +177,11 @@ def _txbody(s: DShape) -> str:
             f = _attr(s.font_family)
             face = f'<a:latin typeface="{f}"/><a:ea typeface="{f}"/><a:cs typeface="{f}"/>'
         paras.append(
-            f'<a:p><a:pPr algn="ctr"/><a:r><a:rPr lang="ko-KR" sz="{round(s.font_size * 100)}"{style}>'
+            f'<a:p><a:pPr algn="{s.align}"/><a:r><a:rPr lang="ko-KR" sz="{round(s.font_size * 100)}"{style}>'
             f'{_fill(s.text_color)}{face}</a:rPr><a:t>{escape(line)}</a:t></a:r></a:p>'
         )
-    return (f'<a:txSp><a:txBody><a:bodyPr anchor="ctr" wrap="square"/><a:lstStyle/>{"".join(paras)}'
+    wrap = "square" if s.wrap else "none"
+    return (f'<a:txSp><a:txBody><a:bodyPr anchor="ctr" wrap="{wrap}"/><a:lstStyle/>{"".join(paras)}'
             f"</a:txBody><a:useSpRect/></a:txSp>")
 
 

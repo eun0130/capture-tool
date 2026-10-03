@@ -120,3 +120,16 @@ def test_CLIP_11_dib_carries_dpi():
 def test_dib_from_bgra_and_gray():
     assert len(dib_from_bgr(np.zeros((2, 2, 4), np.uint8))) == 40 + 16
     assert len(dib_from_bgr(np.zeros((2, 2), np.uint8))) == 40 + 16
+
+
+def test_CLIP_12_table_cells_that_excel_would_change_stay_text():
+    """Real Excel paste turned "007" into 7 and ran "=SUM(A1)" as a formula: text read off a
+    screen must never become a formula, and codes keep their leading zeros."""
+    from capture_tool.core.clipboard_payload import text_payload
+    grid = [["코드", "수식", "음수", "날짜", "금액", "비율"],
+            ["007", "=SUM(A1)", "-12", "2026-10-03", "1,250,000", "12.5%"],
+            ["+82 10", "@user", "-", "=1+1", "0", "0.5"]]
+    html = text_payload("", table=grid)[HTML].decode("utf-8")
+    text_cells = re.findall(r"<td style='mso-number-format:\"\\@\"'>([^<]*)</td>", html)
+    assert text_cells == ["007", "=SUM(A1)", "+82 10", "@user", "=1+1"]
+    assert "<td>-12</td>" in html and "<td>1,250,000</td>" in html and "<td>0</td>" in html

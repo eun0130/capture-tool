@@ -125,3 +125,96 @@ def test_TBL_15_sparse_table_rejected():
     grid = [["a"] + [""] * 30] + [[""] * 31 for _ in range(40)]
     assert not table_is_plausible(grid)
     assert table_is_plausible([["품목", "수량"], ["사과", "3"], ["배", ""]])
+
+
+# --- v0.6.4: real Excel screenshots (filled header, no gridlines, sheet headers, OCR noise) ----
+
+def test_TBL_15_filled_header_row_keeps_its_borders():
+    """A dark header fill swallowed the lines above and below it: header and first row vanished."""
+    img, (x0, y0, cw, rh) = excel_like(rows=6, cols=5)
+    img[y0:y0 + rh + 1, x0:x0 + 5 * cw + 1] = (127, 63, 31)              # filled header row
+    xs, ys = detect_grid(img)
+    assert len(xs) == 6 and len(ys) == 7
+    assert abs(ys[0] - y0) <= 1 and abs(ys[1] - (y0 + rh)) <= 1
+
+
+def test_TBL_16_filled_band_alone_is_not_a_table():
+    import numpy as np
+    img = np.full((300, 600, 3), 255, np.uint8)
+    img[20:60, :] = (127, 63, 31)                                         # a coloured title bar only
+    assert detect_grid(img) is None
+
+
+# word boxes measured from a real Excel 365 screenshot with gridlines off (100%, 150% DPI)
+BARE = [("품목", 7, 8, 48, 22), ("수량", 93, 8, 38, 22), ("단가", 148, 8, 39, 22), ("금액", 252, 8, 50, 22),
+        ("비고", 379, 8, 38, 22),
+        ("노트북", 8, 42, 66, 22), ("12", 89, 42, 22, 22), ("1,250,000", 147, 43, 90, 22),
+        ("15,000,000", 254, 43, 107, 22), ("영업팀", 375, 42, 64, 22),
+        ("모니터", 8, 76, 69, 22), ("30", 90, 76, 22, 22), ("320,000", 145, 77, 79, 22), ("9,600,000", 254, 77, 94, 22),
+        ("키보드", 7, 110, 67, 22), ("45", 89, 110, 22, 22), ("35,000", 145, 111, 64, 22),
+        ("1,575,000", 255, 111, 92, 22), ("무선", 380, 110, 37, 22),
+        ("마우스", 14, 144, 58, 22), ("50", 90, 144, 22, 22), ("18,000", 146, 145, 65, 22), ("900,000", 258, 145, 72, 22),
+        ("2026-10-03", 374, 145, 113, 22), ("입고", 496, 144, 46, 22),
+        ("합계", 7, 178, 48, 22), ("27,075,000", 257, 179, 102, 22), ("부가세", 377, 178, 61, 22), ("별도", 453, 178, 36, 22)]
+EXPECTED = [["품목", "수량", "단가", "금액", "비고"],
+            ["노트북", "12", "1,250,000", "15,000,000", "영업팀"],
+            ["모니터", "30", "320,000", "9,600,000", ""],
+            ["키보드", "45", "35,000", "1,575,000", "무선"],
+            ["마우스", "50", "18,000", "900,000", "2026-10-03 입고"],
+            ["합계", "", "", "27,075,000", "부가세 별도"]]
+
+
+def test_TBL_17_borderless_sheet_columns_from_gaps_across_rows():
+    assert to_grid(list(reversed(BARE))) == EXPECTED
+
+
+def test_TBL_18_wide_title_row_does_not_merge_columns():
+    title = [("2026년 4분기 구매 내역 (단위: 원)", 7, -30, 420, 22)]
+    assert to_grid(title + BARE) == [["2026년 4분기 구매 내역 (단위: 원)", "", "", "", ""]] + EXPECTED
+
+
+def test_TBL_19_grid_cells_drop_border_bars_and_keep_word_order():
+    xs, ys = [0, 100, 300], [0, 30, 60]
+    items = [("부가세 |별도", 110, 5, 120, 20), ("|", 95, 35, 6, 20), ("입고", 230, 34, 40, 20),
+             ("2026-10-03", 110, 36, 110, 20), ("a|b", 10, 5, 30, 20)]
+    assert grid_from_cells(items, xs, ys) == [["a|b", "부가세 별도"], ["", "2026-10-03 입고"]]
+
+
+def test_TBL_20_excel_row_and_column_headers_are_dropped():
+    from capture_tool.core.table import drop_sheet_headers
+    g = [["", "A", "B", "C"], ["1", "품목", "수량", "금액"], ["2", "사과", "3", "9,000"]]
+    assert drop_sheet_headers(g) == [["품목", "수량", "금액"], ["사과", "3", "9,000"]]
+    g = [["", "C", "D"], ["7", "x", "y"], ["8", "z", "w"]]                 # captured from column C, row 7
+    assert drop_sheet_headers(g) == [["x", "y"], ["z", "w"]]
+    keep = [["No", "이름"], ["1", "김"], ["2", "이"]]                       # a real numbered column stays
+    assert drop_sheet_headers(keep) == keep
+    keep2 = [["A", "B"], ["사과", "배"]]                                     # letters alone: not sheet headers
+    assert drop_sheet_headers(keep2) == keep2
+    assert drop_sheet_headers([]) == []
+
+
+def test_TBL_21_single_row_neighbours_glue_only_when_close():
+    items = [("New", 100, 50, 40, 20), ("York", 145, 50, 40, 20)]
+    assert to_grid(items) == [["New York"]]
+    far = [("이름", 100, 50, 40, 20), ("나이", 300, 50, 40, 20)]
+    assert to_grid(far) == [["이름", "나이"]]
+
+
+def test_TBL_22_thin_empty_row_from_a_split_fill_is_dropped_but_real_blank_rows_stay():
+    xs = [0, 100, 200]
+    ys = [0, 22, 34, 68, 102, 136]                     # 22..34: a sliver inside the header fill
+    items = [("품목", 10, 5, 40, 15), ("수량", 110, 5, 40, 15), ("사과", 10, 40, 40, 20), ("3", 110, 40, 10, 20),
+             ("배", 10, 108, 20, 20), ("5", 110, 108, 10, 20)]           # 68..102 is a real blank row
+    assert grid_from_cells(items, xs, ys) == [["품목", "수량"], ["사과", "3"], ["", ""], ["배", "5"]]
+
+
+def test_TBL_23_row_number_strip_and_empty_edge_are_dropped():
+    from capture_tool.core.table import drop_sheet_headers
+    g = [["", "1", "품목", "수량"], ["", "2", "사과", "3"], ["", "3", "배", "5"]]
+    assert drop_sheet_headers(g) == [["품목", "수량"], ["사과", "3"], ["배", "5"]]
+
+
+def test_TBL_24_sheet_headers_tolerate_one_unread_number():
+    from capture_tool.core.table import drop_sheet_headers
+    g = [["", "A", "B"], ["", "품목", "수량"], ["2", "사과", "3"], ["3", "배", "5"]]   # "1" not read (selected)
+    assert drop_sheet_headers(g) == [["품목", "수량"], ["사과", "3"], ["배", "5"]]

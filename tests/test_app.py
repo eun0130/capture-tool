@@ -1256,3 +1256,18 @@ def test_APP_87_settings_dialog_ppt_new_slide_option(qt_app):
     assert dlg.result_settings().ppt_new_slide is False
     dlg._defaults()
     assert dlg.ppt_new_slide.isChecked()
+
+
+def test_APP_29b_direct_text_mode_never_runs_shape_recognition(make, monkeypatch):
+    """The text branch fell through into shape detection (indentation slip): its shapes were
+    handed over as a "table" and the copy crashed when the capture held a box."""
+    import capture_tool.app.controller as ctl
+
+    def boom(*a, **k):
+        raise AssertionError("shape detection in text mode")
+    monkeypatch.setattr(ctl, "detect", boom)
+    lines = [OcrLine("바로 복사", (10, 10, 100, 20), 0.99)]
+    c = make(ocr=FakeOcr(lines))
+    c.start_capture(mode="text")
+    drag(c.overlays[0], (100, 100), (400, 300))
+    assert "바로 복사" in c.clipboard.last[UNICODE]

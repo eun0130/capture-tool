@@ -10,7 +10,7 @@ import pytest
 
 from capture_tool.platform import powerpoint as pp
 from capture_tool.platform.powerpoint import (ClipboardShapes, Picture, PowerPointTimeout, PowerPointUnavailable,
-                                              TextItem, place, send)
+                                              TableItem, TextItem, place, send)
 
 
 class Shape:
@@ -48,6 +48,13 @@ class Shapes:
         self.items.append(s)
         return s
 
+    def AddTable(self, rows, cols, left, top, width, height):
+        s = Shape("table", left, top, width, height)
+        s.Table = FakeTable(rows, cols)
+        s.HasTable = True
+        self.items.append(s)
+        return s
+
     def Paste(self):
         self.slide.app.calls.append(("paste",))
         n = self.slide.app.paste_count
@@ -56,6 +63,18 @@ class Shapes:
         rng = type("Range", (), {"Count": n})()
         rng.Select = lambda *a: [setattr(x, "selected", True) for x in new]
         return rng
+
+
+class FakeTable:
+    def __init__(self, rows, cols):
+        self.Rows = type("Rows", (), {"Count": rows})()
+        self.Columns = type("Cols", (), {"Count": cols})()
+        self.cells = {(r, c): Shape("cell", 0, 0, 0, 0) for r in range(1, rows + 1) for c in range(1, cols + 1)}
+
+    def Cell(self, r, c):
+        cell = type("Cell", (), {})()
+        cell.Shape = self.cells[(r, c)]
+        return cell
 
 
 class Slide:
@@ -357,3 +376,26 @@ def test_PPT_25_sender_reports_the_window():
     app = FakeApp(with_deck=True)
     sender = pp.PowerPointSender(app_factory=lambda: app, timeout=5)
     assert sender.send(Picture(IMG)) == 1 and sender.last_hwnd == 4242
+
+
+
+def test_PPT_26_table_becomes_a_native_editable_table():
+    app = FakeApp(with_deck=True)
+    rows = [["분기", "매출"], ["3분기", "1,250억"], ["4분기", "1,320억"]]
+    r = send(TableItem(rows, font_size=14), app_factory=lambda: app)
+    shape = app.ActivePresentation.Slides(2).Shapes.items[0]
+    assert r.added == 1 and shape.kind == "table" and shape.selected
+    assert shape.Table.Rows.Count == 3 and shape.Table.Columns.Count == 2
+    cell = shape.Table.Cell(3, 2).Shape.TextFrame.TextRange
+    assert cell.Text == "1,320억" and cell.Font.Size == 14 and cell.Font.NameFarEast == "Malgun Gothic"
+    assert shape.Left >= 0 and shape.Left + shape.Width <= 960 and shape.Top >= 0
+
+
+def test_PPT_27_table_is_capped_and_cells_are_single_paragraph_safe():
+    app = FakeApp(with_deck=True)
+    rows = [[f"{r}-{c}" for c in range(40)] for r in range(300)]
+    rows[0][0] = "줄\n바꿈"
+    send(TableItem(rows), app_factory=lambda: app)
+    t = app.ActivePresentation.Slides(2).Shapes.items[0].Table
+    assert t.Rows.Count == pp.MAX_TABLE_ROWS and t.Columns.Count == pp.MAX_TABLE_COLS
+    assert t.Cell(1, 1).Shape.TextFrame.TextRange.Text == "줄\r바꿈"

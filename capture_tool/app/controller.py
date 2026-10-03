@@ -23,10 +23,12 @@ from ..core.naming import SaveDirError, render, resolve_save_dir, unique_path
 from ..core.ocr import OcrUnavailable, full_text, select_text
 from ..core.scroll_session import ScrollCapture, looks_blocked
 from ..core.session import CaptureSession, State
-from ..core.shapes import attach_text, detect, to_drawing
+from ..core.shapes import (attach_found_text, attach_text, detect, drop_doubtful_inside, split_doubtful,
+                           text_boxes_for, to_drawing)
 from ..core.table import detect_grid, grid_from_cells, table_is_plausible
-from ..platform.powerpoint import (ClipboardShapes, Picture, PowerPointBusy, PowerPointUnavailable, TextItem,
-                                   clip_text)
+from ..core.text_table import find_text_table
+from ..platform.powerpoint import (ClipboardShapes, Picture, PowerPointBusy, PowerPointUnavailable, TableItem,
+                                   TextItem, clip_text, table_fits)
 from .overlay import OverlayWindow
 from .pin import PinWindow
 from .render import compose
@@ -969,6 +971,7 @@ class Controller(QObject):
         final = compose(raw, doc)
         raw = mask_outside(raw, doc.clip if doc else None)   # recognize only what is kept
         pos = self._below(ov, sel)
+        dpi = 96 * ov.scale
 
         def work():
             lines, err = [], None
@@ -983,12 +986,19 @@ class Controller(QObject):
                     qr = data or None
                 except cv2.error:
                     pass
-                    return kind, lines, err, qr, self._grid_for(raw, lines) if lines else None
-            det = detect(raw, text_boxes=[l.box for l in lines])
-            attach_text(det, [(l.text, l.box) for l in lines])
+                return kind, lines, err, qr, self._grid_for(raw, lines) if lines else None
+            scored = [(l.text, l.box, l.score) for l in lines]
+            det = detect(raw, text_boxes=split_doubtful(scored)[0])
+            found = drop_doubtful_inside(det, scored)
+            if err is None:                    # dark text on a saturated fill: that shape is read again
+                rest = attach_found_text(raw, det, found, lambda crop: [(l.text, l.box) for l in self.ocr.recognize(crop)],
+                                         dpi)
+            else:
+                rest = attach_text(det, found, img=raw, dpi=dpi)
+            det += text_boxes_for(rest, raw, dpi)          # titles and labels stay editable text
             return kind, lines, err, None, det
 
-        self._pending = (user_shapes, final, pos, 96 * ov.scale)
+        self._pending = (user_shapes, final, pos, dpi)
         if self.sync:
             self._on_job_done(work())
         else:
@@ -1039,10 +1049,12 @@ class Controller(QObject):
         if not self._set_clipboard(payload):
             return
         note = " (텍스트 인식 없이)" if err else ""
+        boxes = sum(1 for d in det if d.kind == "text")
+        what = f"도형 {len(shapes) - boxes}개" + (f", 글상자 {boxes}개" if boxes else "") + f", 연결선 {len(conns)}개"
         if send:
-            self._send_item_to_ppt(ClipboardShapes(), f"도형 {len(shapes)}개, 연결선 {len(conns)}개를{note}")
+            self._send_item_to_ppt(ClipboardShapes(), f"{what}를{note}")
         else:
-            self.notify(f"도형 {len(shapes)}개, 연결선 {len(conns)}개를 복사했습니다{note}. PowerPoint에서 Ctrl+V")
+            self.notify(f"{what}를 복사했습니다{note}. PowerPoint에서 Ctrl+V 하면 하나씩 고칠 수 있습니다.")
 
     # --- translate / summary -----------------------------------------------------------
     @property
@@ -1168,9 +1180,24 @@ class Controller(QObject):
             if self._set_clipboard(text_payload(text)):
                 win.set_status("결과를 복사했습니다. 원하는 곳에 Ctrl+V 하세요.")
                 self.notify("결과를 복사했습니다.")
+        elif name == "table":
+            found = find_text_table(text)
+            if found is None:
+                win.set_status("표 모양(| 구분, 탭, 칸 맞춤, '항목: 값' 줄)을 찾지 못했습니다. 복사 버튼을 쓰세요.")
+            elif self._set_clipboard(text_payload("", table=found.rows)):
+                rows = found.rows
+                cut = " (너무 커서 일부만)" if found.cut else ""
+                win.set_status(f"표 {len(rows)}행×{len(rows[0])}열로 복사했습니다{cut}. "
+                               "Excel이나 PowerPoint에서 Ctrl+V 하면 칸이 나뉜 표가 됩니다.")
+                self.notify("표로 복사했습니다.")
         elif name == "ppt" and text.strip():
             body, _ = clip_text(text)
-            self._set_clipboard(text_payload(text))       # Ctrl+V works whatever PowerPoint does
+            found = find_text_table(text)
+            as_table = found is not None and found.kind == "grid" and table_fits(found.rows)
+            if as_table:
+                self._set_clipboard(text_payload("", table=found.rows))
+            else:
+                self._set_clipboard(text_payload(text))   # Ctrl+V works whatever PowerPoint does
             win.buttons["ppt"].setEnabled(False)
             win.set_busy("PowerPoint에 넣는 중…")
 
@@ -1181,8 +1208,12 @@ class Controller(QObject):
                     if self.session.state is not State.IDLE:
                         self.cancel()
                     win.close()
-            self._send_item_to_ppt(TextItem(body, font_family="Malgun Gothic", font_size=18),
-                                   "요약을" if win.mode == "summarize" else "번역을", on_done=done)
+            what = "요약을" if win.mode == "summarize" else "번역을"
+            if as_table:
+                self._send_item_to_ppt(TableItem(found.rows), f"표({len(found.rows)}행×{len(found.rows[0])}열)를",
+                                       on_done=done)
+            else:
+                self._send_item_to_ppt(TextItem(body, font_family="Malgun Gothic", font_size=18), what, on_done=done)
         elif name in ("copy", "ppt"):
             win.set_status("넣을 결과가 없습니다.")
 

@@ -41,10 +41,27 @@ def _cell(v: str) -> str:
     return re.sub(r"[\t\r\n]+", " ", v)
 
 
+_NUMBER = re.compile(r"[+-]?(\d[\d,]*)?\.?\d+%?")
+_AS_TEXT = "<td style='mso-number-format:\"\\@\"'>"
+
+
+def _keep_as_text(v: str) -> bool:
+    """Cells Excel would change on paste: a formula (text read off a screen must never run)
+    or a code whose leading zeros would be dropped."""
+    v = v.strip()
+    if re.fullmatch(r"0\d+", v):
+        return True
+    return len(v) > 1 and v[0] in "=+-@" and not _NUMBER.fullmatch(v)
+
+
+def _td(v: str) -> str:
+    return (_AS_TEXT if _keep_as_text(v) else "<td>") + html.escape(v) + "</td>"
+
+
 def text_payload(text: str, table: list[list[str]] | None = None) -> dict:
     if table:
         plain = "\r\n".join("\t".join(_cell(c) for c in row) for row in table)
-        rows = "".join("<tr>" + "".join(f"<td>{html.escape(c)}</td>" for c in row) + "</tr>" for row in table)
+        rows = "".join("<tr>" + "".join(_td(c) for c in row) + "</tr>" for row in table)
         frag = f"<table>{rows}</table>"
     else:
         if not text or not text.strip():

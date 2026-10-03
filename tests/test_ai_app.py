@@ -357,3 +357,72 @@ def test_AAPP_23_preload_never_breaks_text_mode(make):
     c.ai = Broken()
     ov.side_bar.trigger("text")
     assert ov.ocr_lines is not None
+
+
+# --- v0.6.4: table-shaped AI answers -> Excel / PowerPoint tables ----------------------------------
+class TableAi(FakeAi):
+    def __init__(self, answer):
+        super().__init__()
+        self.answer = answer
+
+    def summarize(self, text, lang="ko", on_text=None, cancel=None):
+        self.calls.append(("summarize", text, lang))
+        return AiResult(self.answer, "local", tgt=lang, note="")
+
+
+MD = "실적입니다.\n\n| 분기 | 매출 |\n|---|---|\n| 3분기 | 1,250억 |\n| 4분기 | 1,320억 |"
+
+
+def test_AAPP_20_table_shaped_answer_copies_as_a_table(make):
+    from capture_tool.core.clipboard_payload import HTML
+    c, ov = text_mode(make, ai=TableAi(MD))
+    ov.ocr_bar.trigger("summarize")
+    win = c.ai_window
+    assert win.buttons["table"].isEnabled()
+    win.trigger("table")
+    assert c.clipboard.last[UNICODE] == "분기\t매출\r\n3분기\t1,250억\r\n4분기\t1,320억"
+    assert "<table>" in c.clipboard.last[HTML].decode("utf-8")
+    assert "3행" in win.status_text() and "2열" in win.status_text()
+
+
+def test_AAPP_21_ppt_inserts_a_native_table_for_columns_but_text_for_label_lists(make):
+    from capture_tool.platform.powerpoint import TableItem, TextItem
+    c, ov = text_mode(make, ai=TableAi(MD))
+    c.powerpoint = FakePpt()
+    ov.ocr_bar.trigger("summarize")
+    c.ai_window.trigger("ppt")
+    item = c.powerpoint.items[-1]
+    assert isinstance(item, TableItem) and item.rows[0] == ["분기", "매출"]
+    pairs = "• 일시: 10월 15일\n• 대상: 메일\n• 문의: 김민수"
+    c2, ov2 = text_mode(make, ai=TableAi(pairs))
+    c2.powerpoint = FakePpt()
+    ov2.ocr_bar.trigger("summarize")
+    c2.ai_window.trigger("ppt")
+    assert isinstance(c2.powerpoint.items[-1], TextItem)
+
+
+def test_AAPP_22_no_table_shape_says_so_and_button_is_off(make):
+    c, ov = text_mode(make)
+    ov.ocr_bar.trigger("summarize")
+    win = c.ai_window
+    assert not win.buttons["table"].isEnabled()
+    win.trigger("table")
+    assert "표 모양" in win.status_text()
+
+
+def test_AAPP_23_edited_result_is_re_read_for_the_table_button(make):
+    c, ov = text_mode(make)
+    ov.ocr_bar.trigger("summarize")
+    win = c.ai_window
+    win.edit.setPlainText("이름\t점수\n가\t1\n나\t2")
+    assert win.buttons["table"].isEnabled()
+
+
+def test_AAPP_24_table_too_big_for_a_slide_goes_as_text_with_a_hint(make):
+    from capture_tool.platform.powerpoint import TextItem
+    big = "\n".join("| " + " | ".join(f"c{k}" for k in range(4)) + " |" for _ in range(80))
+    c, ov = text_mode(make, ai=TableAi(big))
+    c.powerpoint = FakePpt()
+    ov.ocr_bar.trigger("summarize")
+    c.ai_window.trigger("ppt")
+    assert isinstance(c.powerpoint.items[-1], TextItem)

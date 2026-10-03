@@ -62,6 +62,23 @@ def clip_text(text: str, limit: int = MAX_TEXT_CHARS) -> tuple[str, bool]:
 
 
 @dataclass
+class TableItem:
+    """Rows of cell text -> a native PowerPoint table (each cell editable)."""
+    rows: list
+    font_family: str = "Malgun Gothic"
+    font_size: float = 14      # points
+
+
+# every cell is one COM round trip; a slide can't show more anyway
+MAX_TABLE_ROWS = 50
+MAX_TABLE_COLS = 15
+
+
+def table_fits(rows: list) -> bool:
+    return bool(rows) and len(rows) <= MAX_TABLE_ROWS and max(len(r) for r in rows) <= MAX_TABLE_COLS
+
+
+@dataclass
 class ClipboardShapes:
     """Native shapes already on the clipboard (Art::GVML ClipFormat)."""
 
@@ -158,6 +175,24 @@ def _insert(app, item, new_presentation: bool, hook, new_slide: bool = False) ->
         rng.Font.Name = item.font_family
         rng.Font.NameFarEast = item.font_family
         rng.Font.Size = item.font_size
+        added = 1
+    elif isinstance(item, TableItem):
+        rows = [list(r)[:MAX_TABLE_COLS] for r in item.rows[:MAX_TABLE_ROWS]]
+        nr, nc = len(rows), max(len(r) for r in rows)
+        widest = [max((len(r[c]) if c < len(r) else 0) for r in rows) for c in range(nc)]
+        tw = min(sw * FIT, max(120.0 * nc, sum(max(4, w) * item.font_size * 0.9 for w in widest)))
+        th = min(sh * FIT, nr * item.font_size * 2.0)
+        left, top, tw, th = place(tw, th, sw, sh)
+        new = slide.Shapes.AddTable(nr, nc, left, top, tw, th)
+        table = new.Table
+        for r, row in enumerate(rows, 1):
+            for c in range(1, nc + 1):
+                rng = table.Cell(r, c).Shape.TextFrame.TextRange
+                cell = row[c - 1] if c <= len(row) else ""
+                rng.Text = cell.replace("\r\n", "\r").replace("\n", "\r")     # PowerPoint paragraphs
+                rng.Font.Name = item.font_family
+                rng.Font.NameFarEast = item.font_family
+                rng.Font.Size = item.font_size
         added = 1
     elif isinstance(item, ClipboardShapes):
         new = slide.Shapes.Paste()

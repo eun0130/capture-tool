@@ -46,6 +46,7 @@ class AiService:
         self.cloud_factory = cloud_factory
         self.get_key = get_key or (lambda: None)
         self._lock = threading.Lock()
+        self._preload_lock = threading.Lock()
         self._cache: OrderedDict = OrderedDict()
 
     def _cached(self, key):
@@ -140,8 +141,10 @@ class AiService:
 
     def preload(self, text: str) -> None:
         """Load the models the next translate / summary of `text` would need, ahead of time
-        (call in the background). Skipped while a job runs; missing models are left alone."""
-        if not self._lock.acquire(blocking=False):
+        (call in the background). Skipped while a job runs; missing models are left alone.
+        It doesn't take the job lock: a request made meanwhile waits inside the engine's own
+        load lock for the same model instead of being refused as busy."""
+        if self.busy or not self._preload_lock.acquire(blocking=False):
             return
         try:
             src = detect_lang(text)
@@ -153,10 +156,10 @@ class AiService:
             if self.settings.ai_summary_engine == "local" and self.summarizer.available():
                 self.summarizer._get()
         finally:
-            self._lock.release()
+            self._preload_lock.release()
 
     def unload(self) -> None:
         """Free model memory (called after the AI has been idle for a while)."""
-        if not self.busy:
+        if not self.busy and not self._preload_lock.locked():
             self.translator.unload()
             self.summarizer.unload()
