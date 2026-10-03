@@ -12,9 +12,10 @@ _TEXT = {
     "naver": ("https://search.naver.com/search.naver", "query", {}),
     "papago": ("https://papago.naver.com/", "st", {"sk": "auto", "tk": "ko"}),
 }
+# Google with its "이미지로 검색" box already open (Ctrl+V works at once). Naver has no picture
+# search on the PC web (its Smart Lens is in the phone app), so it isn't offered.
 _IMAGE = {
-    "google": "https://images.google.com/",
-    "naver": "https://search.naver.com/search.naver?where=image",
+    "google": "https://www.google.com/?olud",
 }
 LABELS = {"google": "구글", "naver": "네이버", "papago": "파파고 번역"}
 

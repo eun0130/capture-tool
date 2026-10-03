@@ -33,7 +33,9 @@ def test_SRCH_03_unknown_engine():
         text_url("bing", "x")
     with pytest.raises(ValueError):
         image_page("bing")
-    assert image_page("google").startswith("https://") and image_page("naver").startswith("https://")
+    assert image_page("google").startswith("https://")
+    with pytest.raises(ValueError):                  # v0.7.6: Naver has no picture search on the PC web
+        image_page("naver")
 
 
 def _capture(make, lines=()):
@@ -78,7 +80,7 @@ def test_SRCH_08_side_bar_search_menu(qt_app):
     assert "search" in bar.buttons
     menu = bar.search_menu()
     acts = [a for a in menu.actions() if not a.isSeparator() and a.isEnabled()]
-    assert len(acts) == 5
+    assert len(acts) == 4 and not any("네이버" in a.text() and "이미지" in a.text() for a in acts)
     acts[0].trigger()
     acts[-1].trigger()
     assert seen == ["search_img:google", "search_text:papago"]
@@ -87,5 +89,16 @@ def test_SRCH_08_side_bar_search_menu(qt_app):
 def test_SRCH_09_browser_failure_is_reported(make):
     c, _ = _capture(make)
     c.open_url = lambda u: False
-    c.on_toolbar_action("search_img:naver")
+    c.on_toolbar_action("search_img:google")
     assert any("브라우저" in m for m in c.messages)
+
+
+def test_SRCH_10_google_picture_search_opens_with_the_image_box_ready(make):
+    """Bug (v0.7.5): on images.google.com Ctrl+V did nothing until "이미지로 검색" was opened. The
+    page now opens with that box already open; Naver picture search was removed (not on PC)."""
+    c, opened = _capture(make)
+    c.on_toolbar_action("search_img:google")
+    assert opened == ["https://www.google.com/?olud"]
+    c2, opened2 = _capture(make)
+    c2.on_toolbar_action("search_img:naver")
+    assert opened2 == [] and c2.overlays                     # ignored, capture still open

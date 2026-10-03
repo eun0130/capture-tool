@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 
+import cv2
 import numpy as np
 
 MIN_SCORE = 0.5
@@ -132,6 +133,24 @@ _LATIN_LETTER = re.compile(r"[A-Za-zÀ-ɏ]")
 SECOND_READING_MARGIN = 0.05  # prefer the Latin reading unless clearly less confident
 
 
+MARGIN = 24              # px added around a low piece before reading (its own border colour)
+MARGIN_LOW = MARGIN
+LOW_PIECE = 100
+
+
+def with_margin(img: np.ndarray, m: int) -> np.ndarray:
+    """The image with an m-pixel frame in the median colour of its own border."""
+    if img.ndim == 2:
+        img = cv2.cvtColor(img, cv2.COLOR_GRAY2BGR)
+    img = img[:, :, :3]
+    border = np.concatenate([img[0], img[-1], img[:, 0], img[:, -1]])
+    bg = np.median(border, axis=0).astype(np.uint8)
+    out = np.empty((img.shape[0] + 2 * m, img.shape[1] + 2 * m, 3), np.uint8)
+    out[:] = bg
+    out[m:m + img.shape[0], m:m + img.shape[1]] = img
+    return out
+
+
 def needs_latin(text: str) -> bool:
     return not _HANGUL.search(text) and bool(_LATIN_LETTER.search(text))
 
@@ -193,8 +212,11 @@ def _char_weight(ch: str) -> float:
 
 class OcrEngine:
     def __init__(self, factory: Callable | None = None, secondary_factory: Callable | None = None,
-                 secondary_call: Callable | None = None):
+                 secondary_call: Callable | None = None, margin: int | None = None):
         self._factory = factory or default_factory
+        # text touching the image edge is missed by the text finder ("매입처별…" cut tight read
+        # as "매 ㅎ"): every piece is read with a margin of its own border colour around it
+        self.margin = (MARGIN if factory is None else 0) if margin is None else margin
         if secondary_factory is None and factory is None:
             secondary_factory = latin_factory
         self._secondary_factory = secondary_factory
@@ -260,15 +282,32 @@ class OcrEngine:
                 if box is None:
                     continue
                 ix, iy, iw, ih = box
-                tile_lines = self._run_tile(engine, img[y0 + iy:y0 + iy + ih, x0 + ix:x0 + ix + iw], x0 + ix, y0 + iy)
+                tile_lines = self._run_margined(engine, img[y0 + iy:y0 + iy + ih, x0 + ix:x0 + ix + iw],
+                                                x0 + ix, y0 + iy, w, h)
             else:
-                tile_lines = self._run_tile(engine, img[y0:y0 + th, x0:x0 + tw], x0, y0)
+                tile_lines = self._run_margined(engine, img[y0:y0 + th, x0:x0 + tw], x0, y0, w, h)
             for line in tile_lines:
                 bx, by, bw, bh = line.box
                 cx, cy = bx + bw / 2, by + bh / 2
                 if own[0] <= cx < own[2] and own[1] <= cy < own[3]:
                     lines.append(line)
         return reading_order(lines)
+
+    def _run_margined(self, engine, piece: np.ndarray, x0: int, y0: int, w: int, h: int) -> list[OcrLine]:
+        m = self.margin
+        if m <= 0:
+            return self._run_tile(engine, piece, x0, y0)
+        if piece.shape[0] >= LOW_PIECE:           # only low (one-line) pieces lose text at the edge;
+            return self._run_tile(engine, piece, x0, y0)   # bigger ones read best as they are
+        m = MARGIN_LOW
+        out = []
+        for line in self._run_tile(engine, with_margin(piece, m), x0 - m, y0 - m):
+            bx, by, bw, bh = line.box                 # back inside the image
+            nx, ny = max(0, bx), max(0, by)
+            nw, nh = min(w, bx + bw) - nx, min(h, by + bh) - ny
+            if nw > 0 and nh > 0:
+                out.append(OcrLine(line.text, (nx, ny, nw, nh), line.score))
+        return out
 
     def _run_tile(self, engine, img: np.ndarray, x0: int, y0: int) -> list[OcrLine]:
         img = np.ascontiguousarray(img) if not img.flags["C_CONTIGUOUS"] else img

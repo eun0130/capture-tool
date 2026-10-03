@@ -38,6 +38,10 @@ for m in rs.monitors():
     c.finish("pin")
     for _ in range(20):
         app.processEvents(); time.sleep(0.02)
+    for p in c.pins:                    # the hover bar shows if the mouse happens to be there:
+        p.hover_bar.hide()              # this check is about where the picture sits
+    for _ in range(5):
+        app.processEvents(); time.sleep(0.02)
     after = screen.grab(sel)[:, :, :3].astype(int)
     inner = np.abs(after[6:-6, 6:-6] - before[6:-6, 6:-6]).mean()
     print(f"{m.name} scale={m.scale} diff={inner:.2f}")

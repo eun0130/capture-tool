@@ -4,18 +4,55 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import QSize, Qt, QTimer
 from PySide6.QtGui import QGuiApplication
-from PySide6.QtWidgets import (QComboBox, QDialog, QFileDialog, QHBoxLayout, QLabel, QLineEdit, QListWidget,
-                               QListWidgetItem, QMessageBox, QPushButton, QTabBar, QTableWidget, QTableWidgetItem,
-                               QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget)
+from PySide6.QtWidgets import (QButtonGroup, QComboBox, QDialog, QFileDialog, QFrame, QHBoxLayout, QLabel, QLineEdit,
+                               QListWidget, QListWidgetItem, QMessageBox, QPushButton, QScrollArea, QTableWidget,
+                               QTableWidgetItem, QVBoxLayout, QWidget)
 
 from ..core.contacts import AddressBook, BookFull, InvalidEmail, export_csv, import_csv, normalize_email
 from ..core.mailcompose import PROVIDERS, suggest
 
 TABS = [("frequent", "자주"), ("recent", "최근"), ("groups", "그룹"), ("all", "전체 주소록")]
 ORDER = ["naver", "gmail", "naverworks", "daum", "outlook", "mailto", "custom"]
+MAIN_SERVICES = [("naver", "네이버 메일"), ("gmail", "Gmail")]
 MANY = 50                        # more recipients than this: say so before opening
+AVATAR_COLORS = ["#1F5FD1", "#0F766E", "#B54708", "#7A3EB1", "#C2185B", "#2E7D32", "#455A64"]
+
+STYLE = """
+QDialog, QWidget#mailhelper { background: #FFFFFF; }
+QLabel { color: #1D2330; font-size: 13px; }
+QLabel#title { font-size: 18px; font-weight: 700; }
+QLabel#sub { color: #5B6472; font-size: 12px; }
+QLabel#section { color: #5B6472; font-size: 12px; font-weight: 600; }
+QLineEdit { border: 1px solid #D5D9E0; border-radius: 10px; padding: 8px 12px; font-size: 13px; background: #FFFFFF; }
+QLineEdit:focus { border: 1.5px solid #1F5FD1; }
+QPushButton { border: 1px solid #D5D9E0; border-radius: 10px; padding: 7px 14px; background: #FFFFFF;
+              color: #1D2330; font-size: 13px; }
+QPushButton:hover { background: #F4F7FD; }
+QPushButton#primary { background: #1F5FD1; color: #FFFFFF; border: none; font-weight: 600; padding: 9px 18px; }
+QPushButton#primary:hover { background: #174AA6; }
+QPushButton#pill { border-radius: 16px; padding: 6px 16px; background: #F1F3F5; border: none; color: #3A4150; }
+QPushButton#pill:checked { background: #1F5FD1; color: #FFFFFF; font-weight: 600; }
+QPushButton#tab { border: none; border-bottom: 2px solid transparent; border-radius: 0; padding: 6px 10px;
+                  color: #5B6472; background: transparent; }
+QPushButton#tab:checked { color: #1F5FD1; border-bottom: 2px solid #1F5FD1; font-weight: 600; }
+QPushButton#seg { border-radius: 8px; padding: 4px 10px; font-size: 12px; background: #F1F3F5; border: none;
+                  color: #5B6472; }
+QPushButton#seg:checked { background: #E6EEFB; color: #1F5FD1; font-weight: 600; }
+QPushButton#chip { border-radius: 14px; padding: 4px 10px; font-size: 12px; background: #E6EEFB; color: #1F5FD1;
+                   border: none; }
+QPushButton#chipcc { border-radius: 14px; padding: 4px 10px; font-size: 12px; background: #F1F3F5; color: #3A4150;
+                     border: none; }
+QPushButton#link { border: none; color: #1F5FD1; background: transparent; padding: 4px; }
+QPushButton#step { text-align: left; padding: 10px 14px; }
+QPushButton#done { text-align: left; padding: 10px 14px; background: #EAF8F0; border: 1px solid #1E9E57; color: #1E6B3A; }
+QComboBox { border: 1px solid #D5D9E0; border-radius: 10px; padding: 6px 10px; font-size: 13px; background: #FFFFFF; }
+QListWidget { border: none; outline: 0; }
+QListWidget::item { border-bottom: 1px solid #EEF0F3; }
+QListWidget::item:hover { background: #F6F8FB; }
+QTableWidget { border: 1px solid #E3E6EB; border-radius: 8px; gridline-color: #EEF0F3; }
+"""
 
 
 @dataclass
@@ -26,78 +63,171 @@ class MailChoice:
     new: dict = field(default_factory=dict)       # typed address -> name, added to the book
 
 
+class _Row(QWidget):
+    """One person or group: avatar, name, address, and 받는 사람 / 참조 toggles."""
+
+    def __init__(self, key: str, name: str, detail: str, state: str | None, on_pick):
+        super().__init__()
+        self.key = key
+        h = QHBoxLayout(self)
+        h.setContentsMargins(8, 6, 8, 6)
+        h.setSpacing(10)
+        self.avatar = QLabel(name[:1] if name else "?")
+        color = AVATAR_COLORS[sum(map(ord, key)) % len(AVATAR_COLORS)]
+        self.avatar.setFixedSize(34, 34)
+        self.avatar.setAlignment(Qt.AlignCenter)
+        self.avatar.setStyleSheet(f"background: {color}; color: #FFFFFF; border-radius: 17px; font-weight: 700;")
+        h.addWidget(self.avatar)
+        texts = QVBoxLayout()
+        texts.setSpacing(0)
+        self.name_label = QLabel(name)
+        self.name_label.setStyleSheet("font-weight: 600; font-size: 14px;")
+        self.detail_label = QLabel(detail)
+        self.detail_label.setStyleSheet("color: #5B6472; font-size: 12px;")
+        texts.addWidget(self.name_label)
+        texts.addWidget(self.detail_label)
+        h.addLayout(texts, 1)
+        self.to_button = QPushButton("받는 사람")
+        self.cc_button = QPushButton("참조")
+        for b, fld in ((self.to_button, "to"), (self.cc_button, "cc")):
+            b.setObjectName("seg")
+            b.setCheckable(True)
+            b.setChecked(state == fld)
+            b.clicked.connect(lambda on, f=fld: on_pick(key, f if on else None))
+            h.addWidget(b)
+        self.setStyleSheet("background: transparent;")
+
+
 class MailPicker(QDialog):
     def __init__(self, book: AddressBook, settings, parent=None):
         super().__init__(parent, Qt.WindowStaysOnTopHint)
-        self.setWindowTitle("메일로 보내기 — 받는 사람 고르기")
-        self.resize(520, 560)
+        self.setWindowTitle("메일로 보내기")
+        self.setStyleSheet(STYLE)
+        self.resize(560, 640)
         self.book, self.settings = book, settings
         self._picked: dict[str, str] = {}          # key ("a@b" or "group:이름") -> "to" | "cc"
         self._new: dict[str, str] = {}
         self._tab = "frequent"
         v = QVBoxLayout(self)
-        self.search = QLineEdit()
-        self.search.setPlaceholderText("이름·주소 찾기 — 새 주소는 입력하고 Enter (예: 홍길동 <hong@회사.com>)")
-        self.search.textChanged.connect(lambda _: self._fill())
-        self.search.returnPressed.connect(self.add_typed)
-        v.addWidget(self.search)
-        self.tabs = QTabBar()
-        for _, label in TABS:
-            self.tabs.addTab(label)
-        self.tabs.currentChanged.connect(lambda i: self.set_tab(TABS[i][0]))
-        v.addWidget(self.tabs)
-        self.list = QTreeWidget()
-        self.list.setHeaderLabels(["이름", "주소", "넣을 곳"])
-        self.list.setColumnWidth(0, 150)
-        self.list.setColumnWidth(1, 220)
-        self.list.itemChanged.connect(self._item_changed)
-        v.addWidget(self.list, 1)
-        self.chips = QLabel()
-        self.chips.setWordWrap(True)
-        v.addWidget(self.chips)
-        self.status = QLabel()
-        self.status.setStyleSheet("color: #B42318;")
-        self.status.setWordWrap(True)
-        v.addWidget(self.status)
-        row = QHBoxLayout()
-        row.addWidget(QLabel("보낼 메일"))
+        v.setContentsMargins(20, 18, 20, 16)
+        v.setSpacing(10)
+        title = QLabel("메일로 보내기")
+        title.setObjectName("title")
+        v.addWidget(title)
+        sub = QLabel("받는 사람을 고르고 [메일 쓰기]를 누르세요. 보내기는 메일 화면에서 직접 누릅니다.")
+        sub.setObjectName("sub")
+        v.addWidget(sub)
+
+        # where to send from: the two common services as big buttons, the rest in a list
+        srow = QHBoxLayout()
+        lab = QLabel("보낼 메일")
+        lab.setObjectName("section")
+        srow.addWidget(lab)
+        self.service_buttons: dict[str, QPushButton] = {}
+        group = QButtonGroup(self)
+        group.setExclusive(False)
+        for pid, label in MAIN_SERVICES:
+            b = QPushButton(label)
+            b.setObjectName("pill")
+            b.setCheckable(True)
+            b.clicked.connect(lambda _=False, p=pid: self._set_service(p))
+            srow.addWidget(b)
+            self.service_buttons[pid] = b
         self.provider = QComboBox()
         for pid in ORDER:
             self.provider.addItem(PROVIDERS[pid].label, pid)
-        want = settings.mail_provider or suggest(settings.mail_account) or "naver"
-        self.provider.setCurrentIndex(max(0, self.provider.findData(want)))
-        row.addWidget(self.provider, 1)
+        self.provider.currentIndexChanged.connect(lambda _: self._sync_service())
+        srow.addWidget(self.provider)
+        srow.addStretch(1)
+        v.addLayout(srow)
+
+        self.search = QLineEdit()
+        self.search.setPlaceholderText("🔍  이름·주소 찾기 — 새 주소는 입력하고 Enter (예: 홍길동 <hong@회사.com>)")
+        self.search.textChanged.connect(lambda _: self._fill())
+        self.search.returnPressed.connect(self.add_typed)
+        v.addWidget(self.search)
+
+        trow = QHBoxLayout()
+        trow.setSpacing(4)
+        self.tab_buttons: dict[str, QPushButton] = {}
+        tgroup = QButtonGroup(self)
+        for key, label in TABS:
+            b = QPushButton(label)
+            b.setObjectName("tab")
+            b.setCheckable(True)
+            b.clicked.connect(lambda _=False, k=key: self.set_tab(k))
+            tgroup.addButton(b)
+            trow.addWidget(b)
+            self.tab_buttons[key] = b
+        trow.addStretch(1)
         edit = QPushButton("주소·그룹 편집")
+        edit.setObjectName("link")
         edit.clicked.connect(self._edit_book)
-        row.addWidget(edit)
-        v.addLayout(row)
+        trow.addWidget(edit)
+        v.addLayout(trow)
+
+        self.list = QListWidget()
+        v.addWidget(self.list, 1)
+
+        self.chip_area = QScrollArea()
+        self.chip_area.setWidgetResizable(True)
+        self.chip_area.setFixedHeight(46)
+        self.chip_area.setFrameShape(QFrame.NoFrame)
+        self.chip_area.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        self.chip_area.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self._chip_host = QWidget()
+        self._chip_row = QHBoxLayout(self._chip_host)
+        self._chip_row.setContentsMargins(0, 4, 0, 4)
+        self._chip_row.setSpacing(6)
+        self.chip_area.setWidget(self._chip_host)
+        v.addWidget(self.chip_area)
+        self.chips = QLabel()                          # plain summary (also for screen readers)
+        self.chips.setObjectName("sub")
+        self.chips.setWordWrap(True)
+        v.addWidget(self.chips)
+        self.status = QLabel()
+        self.status.setStyleSheet("color: #B42318; font-size: 12px;")
+        self.status.setWordWrap(True)
+        v.addWidget(self.status)
         bottom = QHBoxLayout()
+        bottom.addStretch(1)
         cancel = QPushButton("취소")
         cancel.clicked.connect(self.reject)
         self.go = QPushButton()
+        self.go.setObjectName("primary")
         self.go.setDefault(True)
         self.go.clicked.connect(self.accept)
-        bottom.addStretch(1)
         bottom.addWidget(cancel)
         bottom.addWidget(self.go)
         v.addLayout(bottom)
+
+        want = settings.mail_provider or suggest(settings.mail_account) or "naver"
+        self.provider.setCurrentIndex(max(0, self.provider.findData(want)))
+        self._sync_service()
         self.set_tab("frequent" if book.uses else "all")
 
-    # --- list ----------------------------------------------------------------------------------
+    # --- service --------------------------------------------------------------------------------
+    def _set_service(self, pid: str) -> None:
+        self.provider.setCurrentIndex(max(0, self.provider.findData(pid)))
+        self._sync_service()
+
+    def _sync_service(self) -> None:
+        cur = self.provider.currentData()
+        for pid, b in self.service_buttons.items():
+            b.setChecked(pid == cur)
+
+    # --- list -----------------------------------------------------------------------------------------
     def set_tab(self, key: str) -> None:
         self._tab = key
-        idx = [k for k, _ in TABS].index(key)
-        if self.tabs.currentIndex() != idx:
-            self.tabs.blockSignals(True)
-            self.tabs.setCurrentIndex(idx)
-            self.tabs.blockSignals(False)
+        for k, b in self.tab_buttons.items():
+            b.setChecked(k == key)
         self._fill()
 
     def _entries(self) -> list[tuple[str, str, str]]:
         """(key, name, detail) for the current tab and search."""
         q = self.search.text().strip().lower()
         if self._tab == "groups":
-            return [(f"group:{g.name}", g.name, f"{len(g.members)}명") for g in self.book.groups
+            return [(f"group:{g.name}", g.name, f"그룹 · {len(g.members)}명") for g in self.book.groups
                     if not q or q in g.name.lower()]
         if self._tab == "recent":
             people = [self.book.get(e) for e in self.book.recent]
@@ -110,41 +240,44 @@ class MailPicker(QDialog):
                 if not q or q in p.name.lower() or q in p.email.lower()]
 
     def rows(self) -> list[str]:
-        return [self.list.topLevelItem(i).data(0, Qt.UserRole) for i in range(self.list.topLevelItemCount())]
+        keys = [self.list.item(i).data(Qt.UserRole) for i in range(self.list.count())]
+        return [k for k in keys if k]
+
+    def row_widget(self, key: str) -> _Row | None:
+        for i in range(self.list.count()):
+            it = self.list.item(i)
+            if it.data(Qt.UserRole) == key:
+                return self.list.itemWidget(it)
+        return None
 
     def _fill(self) -> None:
-        self.list.blockSignals(True)
         self.list.clear()
-        for key, name, detail in self._entries():
-            it = QTreeWidgetItem([name, detail, ""])
-            it.setData(0, Qt.UserRole, key)
-            it.setFlags(it.flags() | Qt.ItemIsUserCheckable)
-            it.setCheckState(0, Qt.Checked if key in self._picked else Qt.Unchecked)
-            self.list.addTopLevelItem(it)
-            box = QComboBox()
-            box.addItem("받는 사람", "to")
-            box.addItem("참조", "cc")
-            box.setCurrentIndex(1 if self._picked.get(key) == "cc" else 0)
-            box.currentIndexChanged.connect(lambda _i, k=key, b=box: self._field_changed(k, b.currentData()))
-            self.list.setItemWidget(it, 2, box)
-        self.list.blockSignals(False)
+        entries = self._entries()
+        for key, name, detail in entries:
+            it = QListWidgetItem()
+            it.setData(Qt.UserRole, key)
+            row = _Row(key, name, detail, self._picked.get(key), self._pick)
+            it.setSizeHint(QSize(0, 52))
+            self.list.addItem(it)
+            self.list.setItemWidget(it, row)
+        if not entries:
+            it = QListWidgetItem("  아직 없습니다. 위 칸에 주소를 입력하고 Enter, 또는 [주소·그룹 편집]에서 추가하세요."
+                                 if not self.search.text().strip() else "  찾는 이름·주소가 없습니다. 주소를 다 쓰고 Enter 하면 추가됩니다.")
+            it.setFlags(Qt.NoItemFlags)
+            it.setData(Qt.UserRole, None)
+            self.list.addItem(it)
         self._update()
 
-    def _item_changed(self, it, col) -> None:
-        if col != 0:
-            return
-        key = it.data(0, Qt.UserRole)
-        box = self.list.itemWidget(it, 2)
-        if it.checkState(0) == Qt.Checked:
-            self._picked[key] = box.currentData() if box else "to"
-        else:
+    def _pick(self, key: str, fld: str | None) -> None:
+        if fld is None:
             self._picked.pop(key, None)
-        self._update()
-
-    def _field_changed(self, key: str, fld: str) -> None:
-        if key in self._picked:
+        else:
             self._picked[key] = fld
-            self._update()
+        row = self.row_widget(key)
+        if row is not None:
+            row.to_button.setChecked(fld == "to")
+            row.cc_button.setChecked(fld == "cc")
+        self._update()
 
     def check(self, key: str, field: str = "to") -> None:
         self._picked[key] = field
@@ -167,12 +300,30 @@ class MailPicker(QDialog):
         self.status.clear()
         self._update()
 
+    def _label(self, key: str) -> str:
+        if key.startswith("group:"):
+            return key[6:] + " (그룹)"
+        c = self.book.get(key)
+        return c.name if c is not None else (self._new.get(key) or key)
+
     def _update(self) -> None:
+        while self._chip_row.count():
+            w = self._chip_row.takeAt(0).widget()
+            if w is not None:
+                w.deleteLater()
+        for key, fld in self._picked.items():
+            chip = QPushButton(f"{'받는' if fld == 'to' else '참조'} · {self._label(key)}  ✕")
+            chip.setObjectName("chip" if fld == "to" else "chipcc")
+            chip.setToolTip("누르면 뺍니다")
+            chip.clicked.connect(lambda _=False, k=key: self._pick(k, None))
+            self._chip_row.addWidget(chip)
+        self._chip_row.addStretch(1)
         c = self.choice()
         to, cc = self.book.resolve(c.to, c.cc)
         n = len(to) + len(cc)
-        names = [k[6:] + "(그룹)" if k.startswith("group:") else k for k in self._picked]
+        names = [self._label(k) for k in self._picked]
         self.chips.setText(("선택: " + ", ".join(names)) if names else "아직 고르지 않았습니다.")
+        self.chip_area.setVisible(bool(names))
         self.go.setText(f"선택한 {n}명에게 메일 쓰기" if n else "받는 사람 없이 새 메일 쓰기")
         if n > MANY:
             self.status.setText(f"받는 사람이 {n}명입니다. 메일 서비스의 한도에 걸릴 수 있습니다.")
@@ -199,14 +350,27 @@ class ContactsDialog(QDialog):
 
     def __init__(self, book: AddressBook, parent=None):
         super().__init__(parent, Qt.WindowStaysOnTopHint)
-        self.setWindowTitle("주소·그룹 편집 (이 PC의 이 Windows 사용자만, 암호화해서 저장)")
-        self.resize(560, 560)
+        self.setWindowTitle("주소·그룹 편집")
+        self.setStyleSheet(STYLE)
+        self.resize(600, 620)
         self.book = book
         v = QVBoxLayout(self)
-        v.addWidget(QLabel("<b>주소</b>"))
+        v.setContentsMargins(20, 18, 20, 16)
+        v.setSpacing(10)
+        title = QLabel("주소·그룹 편집")
+        title.setObjectName("title")
+        v.addWidget(title)
+        sub = QLabel("이 PC의 이 Windows 사용자만 열 수 있게 암호화해서 저장합니다. 인터넷에 올리지 않습니다.")
+        sub.setObjectName("sub")
+        v.addWidget(sub)
+        sec = QLabel("주소")
+        sec.setObjectName("section")
+        v.addWidget(sec)
         self.table = QTableWidget(0, 2)
         self.table.setHorizontalHeaderLabels(["이름", "메일 주소"])
         self.table.horizontalHeader().setStretchLastSection(True)
+        self.table.verticalHeader().setVisible(False)
+        self.table.setColumnWidth(0, 160)
         v.addWidget(self.table, 1)
         r = QHBoxLayout()
         for label, fn in [("+ 추가", self._add_row), ("선택 삭제", self._del_rows), ("CSV 가져오기", self._import),
@@ -215,7 +379,9 @@ class ContactsDialog(QDialog):
             b.clicked.connect(fn)
             r.addWidget(b)
         v.addLayout(r)
-        v.addWidget(QLabel("<b>그룹</b> — 이름을 쓰고 아래 주소를 체크한 뒤 [그룹 저장]"))
+        sec2 = QLabel("그룹 — 이름을 쓰고 아래에서 사람을 체크한 뒤 [그룹 저장]")
+        sec2.setObjectName("section")
+        v.addWidget(sec2)
         g = QHBoxLayout()
         self.group_name = QComboBox()
         self.group_name.setEditable(True)
@@ -235,6 +401,7 @@ class ContactsDialog(QDialog):
         self.status.setWordWrap(True)
         v.addWidget(self.status)
         ok = QPushButton("저장하고 닫기")
+        ok.setObjectName("primary")
         ok.clicked.connect(self._apply)
         v.addWidget(ok)
         self._load()
@@ -352,12 +519,16 @@ class ContactsDialog(QDialog):
 
 
 class MailHelper(QWidget):
-    """Next to the browser's compose page: copy To / Cc / Subject / the capture one by one."""
+    """Next to the browser's compose page. When the service already filled To / Cc / Subject
+    only the capture step shows; the others wait under '다시 복사' for a field that came out empty."""
 
     IDLE_MS = 180_000
 
     def __init__(self, copy, parent=None):
         super().__init__(parent, Qt.Tool | Qt.WindowStaysOnTopHint)
+        self.setObjectName("mailhelper")
+        self.setAttribute(Qt.WA_StyledBackground, True)
+        self.setStyleSheet(STYLE)
         self.setWindowTitle("메일 붙여넣기 도우미")
         self.setAttribute(Qt.WA_DeleteOnClose, False)
         self._copy = copy
@@ -365,43 +536,72 @@ class MailHelper(QWidget):
         self._labels: dict[str, str] = {}
         self._capture = None
         self._save = None
+        self._prefilled = False
+        self._counts = {"to": 0, "cc": 0}
         v = QVBoxLayout(self)
-        v.addWidget(QLabel("<b>메일 붙여넣기 도우미</b>"))
+        v.setContentsMargins(16, 14, 16, 12)
+        v.setSpacing(8)
+        title = QLabel("메일 붙여넣기 도우미")
+        title.setObjectName("title")
+        v.addWidget(title)
         self.hint = QLabel()
+        self.hint.setObjectName("sub")
         self.hint.setWordWrap(True)
         v.addWidget(self.hint)
         self.buttons: dict[str, QPushButton] = {}
-        for key in ("to", "cc", "subject", "capture", "file"):
+        for key in ("capture", "to", "cc", "subject", "file"):
             b = QPushButton()
-            b.setMinimumHeight(40)
+            b.setObjectName("primary" if key == "capture" else ("link" if key == "file" else "step"))
+            b.setMinimumHeight(40 if key != "file" else 28)
             b.clicked.connect(lambda _=False, k=key: self._press(k))
             v.addWidget(b)
             self.buttons[key] = b
+        self.again = QPushButton("받는 사람·참조·제목 다시 복사 ▾")
+        self.again.setObjectName("link")
+        self.again.clicked.connect(self._show_steps)
+        v.addWidget(self.again)
         close = QPushButton("닫기")
         close.clicked.connect(self.close)
         v.addWidget(close)
         self._idle = QTimer(self)
         self._idle.setSingleShot(True)
         self._idle.timeout.connect(self.close)
+        self.setMinimumWidth(340)
 
     def set_data(self, to: list[str], cc: list[str], subject: str, prefilled: bool, capture_payload, save) -> None:
         from ..core.mailcompose import recipients_text
         self._texts = {"to": recipients_text(to), "cc": recipients_text(cc), "subject": subject}
-        self._labels = {"to": f"① 받는 사람 복사 ({len(to)}명)", "cc": f"② 참조 복사 ({len(cc)}명)",
-                        "subject": "③ 제목 복사", "capture": "④ 캡처 복사 → 본문에 Ctrl+V",
+        self._counts = {"to": len(to), "cc": len(cc)}
+        self._labels = {"to": f"① 받는 사람 칸에 붙일 주소 복사 ({len(to)}명)",
+                        "cc": f"② 참조 칸에 붙일 주소 복사 ({len(cc)}명)",
+                        "subject": "③ 제목 칸에 붙일 제목 복사",
+                        "capture": "캡처 복사 → 본문에 Ctrl+V",
                         "file": "붙여넣기가 막히면: 캡처를 파일로 저장(첨부용)"}
-        self._capture, self._save = capture_payload, save
+        self._capture, self._save, self._prefilled = capture_payload, save, prefilled
         for k, b in self.buttons.items():
             b.setText(self._labels[k])
-        self.buttons["to"].setVisible(bool(to))
-        self.buttons["cc"].setVisible(bool(cc))
         self.buttons["capture"].setVisible(capture_payload is not None)
-        self.hint.setText("받는 사람·제목이 이미 채워져 있습니다. ④ 캡처만 본문에 붙이면 됩니다. [보내기]는 직접 누르세요."
-                          if prefilled else
-                          "받는 사람은 이미 복사되어 있습니다: 받는 사람 칸을 누르고 Ctrl+V. 그다음 버튼을 차례로 누르고 "
-                          "각 칸에 Ctrl+V. "
-                          "[보내기]는 직접 누르세요. 로그인 화면이 나오면 로그인 후 계속하세요.")
+        if prefilled:
+            self.hint.setText("받는 사람·참조·제목은 메일 화면에 이미 채워져 있습니다. 본문을 누르고 Ctrl+V 하면 캡처가 붙습니다. "
+                              "[보내기]는 직접 누르세요.")
+            self._set_steps_visible(False)
+            self.again.setVisible(bool(to or cc))
+        else:
+            self.hint.setText("메일 화면의 각 칸을 누르고, 아래 버튼을 누른 뒤 Ctrl+V. 받는 사람은 이미 복사되어 있습니다. "
+                              "[보내기]는 직접 누르세요. 로그인 화면이 나오면 로그인 후 계속하세요.")
+            self._set_steps_visible(True)
+            self.again.setVisible(False)
         self._idle.start(self.IDLE_MS)
+
+    def _set_steps_visible(self, on: bool) -> None:
+        self.buttons["to"].setVisible(on and self._counts["to"] > 0)
+        self.buttons["cc"].setVisible(on and self._counts["cc"] > 0)
+        self.buttons["subject"].setVisible(on)
+        self.adjustSize()
+
+    def _show_steps(self) -> None:
+        self._set_steps_visible(True)
+        self.again.setVisible(False)
 
     def press(self, key: str) -> None:
         self._press(key)
@@ -415,7 +615,12 @@ class MailHelper(QWidget):
         payload = self._capture if key == "capture" else {"CF_UNICODETEXT": self._texts[key]}
         if payload and self._copy(payload):
             for k, b in self.buttons.items():
-                b.setText(self._labels[k] + ("   ✓ 복사됨" if k == key else ""))
+                done = k == key
+                b.setText(self._labels[k] + ("   ✓ 복사됨" if done else ""))
+                if k not in ("capture", "file"):
+                    b.setObjectName("done" if done else "step")
+                    b.style().unpolish(b)
+                    b.style().polish(b)
 
     def place(self) -> None:
         scr = QGuiApplication.primaryScreen()

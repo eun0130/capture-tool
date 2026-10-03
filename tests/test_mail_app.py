@@ -54,7 +54,8 @@ def test_MAPP_01_mail_opens_compose_and_shows_the_helper(mail):
     assert opened == ["https://mail.daum.net/"]           # a service without prefill: helper does it
     h = c.mail_helper
     assert h is not None and h.isVisible()
-    assert h.buttons["to"].text().startswith("① 받는 사람 복사 (1명)") and h.buttons["cc"].text().startswith("② 참조 복사 (2명)")
+    assert h.buttons["to"].text().startswith("① 받는 사람") and "(1명)" in h.buttons["to"].text()
+    assert h.buttons["cc"].text().startswith("② 참조") and "(2명)" in h.buttons["cc"].text()
     h.buttons["to"].click()
     assert c.clipboard.last[UNICODE] == "boss@corp.com" and "✓" in h.buttons["to"].text()
     h.buttons["cc"].click()
@@ -253,3 +254,49 @@ def test_MAPP_19_naver_opens_with_recipients_and_subject(mail):
     q = parse_qs(u.query)
     assert q["to"] == ["boss@corp.com,lee@corp.com"] and q["subject"][0].startswith("캡처 공유")
     assert PNG in c.clipboard.last and "이미 채워" in c.mail_helper.hint.text()
+
+
+def test_MAPP_20_prefilled_helper_shows_only_what_is_left(mail):
+    """Naver/Gmail already have To, Cc and Subject: the helper shows the capture step; the
+    other steps stay under '다시 복사' for when a field came out empty."""
+    from capture_tool.app.mail_ui import MailChoice
+    c, _, _ = mail(MailChoice(["boss@corp.com"], ["group:우리 팀"], "naver"), provider="naver")
+    c.on_toolbar_action("mail")
+    h = c.mail_helper
+    assert h.buttons["to"].isHidden() and h.buttons["cc"].isHidden() and h.buttons["subject"].isHidden()
+    assert not h.buttons["capture"].isHidden() and not h.again.isHidden()
+    h.again.click()
+    assert not h.buttons["to"].isHidden() and not h.buttons["cc"].isHidden()
+    assert "참조" in h.buttons["cc"].text()
+
+
+def test_MAPP_21_picker_service_buttons_choose_where_to_send(qt_app):
+    from capture_tool.app.mail_ui import MailPicker
+    from capture_tool.core.settings import Settings
+    d = MailPicker(C.AddressBook(), Settings())
+    assert set(d.service_buttons) == {"naver", "gmail"}
+    d.service_buttons["gmail"].click()
+    assert d.provider.currentData() == "gmail" and d.service_buttons["gmail"].isChecked()
+    d.service_buttons["naver"].click()
+    assert d.provider.currentData() == "naver" and not d.service_buttons["gmail"].isChecked()
+    d.provider.setCurrentIndex(d.provider.findData("daum"))
+    assert not d.service_buttons["naver"].isChecked() and not d.service_buttons["gmail"].isChecked()
+
+
+def test_MAPP_22_picker_rows_toggle_to_and_cc(qt_app):
+    from capture_tool.app.mail_ui import MailPicker
+    from capture_tool.core.settings import Settings
+    b = C.AddressBook()
+    b.add("팀장님", "boss@corp.com")
+    d = MailPicker(b, Settings())
+    d.set_tab("all")
+    row = d.row_widget("boss@corp.com")
+    row.to_button.click()
+    assert d.choice().to == ["boss@corp.com"]
+    row = d.row_widget("boss@corp.com")
+    row.cc_button.click()
+    assert d.choice().to == [] and d.choice().cc == ["boss@corp.com"]
+    row = d.row_widget("boss@corp.com")
+    row.cc_button.click()                                  # pressing the active one again: not chosen
+    assert d.choice().to == [] and d.choice().cc == []
+    assert row.name_label.text() == "팀장님" and row.avatar.text() == "팀"

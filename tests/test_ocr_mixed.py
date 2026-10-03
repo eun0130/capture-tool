@@ -101,3 +101,23 @@ def test_MIX_06_real_capture_reads_UI_and_CI(scale):
     text = "\n".join(l.text for l in OcrEngine().recognize(img))
     assert "UI" in text and "ü" not in text
     assert "CI" in text and "cI" not in text and "·cl" not in text, text
+
+
+# --- v0.7.6: a capture cut tight around the text --------------------------------------------------
+@pytest.mark.parametrize("crop", [(13, 52, 22, 280), (17, 48, 26, 276), (5, 60, 10, 300)])
+def test_PAD_01_tight_capture_of_a_title_is_read_whole(crop):
+    """Bug (v0.7.5): the red box around '매입처별 세금계산서 합계표' gave '매 ㅎ' - text touching the
+    capture's edge is missed by the text finder; a margin is added before reading."""
+    import cv2
+    y1, y2, x1, x2 = crop
+    img = cv2.imread(str(DATA / "hometax_dialog.png"))[y1:y2, x1:x2]
+    text = " ".join(l.text for l in OcrEngine().recognize(img)).replace(" ", "")
+    assert "매입처별세금계산서합계표" in text, text
+
+
+def test_PAD_02_boxes_stay_in_the_capture_coordinates():
+    import cv2
+    img = cv2.imread(str(DATA / "hometax_dialog.png"))[13:52, 22:280]
+    for l in OcrEngine().recognize(img):
+        x, y, w, h = l.box
+        assert 0 <= x and 0 <= y and x + w <= img.shape[1] and y + h <= img.shape[0], l.box

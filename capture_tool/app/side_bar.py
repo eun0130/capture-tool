@@ -246,9 +246,9 @@ class SideBar(QWidget):
     def search_menu(self):
         from PySide6.QtWidgets import QMenu
         m = QMenu(self)
-        head = m.addAction("그림으로 찾기 — 열린 검색창에 Ctrl+V")
+        head = m.addAction("그림으로 찾기 — 열린 창에 Ctrl+V")
         head.setEnabled(False)
-        for eng, label in (("google", "구글 (이미지 검색·렌즈)"), ("naver", "네이버 (이미지 검색)")):
+        for eng, label in (("google", "구글 렌즈 (그림으로 찾기)"),):
             a = m.addAction(label)
             a.triggered.connect(lambda _=False, e=eng: self.action.emit(f"search_img:{e}"))
         m.addSeparator()

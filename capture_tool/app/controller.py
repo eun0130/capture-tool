@@ -702,7 +702,7 @@ class Controller(QObject):
     def _web_search(self, name: str) -> None:
         from ..core import websearch
         kind, engine = name.split(":", 1)
-        if (kind == "search_img" and engine not in ("google", "naver")) or \
+        if (kind == "search_img" and engine != "google") or \
                 (kind == "search_text" and engine not in websearch.LABELS):
             return
         if self.session.state is not State.EDITING:
@@ -741,8 +741,8 @@ class Controller(QObject):
         if not self.open_url(url):
             self.notify("브라우저를 열지 못했습니다. 캡처는 복사되어 있습니다.")
         elif kind == "img":
-            self.notify(f"{LABELS[engine]} 검색을 열었습니다. 검색창을 누르고 Ctrl+V 하면 캡처로 찾습니다 "
-                        "(카메라 아이콘 → 이미지 붙여넣기). 붙여 넣기 전에는 아무것도 올라가지 않습니다.")
+            self.notify("구글 '이미지로 검색' 창을 열었습니다. 그 창에서 Ctrl+V 하면 캡처로 찾습니다 "
+                        "(창이 안 보이면 검색창의 카메라 아이콘을 누른 뒤 Ctrl+V). 붙여 넣기 전에는 아무것도 올라가지 않습니다.")
         else:
             self.notify(f"캡처 속 글자로 찾기를 열었습니다 ({LABELS[engine]}).")
 
