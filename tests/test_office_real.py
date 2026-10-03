@@ -92,3 +92,13 @@ def test_OFFICE_06_screen_tables_go_in_as_real_tables(tmp_path):
     lefts = {int(l.split(",")[2]) for l in tables}
     left_all = int(out.split("LEFTMOST (")[1].split(",")[1])
     assert all(abs(x - left_all) <= 3 for x in lefts), out
+
+
+@ppt
+def test_OFFICE_07_terminal_table_into_powerpoint(tmp_path):
+    """Bug (v0.7.9): a table drawn with line characters lost D1-D3 and its wrapped lines."""
+    src = str(ROOT / "tests" / "data" / "terminal_box_table.png")
+    out = flow("ppt_box_table", src, str(tmp_path / "slide.png"), "1", ok=lambda o: "RESULT done" in o)
+    assert "SIZE (6, 3)" in out, out
+    for want in ("'D1'", "'D2'", "'D3'", "'D4'", "'D5'", "낡음", "승격 안 됨", "아무 모름"):
+        assert want in out, (want, out)

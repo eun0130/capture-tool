@@ -271,6 +271,36 @@ def ppt_form_send(src_png: str, out_png: str) -> None:
     print("RESULT done")
 
 
+def ppt_box_table(src_png: str, out_png: str, keep: str = "1") -> None:
+    """표 button on a table drawn with line characters -> PowerPoint table; slide exported."""
+    import cv2
+    from capture_tool.core.box_table import find_box_table
+    from capture_tool.core.ocr import OcrEngine
+    from capture_tool.platform.powerpoint import TableItem, send
+    img = cv2.imread(src_png)
+    t = find_box_table(img, OcrEngine().read_words, 96)
+    style = t.style if keep == "1" else None
+    out = {}
+
+    def hook(pres, slide, added):
+        try:
+            shp = [x for x in slide.Shapes if x.HasTable][0]
+            tb = shp.Table
+            out["size"] = (tb.Rows.Count, tb.Columns.Count)
+            out["cells"] = [[tb.Cell(r, c).Shape.TextFrame.TextRange.Text for c in range(1, tb.Columns.Count + 1)]
+                            for r in range(1, tb.Rows.Count + 1)]
+            slide.Export(out_png, "PNG", 1920, 1080)
+        finally:
+            pres.Saved = True
+            pres.Close()
+    send(TableItem(t.rows, style=style, col_widths=t.col_widths if style else [],
+                   font_size=t.style.font_size if style else 14), new_presentation=True, hook=hook, timeout=120)
+    print("SIZE", out.get("size"))
+    for r in out.get("cells", []):
+        print("ROW", r)
+    print("RESULT done")
+
+
 def ppt_table() -> None:
     from capture_tool.core.text_table import find_text_table
     from capture_tool.platform.powerpoint import TableItem, send

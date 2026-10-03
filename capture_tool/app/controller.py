@@ -26,6 +26,7 @@ from ..core.scroll_session import ScrollCapture, looks_blocked
 from ..core.session import CaptureSession, State
 from ..core.shapes import detect, recognize_layout, screen_tables, split_doubtful, to_drawing
 from ..core.table import detect_grid, grid_from_cells, table_is_plausible
+from ..core.box_table import find_box_table
 from ..core.table_capture import CapturedTable, find_table
 from ..core.text_table import find_text_table
 from ..platform.powerpoint import (ClipboardShapes, Picture, PowerPointBusy, PowerPointUnavailable, TableItem,
@@ -1093,10 +1094,25 @@ class Controller(QObject):
         grid = grid_from_cells([(l.text, *l.box) for l in lines], *found)
         return grid if table_is_plausible(grid) else None
 
-    @staticmethod
-    def _table_rows(raw, lines, dpi: float = 96):
+    def _best_table(self, raw, scored, det, dpi: float = 96):
+        """The table in the capture: ruled / laid-out tables, or one drawn with line characters
+        (terminal output) - whichever gives more filled cells."""
+        t = find_table(raw, scored, det, dpi) if scored else None
+        read = getattr(self.ocr, "read_words", None)
+        if read is None:
+            return t
+        try:
+            b = find_box_table(raw, read, dpi)
+        except OcrUnavailable:
+            b = None
+        filled = lambda tb: sum(1 for r in tb.rows for c in r if c)       # noqa: E731
+        if b is not None and (t is None or filled(b) >= filled(t)):
+            return b
+        return t
+
+    def _table_rows(self, raw, lines, dpi: float = 96):
         """Rows of a table laid out on screen without ruling lines (dark pages, web tables)."""
-        found = find_table(raw, [(l.text, l.box, l.score) for l in lines], [], dpi)
+        found = self._best_table(raw, [(l.text, l.box, l.score) for l in lines], [], dpi)
         if found is None:
             return None
         return found.rows
@@ -1491,7 +1507,7 @@ class Controller(QObject):
                 return kind, lines, err, None, None
             if kind == "table":                # 표 button: the capture's table straight to the clipboard
                 scored = [(l.text, l.box, l.score) for l in lines]
-                return kind, lines, err, None, find_table(raw, scored, [], dpi) if lines else None
+                return kind, lines, err, None, self._best_table(raw, scored, [], dpi)
             if kind == "text":
                 qr = None
                 try:
@@ -1503,7 +1519,7 @@ class Controller(QObject):
             scored = [(l.text, l.box, l.score) for l in lines]
             det = detect(raw, text_boxes=split_doubtful(scored)[0])
             if not user_shapes:                # a table on screen -> a real table, not loose text boxes
-                table = find_table(raw, scored, det, dpi)
+                table = self._best_table(raw, scored, det, dpi)
                 if table is not None:
                     return kind, lines, err, None, table
             # shapes and labels in their places; dark text on a saturated fill is read again
@@ -1631,17 +1647,11 @@ class Controller(QObject):
         self._show_text_panel(lines, qr, pos, grid)
 
     def _finish_shapes(self, det, user_shapes, final, err, send: bool = False, dpi: float = 96) -> None:
-        tables = []
-        if send and self.settings.keep_style:          # ruled tables -> real PowerPoint tables
-            tables, used = screen_tables(det)
-            if tables:
-                det = [d for d in det if not any(d is u for u in used)]
-        shapes, conns = to_drawing(det, keep_style=self.settings.keep_style)
+        keep = self.settings.keep_style
+        tables, used = screen_tables(det) if keep else ([], [])
         us, uc = annotations_to_drawing(user_shapes, scale=dpi / 96)
+        shapes, conns = to_drawing(det, keep_style=keep)            # complete: tables as cell boxes
         shapes, conns = shapes + us, conns + uc
-        if not shapes and not conns and tables:
-            self._send_item_to_ppt(ClipboardShapes(tables=tables, dpi=dpi, paste=False), f"표 {len(tables)}개를")
-            return
         if not shapes and not conns:
             if send:  # nothing to convert: still deliver the picture to PowerPoint
                 payload = self._image_payload(final, dpi)
@@ -1652,21 +1662,44 @@ class Controller(QObject):
                 self.notify("도형을 찾지 못했습니다. 사각형·원·삼각형·선·화살표를 인식합니다.")
             return
         ok, png = cv2.imencode(".png", final)
-        payload = shapes_payload(gvml_package(shapes, conns, dpi), svg(shapes, conns, dpi),
-                                 png_with_dpi(png.tobytes(), dpi))
-        if not self._set_clipboard(payload):
-            return
+        png = png_with_dpi(png.tobytes(), dpi)
+        full = shapes_payload(gvml_package(shapes, conns, dpi), svg(shapes, conns, dpi), png)
         note = " (텍스트 인식 없이)" if err else ""
-        boxes = sum(1 for d in det if d.kind == "text")
-        what = f"도형 {len(shapes) - boxes}개" + (f", 글상자 {boxes}개" if boxes else "") + f", 연결선 {len(conns)}개"
-        if tables:
-            what += f", 표 {len(tables)}개"
-        if send:
-            from ..core.drawingml import _bounds, _resolve
-            minx, miny, _, _ = _bounds(shapes, _resolve(shapes, conns))
-            self._send_item_to_ppt(ClipboardShapes(tables=tables, origin=(minx, miny), dpi=dpi), f"{what}를{note}")
-        else:
-            self.notify(f"{what}를 복사했습니다{note}. PowerPoint에서 Ctrl+V 하면 하나씩 고칠 수 있습니다.")
+        n = len(tables)
+        if not send or not tables:
+            if not self._set_clipboard(full):
+                return
+            boxes = sum(1 for d in det if d.kind == "text")
+            what = f"도형 {len(shapes) - boxes}개" + (f", 글상자 {boxes}개" if boxes else "") + f", 연결선 {len(conns)}개"
+            if send:
+                from ..core.drawingml import _bounds, _resolve
+                minx, miny, _, _ = _bounds(shapes, _resolve(shapes, conns))
+                self._send_item_to_ppt(ClipboardShapes(origin=(minx, miny), dpi=dpi), f"{what}를{note}")
+            elif n:
+                self.notify(f"{what}를 복사했습니다{note}. ※ 표 {n}개는 칸 상자로 복사되었습니다(클립보드는 표를 담지 "
+                            f"못합니다). 고칠 수 있는 PowerPoint 표로 넣으려면 [도형PPT]로 PowerPoint에 바로 보내세요.")
+            else:
+                self.notify(f"{what}를 복사했습니다{note}. PowerPoint에서 Ctrl+V 하면 하나씩 고칠 수 있습니다.")
+            return
+        # straight into PowerPoint: tables as real tables, everything else pasted; afterwards the
+        # clipboard holds the complete capture again (tables as cell boxes) for Ctrl+V elsewhere
+        rest = [d for d in det if not any(d is u for u in used)]
+        s2, c2 = to_drawing(rest, keep_style=keep)
+        s2, c2 = s2 + us, c2 + uc
+        self._ppt_after = lambda: self._set_clipboard(full)
+        self._ppt_note = (f" 표 {n}개는 고칠 수 있는 PowerPoint 표로 넣었습니다. ※ 클립보드(Ctrl+V)로 붙이면 "
+                          f"표가 칸 상자로 들어갑니다.",
+                          f" (Ctrl+V로 붙이면 표 {n}개는 칸 상자로 들어갑니다.)")
+        boxes = sum(1 for d in rest if d.kind == "text")
+        what = f"도형 {len(s2) - boxes}개" + (f", 글상자 {boxes}개" if boxes else "") + f", 표 {n}개"
+        if not s2 and not c2:
+            self._send_item_to_ppt(ClipboardShapes(tables=tables, dpi=dpi, paste=False), f"{what}를{note}")
+            return
+        if not self._set_clipboard(shapes_payload(gvml_package(s2, c2, dpi), svg(s2, c2, dpi), png)):
+            return
+        from ..core.drawingml import _bounds, _resolve
+        minx, miny, _, _ = _bounds(s2, _resolve(s2, c2))
+        self._send_item_to_ppt(ClipboardShapes(tables=tables, origin=(minx, miny), dpi=dpi), f"{what}를{note}")
 
     # --- translate / summary -----------------------------------------------------------
     @property
@@ -1916,6 +1949,12 @@ class Controller(QObject):
                     self.bring_to_front(hwnd)       # PowerPoint in front, showing the new slide
             else:
                 msg = "PowerPoint에 들어가지 않았습니다. 클립보드에 있으니 슬라이드에서 Ctrl+V 하세요."
+        after, self._ppt_after = getattr(self, "_ppt_after", None), None
+        extra, self._ppt_note = getattr(self, "_ppt_note", None), None
+        if after:
+            after()                                   # the complete capture back on the clipboard
+        if extra:
+            msg += extra[0] if ok else extra[1]
         self.notify(msg)
         cb, self._ppt_cb = getattr(self, "_ppt_cb", None), None
         if cb:

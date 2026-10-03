@@ -36,6 +36,11 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 Name: "startup"; Description: "Windows 시작 시 자동 실행 (권장: 단축키를 바로 쓰려면 필요)"
 Name: "desktopicon"; Description: "바탕 화면에 바로가기 만들기"; Flags: unchecked
 
+[InstallDelete]
+; an update replaces the whole program: old files no longer used (earlier versions' libraries and
+; models) go first. User data is elsewhere (%APPDATA%\CaptureTool, %LOCALAPPDATA%\CaptureTool).
+Type: filesandordirs; Name: "{app}\_internal"
+
 [Files]
 Source: "..\dist\CaptureTool\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 

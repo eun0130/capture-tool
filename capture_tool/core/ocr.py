@@ -183,6 +183,7 @@ def fix_mixed_line(original: str, latin: str) -> str | None:
     return "".join((next(it) if (k % 2 == 0 and p) else p) for k, p in enumerate(parts_o))
 
 
+_ODD_LATIN_BY_HANGUL = re.compile(r"[\u00c0-\u024f][\uac00-\ud7a3]|[\uac00-\ud7a3][\u00c0-\u024f]")
 _PRONOUN_L = re.compile(r"(?<![\w.,'’])l(?=(['’](m|ll|ve|d))?(?![\w'’]))")
 _CAPS_WORD = re.compile(r"(?<![\w'’-])[A-Za-z]{2,6}(?![\w'’-])")     # "Al-Rashid" is a name
 _SHORT_CAPS = {"Al": "AI", "Cl": "CI", "Ul": "UI"}      # "El" (Spanish) and the like stay
@@ -412,6 +413,76 @@ class OcrEngine:
             if new_word != wtext:
                 text = text.replace(wtext, new_word, 1)
         return text
+
+    def read_words(self, img: np.ndarray) -> list[tuple[str, tuple]]:
+        """Words (Korean: single syllables) with their boxes (x0, y0, x1, y1): for layouts that
+        must be cut at exact x positions. English words are read again with the English model."""
+        if img is None or img.size == 0:
+            return []
+        engine = self._load()
+        m = MARGIN_LOW if self.margin else 0                 # text at the very edge is found too
+        work = with_margin(img, m) if m else np.ascontiguousarray(img)
+        try:
+            r = engine(work, use_det=True, use_cls=False, use_rec=True, return_word_box=True)
+        except TypeError:
+            return [(l.text, (l.box[0], l.box[1], l.box[0] + l.box[2], l.box[1] + l.box[3]))
+                    for l in self._run_tile(engine, img, 0, 0)]
+        out = []
+        for line_score, words in zip(getattr(r, "scores", ()) or (), getattr(r, "word_results", ()) or ()):
+            for w, ws, q in words or ():
+                q = np.asarray(q, float)
+                x0, y0 = q[:, 0].min() - m, q[:, 1].min() - m
+                x1, y1 = q[:, 0].max() - m, q[:, 1].max() - m
+                text = str(w)
+                if re.search(r"[A-Za-z][\uac00-\ud7a3][A-Za-z]", text):        # "Gi태ub": a misread inside
+                    text = self._fix_latin_words(work, text, [(text, ws, q.tolist())]) or text   # an English word
+                elif _ODD_LATIN_BY_HANGUL.search(text):                          # "ç가" for "CI가"
+                    text = self._reread_word(engine, work, q) or text
+                elif _LATIN_LETTER.search(text) and not _HANGUL.search(text):
+                    pad = 3
+                    crop = work[max(0, int(y0 + m) - pad):int(y1 + m) + pad, max(0, int(x0 + m) - pad):int(x1 + m) + pad]
+                    line = self._second_reading(crop, OcrLine(text, (pad, pad, int(x1 - x0), int(y1 - y0)),
+                                                              float(ws) if ws is not None else float(line_score)))
+                    text = line.text
+                out.append((fix_capital_i(text), (float(x0), float(y0), float(x1), float(y1))))
+        return out
+
+    def _reread_word(self, engine, img, q) -> str | None:
+        """One word read again on its own, enlarged; kept only if it no longer has odd letters."""
+        x0, y0 = int(q[:, 0].min()) - 3, int(q[:, 1].min()) - 3
+        x1, y1 = int(q[:, 0].max()) + 4, int(q[:, 1].max()) + 4
+        crop = img[max(0, y0):y1, max(0, x0):x1]
+        if crop.size == 0:
+            return None
+        if crop.shape[0] < SMALL_LINE_PX:
+            k = SMALL_LINE_PX / crop.shape[0]
+            crop = cv2.resize(crop, None, fx=k, fy=k, interpolation=cv2.INTER_CUBIC)
+        crop = with_margin(crop, 8)
+        try:
+            r = engine(crop, use_det=False, use_cls=False, use_rec=True)
+        except Exception:  # noqa: BLE001
+            return None
+        if r is None or not r.txts:
+            return None
+        t = str(r.txts[0]).strip()
+        return t if t and not _ODD_LATIN_BY_HANGUL.search(t) else None
+
+    def read_line(self, img: np.ndarray) -> str:
+        """Text of a crop holding one line (no text finding): table cells cut out exactly."""
+        if img is None or img.size == 0:
+            return ""
+        engine = self._load()
+        img = np.ascontiguousarray(img)
+        try:
+            r = engine(img, use_det=False, use_cls=False, use_rec=True)
+        except TypeError:                          # test fakes: whole recognition
+            lines = self._run_tile(engine, img, 0, 0)
+            return " ".join(l.text for l in lines)
+        if r is None or not r.txts or not str(r.txts[0]).strip():
+            return ""
+        line = OcrLine(str(r.txts[0]), (0, 0, img.shape[1], img.shape[0]), float(r.scores[0]))
+        line = self._second_reading(img, line)
+        return fix_capital_i(line.text)
 
     def _join_pieces(self, engine, img, pieces):
         """The text finder sometimes cuts one line into overlapping pieces ("Act as my" | "elite" |
