@@ -144,7 +144,7 @@ def _background(img: np.ndarray):
     return tuple(int(v) for v in np.median(border, axis=0))
 
 
-def detect(img: np.ndarray, text_boxes=None, threshold: int = FG_THRESHOLD) -> list[Detected]:
+def detect(img: np.ndarray, text_boxes=None, threshold: int = FG_THRESHOLD, cells: bool = False) -> list[Detected]:
     if img is None or img.size == 0 or min(img.shape[:2]) < 8:
         return []
     img = _to_bgr(img)
@@ -153,7 +153,7 @@ def detect(img: np.ndarray, text_boxes=None, threshold: int = FG_THRESHOLD) -> l
         region[max(0, int(y)):int(y + h), max(0, int(x)):int(x + w)] = 0
     out: list[Detected] = []
     _detect_in(img, region, _background(img), out, depth=0, budget=_Budget(TIME_BUDGET, MAX_COMPONENTS),
-               threshold=threshold)
+               threshold=threshold, cells=cells)
     out = _dedupe(out)[:MAX_COMPONENTS]
     out.sort(key=lambda d: (d.y, d.x))
     return out
@@ -177,7 +177,7 @@ def _dedupe(found: list[Detected]) -> list[Detected]:
     return keep
 
 
-def _detect_in(img, region, bg, out, depth, budget: _Budget, threshold: int = FG_THRESHOLD):
+def _detect_in(img, region, bg, out, depth, budget: _Budget, threshold: int = FG_THRESHOLD, cells: bool = False):
     fg = ((_dist(img, bg) > threshold) & (region > 0)).astype(np.uint8) * 255
     fg = cv2.morphologyEx(fg, cv2.MORPH_CLOSE, np.ones((3, 3), np.uint8))
     contours, hier = cv2.findContours(fg, cv2.RETR_TREE, cv2.CHAIN_APPROX_NONE)
@@ -216,9 +216,49 @@ def _detect_in(img, region, bg, out, depth, budget: _Budget, threshold: int = FG
             d = _classify(img, contour, fg, hole, bg)
             if d is None:
                 continue
+            grid = _cells(img, contours, hier, i, d, bg) if cells and split is None and d.kind == "rect" else []
+            if grid:                                   # a table: its cells, each with its own colour
+                d.fill = None
+                out.append(d)
+                out.extend(grid)
+                continue
             out.append(d)
             if d.fill and depth < 3 and d.kind not in ("line", "arrow"):
-                _recurse(img, contour, d, region, out, depth, budget, threshold)
+                _recurse(img, contour, d, region, out, depth, budget, threshold, cells)
+
+
+MIN_CELLS = 2           # a box split by ruling lines into this many rectangles or more is a table
+
+
+def _cells(img, contours, hier, i, d: Detected, bg) -> list[Detected]:
+    """The holes of one region: if they are rectangles filling most of it (a ruled table), one
+    rectangle per cell, outlined in the ruling colour and filled with the cell's own colour."""
+    holes = []
+    j = hier[i][2]
+    while j >= 0:
+        holes.append(contours[j])
+        j = hier[j][0]
+    if len(holes) < MIN_CELLS:
+        return []
+    boxes, area = [], 0
+    for h in holes:
+        x, y, w, hh = cv2.boundingRect(h)
+        a = cv2.contourArea(h)
+        if w < 8 or hh < 8 or a < 0.85 * w * hh:
+            continue
+        boxes.append((x, y, w, hh))
+        area += w * hh
+    if len(boxes) < MIN_CELLS or area < 0.6 * d.w * d.h:
+        return []
+    line = d.stroke
+    out = []
+    for x, y, w, hh in boxes:
+        c = Detected("rect", x - 1, y - 1, w + 2, hh + 2, stroke=line, stroke_width=1.0)
+        f = _fill_color(img[y:y + hh, x:x + w], np.full((hh, w), 255, np.uint8))
+        if f is not None and max(abs(a_ - b_) for a_, b_ in zip(f, bg)) > 4:
+            c.fill = _hex(f)
+        out.append(c)
+    return out
 
 
 SPLIT_KERNEL = 13  # px; shape bodies are thicker than this, connector lines are thinner
@@ -261,7 +301,8 @@ def _split_attached_lines(img, contour, fg):
     return bodies, lines
 
 
-def _recurse(img, contour, d, region, out, depth, budget: _Budget, threshold: int = FG_THRESHOLD):
+def _recurse(img, contour, d, region, out, depth, budget: _Budget, threshold: int = FG_THRESHOLD,
+             cells: bool = False):
     """Look for nested shapes inside a filled shape, using its fill as background.
     Works on the shape's bounding box only (not the whole screenshot)."""
     pad = 14  # margin so erosion treats the outside of the shape as outside
@@ -278,7 +319,7 @@ def _recurse(img, contour, d, region, out, depth, budget: _Budget, threshold: in
     if np.count_nonzero((_dist(sub, fill_bgr) > threshold) & (inner > 0)) < MIN_AREA:
         return
     nested: list[Detected] = []
-    _detect_in(sub, inner, fill_bgr, nested, depth + 1, budget, threshold)
+    _detect_in(sub, inner, fill_bgr, nested, depth + 1, budget, threshold, cells)
     for n in nested:
         n.x += x
         n.y += y
@@ -451,7 +492,7 @@ def _colors(img, contour, bg, d: Detected) -> Detected:
         prev = ek
     if thin:
         width = 1
-    k = width * 2 + 5
+    k = min(width, 3) * 2 + 5                    # (a plain fill measures as one thick border)
     inner = cv2.erode(filled, np.ones((k, k), np.uint8))
     fill = _fill_color(img, inner)
     d.stroke = _hex(stroke) if stroke else None
@@ -541,7 +582,7 @@ def text_boxes_for(lines: list[tuple[str, tuple]], img, dpi: float = 96) -> list
     return out
 
 
-def find_missed_text(img, detected: list[Detected], recognize) -> list[tuple[str, tuple]]:
+def find_missed_text(img, detected: list[Detected], recognize, skip=()) -> list[tuple[str, tuple]]:
     """A coloured shape with ink inside but no text: OCR on the whole screen can miss it (dark
     text on a saturated fill), so read just that shape again. Bits of those letters that were
     taken for tiny shapes are removed from `detected`. Returns the new (text, box) lines in
@@ -552,7 +593,7 @@ def find_missed_text(img, detected: list[Detected], recognize) -> list[tuple[str
     for d in sorted(detected, key=lambda d: -d.w * d.h):
         if tries >= MAX_REREAD:
             break
-        if d.kind in ("line", "arrow", "text") or d.text or not d.fill or d.w < 30 or d.h < 20:
+        if d.kind in ("line", "arrow", "text") or d.text or not d.fill or d.w < 30 or d.h < 20                 or any(d is k for k in skip):
             continue
         ix, iy = d.x + d.w // 5, d.y + d.h // 5
         inner = img[iy:iy + max(1, d.h * 3 // 5), ix:ix + max(1, d.w * 3 // 5)]
@@ -640,11 +681,11 @@ def _text_color(fill_hex: str) -> str:
 
 
 def attach_found_text(img, detected: list[Detected], lines: list[tuple[str, tuple]], recognize,
-                      dpi: float = 96) -> list[tuple[str, tuple]]:
+                      dpi: float = 96, skip=()) -> list[tuple[str, tuple]]:
     """OCR lines into their shapes (with style), then a second look only inside coloured
     shapes that are still empty. Returns the lines outside every shape."""
     rest = attach_text(detected, lines, img=img, dpi=dpi)
-    extra = find_missed_text(img, detected, recognize)
+    extra = find_missed_text(img, detected, recognize, skip)
     if extra:
         rest += attach_text(detected, extra, img=img, dpi=dpi)
     return rest
@@ -679,6 +720,7 @@ SHORT_STROKE = 40       # px; shorter lines/arrows on a screen are bits of borde
 SYMBOLS = set("OoㅇΟ○◯0¸Vv˅∨⌄⌵=<>‹›◀▶◁▷")   # what OCR makes of radio rings, dropdown arrows, icons
 WIDGET_MIN, WIDGET_MAX = 12, 28                # px; radio buttons and check boxes
 WIDGET_THRESHOLD = 10
+RING_LETTERS = set("ㅇOo○◯0")
 
 
 def _ink_box(img: np.ndarray, box, pad: int = 2):
@@ -731,7 +773,7 @@ def _boxed(img: np.ndarray, d: Detected, bg) -> Detected | None:
     return out
 
 
-def find_widgets(img: np.ndarray) -> list[Detected]:
+def find_widgets(img: np.ndarray, words=()) -> list[Detected]:
     """Radio buttons (rings, or filled with a dot) and check boxes: small, square, closed."""
     img = _to_bgr(img)
     bg = _background(img)
@@ -750,15 +792,27 @@ def find_widgets(img: np.ndarray) -> list[Detected]:
         has_hole = hier[0][i][2] >= 0
         if has_hole:                               # a ring or box outline: the hole is most of it
             hole = contours[hier[0][i][2]]
-            if cv2.contourArea(hole) < 0.35 * w * h:
+            if cv2.contourArea(hole) < 0.15 * w * h:
                 continue
         d = _classify(img, c, fg, has_hole, bg)
+        if d is None and has_hole and 0.66 <= cv2.contourArea(c) / float(w * h) <= 0.83 and _ring_ok(x, y, w, h, words):
+            d = _colors(img, c, bg, Detected("ellipse", x, y, w, h))   # a small ring: pixels make it lumpy
         if d is None or d.kind not in ("ellipse", "rect", "roundRect"):
             continue
+        if d.kind == "ellipse" and d.fill is None and (d.stroke is None or _luma(d.stroke) > 200):
+            continue                               # a faint round blob (an icon's edge), not a radio ring
         if d.kind == "ellipse" and d.fill is None and d.stroke_width > 2:
             d.stroke_width = 1.0
         out.append(d)
     return out
+
+
+def _ring_ok(x, y, w, h, words) -> bool:
+    """A small lumpy ring is a bullet only outside words, or where OCR read it as the first letter."""
+    for text, (bx, by, bw, bh) in words:
+        if bx - 2 <= x + w / 2 <= bx + bw + 2 and by <= y + h / 2 <= by + bh:
+            return bool(text) and text.strip()[:1] in RING_LETTERS and x + w / 2 <= bx + bh
+    return True
 
 
 def _overlap(box, d: Detected) -> float:
@@ -821,7 +875,7 @@ def recognize_layout(img: np.ndarray, lines, recognize, dpi: float = 96, find_ag
     """Screen capture -> shapes and text boxes in their places. lines: (text, box, score) from OCR;
     recognize(crop) -> [(text, box)] reads one coloured shape again (None: don't)."""
     img = _to_bgr(img)
-    widgets = find_widgets(img)
+    widgets = find_widgets(img, [(t, b) for t, b, _ in lines])
     kept = []
     for text, box, sc in lines:
         t = (text or "").strip()
@@ -830,9 +884,12 @@ def recognize_layout(img: np.ndarray, lines, recognize, dpi: float = 96, find_ag
         if len(t) == 1 and box[2] <= 30 and box[3] <= 30 and (
                 t in SYMBOLS or box[3] <= 12 or any(_overlap(box, w) > 0.5 for w in widgets)):
             continue                                   # a radio ring, dropdown or scroll arrow, icon: not a word
+        if len(t) > 1 and t[0] in RING_LETTERS and "가" <= t[1] <= "힣" and any(
+                _overlap((box[0], box[1], box[3], box[3]), w) > 0.5 for w in widgets):
+            t = t[1:]                                  # a bullet ring read as a letter
         box = _ink_box(img, _without_widgets(box, widgets))
         kept.append((t, box, sc))
-    det = detect(img, text_boxes=split_doubtful(kept)[0], threshold=LAYOUT_THRESHOLD)
+    det = detect(img, text_boxes=split_doubtful(kept)[0], threshold=LAYOUT_THRESHOLD, cells=True)
     for w in widgets:
         if not any(d.kind not in ("line", "arrow") and _iou(d, w) > 0.5 for d in det):
             det.append(w)
@@ -852,8 +909,15 @@ def recognize_layout(img: np.ndarray, lines, recognize, dpi: float = 96, find_ag
     free = release_labels(det, found)
     taken = [l for l in found if l not in free]
     if find_again and recognize is not None:
-        rest = attach_found_text(img, det, taken, recognize, dpi)
+        holders = [d for d in det if any(d.x <= b[0] + b[2] / 2 <= d.x + d.w and d.y <= b[1] + b[3] / 2 <= d.y + d.h
+                                         for _, b in free)]           # their labels stay as text boxes
+        rest = attach_found_text(img, det, taken, recognize, dpi, skip=holders)
     else:
         rest = attach_text(det, taken, img=img, dpi=dpi)
-    det += text_boxes_for(rest + free, img, dpi)
+    for t in text_boxes_for(rest + free, img, dpi):
+        cx, cy = t.x + t.w / 2, t.y + t.h / 2
+        if t.fill and any(d.fill and d.kind not in ("line", "arrow", "text")
+                          and d.x <= cx <= d.x + d.w and d.y <= cy <= d.y + d.h for d in det):
+            t.fill = None                              # the button behind already has that colour
+        det.append(t)
     return det

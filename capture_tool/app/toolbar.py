@@ -29,12 +29,16 @@ TEXT_STYLES = [("bold", "B", "굵게 (Ctrl+B)"), ("italic", "I", "기울임 (Ctr
 DEFAULT_FONT_SIZE = 22
 FONT_STEP = 2
 
+INK = "#E9ECF2"                  # icons on the dark bar (same look as the action bar)
+
 STYLE = """
-QWidget#toolbar { background: #FFFFFF; border: 1px solid #D9DCE1; border-radius: 12px; }
-QToolButton { border: none; border-radius: 8px; padding: 0; background: transparent; color: #343A40; }
-QToolButton:hover { background: #F1F3F5; }
-QToolButton:checked { background: #E6EEFB; color: #1F5FD1; }
-QSpinBox { min-height: 30px; padding: 0 4px; border: 1px solid #D9DCE1; border-radius: 6px; }
+QWidget#toolbar { background: #1B1F2A; border: 1px solid #353C4E; border-radius: 14px; }
+QToolButton { border: none; border-radius: 9px; padding: 0; background: transparent; color: #E9ECF2; }
+QToolButton:hover { background: #2D3446; }
+QToolButton:checked { background: #20365E; color: #8FB6FF; }
+QSpinBox { min-height: 30px; padding: 0 4px; border: 1px solid #353C4E; border-radius: 6px;
+           background: #262C3A; color: #E9ECF2; }
+QLabel { color: #C9CFDB; }
 """
 
 
@@ -211,7 +215,7 @@ class Toolbar(QWidget):
 
     def _tool_button(self, name, tip, checkable=False) -> QToolButton:
         b = QToolButton()
-        b.setIcon(icons.icon(name))
+        b.setIcon(icons.icon(name, INK))
         b.setIconSize(QSize(20, 20))
         b.setFixedSize(QSize(38, 38))
         b.setToolTip(tip)
@@ -224,7 +228,7 @@ class Toolbar(QWidget):
     def _sep() -> QFrame:
         f = QFrame()
         f.setFixedSize(1, 26)
-        f.setStyleSheet("background:#D9DCE1; margin: 0 6px;")
+        f.setStyleSheet("background:#353C4E; margin: 0 6px;")
         return f
 
     # --- actions & tools -------------------------------------------------------------------

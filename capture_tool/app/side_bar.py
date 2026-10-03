@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from PySide6.QtCore import QSize, Qt, Signal
-from PySide6.QtWidgets import QGridLayout, QHBoxLayout, QToolButton, QWidget
+from PySide6.QtWidgets import QFrame, QGridLayout, QHBoxLayout, QToolButton, QWidget
 
 from . import icons
 
@@ -31,15 +31,29 @@ ACTIONS = [
     ("help", "help", "도움말", "처음 쓰는 분을 위한 따라하기 설명서 (F1)", "extra"),
 ]
 
+INK = "#E9ECF2"                  # icon and label colour on the dark bar
+# groups shown with a thin divider between them in the one-row bar
+GROUPS = [("copy", "autosave"), ("text", "table", "ppt"), ("mail", "kakao", "search"), ("pin",), ("more",)]
+
 STYLE = """
-QWidget#sidebar { background: #FFFFFF; border: 1px solid #D9DCE1; border-radius: 14px; }
-QToolButton { border: none; border-radius: 10px; color: #343A40; font-size: 11px; padding: 4px 0 2px 0; }
-QToolButton:hover { background: #E6EEFB; color: #1F5FD1; }
-QToolButton#primary { background: #1F5FD1; color: #FFFFFF; }
-QToolButton#primary:hover { background: #174AA6; }
-QToolButton#tablebtn { padding-right: 20px; }
-QToolButton#tablebtn::menu-button { border: none; width: 16px; }
-QToolButton:checked { background: #E6EEFB; color: #1F5FD1; border: 1.5px solid #1F5FD1; }
+QWidget#sidebar { background: #1B1F2A; border: 1px solid #353C4E; border-radius: 16px; }
+QToolButton { border: none; border-radius: 10px; color: #E9ECF2; font-size: 11px; padding: 4px 1px; }
+QToolButton:hover { background: #2D3446; color: #FFFFFF; }
+QToolButton:pressed { background: #384158; }
+QToolButton#primary { background: #3B7CF6; color: #FFFFFF; font-weight: 600; padding: 4px 6px; }
+QToolButton#primary:hover { background: #5A92FA; }
+QToolButton#tablebtn { padding-right: 22px; }
+QToolButton#tablebtn::menu-button { border: none; width: 18px; border-top-right-radius: 10px;
+                                    border-bottom-right-radius: 10px; }
+QToolButton#tablebtn::menu-button:hover { background: #384158; }
+QToolButton:checked { background: #20365E; color: #8FB6FF; }
+QFrame#divider { background: #353C4E; }
+QMenu { background: #1F2430; color: #E9ECF2; border: 1px solid #353C4E; border-radius: 10px; padding: 6px; }
+QMenu::item { padding: 7px 22px 7px 14px; border-radius: 6px; }
+QMenu::item:selected { background: #2F3B55; }
+QMenu::item:disabled { color: #8A93A6; }
+QMenu::indicator { width: 14px; height: 14px; left: 4px; }
+QMenu::separator { height: 1px; background: #353C4E; margin: 5px 8px; }
 """
 
 
@@ -56,7 +70,8 @@ class SideBar(QWidget):
         self.setStyleSheet(STYLE)
         self._grid = QGridLayout(self)
         self._grid.setContentsMargins(6, 6, 6, 6)
-        self._grid.setSpacing(4)
+        self._grid.setHorizontalSpacing(2)
+        self._grid.setVerticalSpacing(4)
         self._extra = QWidget(self)               # second row: its own spacing, not the first row's columns
         self._extra_row = QHBoxLayout(self._extra)
         self._extra_row.setContentsMargins(0, 0, 0, 0)
@@ -65,11 +80,12 @@ class SideBar(QWidget):
         self.expanded = False
         self.buttons: dict[str, QToolButton] = {}
         self._row: dict[str, str] = {}
+        self._dividers: list[QFrame] = []
         for name, icon_name, label, tip, row in ACTIONS:
             b = QToolButton(self)
             primary = name == "copy"
             b.setObjectName("primary" if primary else "")
-            b.setIcon(icons.icon(icon_name, "#FFFFFF" if primary else "#343A40"))
+            b.setIcon(icons.icon(icon_name, "#FFFFFF" if primary else INK))
             b.setIconSize(QSize(20, 20))
             b.setText(label)
             b.setToolTip(tip)
@@ -103,6 +119,11 @@ class SideBar(QWidget):
             self._grid.removeWidget(b)
             self._extra_row.removeWidget(b)
         self._grid.removeWidget(self._extra)
+        for d in self._dividers:
+            self._grid.removeWidget(d)
+            d.hide()                                  # gone now, not when Qt deletes it later
+            d.deleteLater()
+        self._dividers = []
         while self._extra_row.count():
             self._extra_row.takeAt(0)
         if self.columns:
@@ -120,13 +141,25 @@ class SideBar(QWidget):
         else:
             basic = [n for n in self.buttons if self._row[n] == "basic"]
             extra = [n for n in self.buttons if self._row[n] == "extra"]
-            for i, n in enumerate(basic):
+            col, group = 0, None
+            for n in basic:
+                g = next((k for k, names in enumerate(GROUPS) if n in names), None)
+                if group is not None and g != group:          # a thin line between groups
+                    d = QFrame(self)
+                    d.setObjectName("divider")
+                    d.setFixedSize(1, 22)
+                    self._grid.addWidget(d, 0, col, Qt.AlignVCenter)
+                    d.show()
+                    self._dividers.append(d)
+                    col += 1
+                group = g
                 b = self.buttons[n]
                 b.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
                 b.setMinimumSize(QSize(0, 40))
                 b.setMaximumSize(QSize(16777215, 40))
                 b.setVisible(True)
-                self._grid.addWidget(b, 0, i)
+                self._grid.addWidget(b, 0, col)
+                col += 1
             for n in extra:
                 b = self.buttons[n]
                 b.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
@@ -135,7 +168,7 @@ class SideBar(QWidget):
                 self._extra_row.addWidget(b)
                 b.setVisible(self.expanded)
             self._extra_row.addStretch(1)
-            self._grid.addWidget(self._extra, 1, 0, 1, max(1, len(basic)))
+            self._grid.addWidget(self._extra, 1, 0, 1, max(1, col))
             self._extra.setVisible(self.expanded)
             if "more" in self.buttons:
                 self.buttons["more"].setText("기본" if self.expanded else "전체")
@@ -246,7 +279,7 @@ class SideBar(QWidget):
     def search_menu(self):
         from PySide6.QtWidgets import QMenu
         m = QMenu(self)
-        head = m.addAction("그림으로 찾기 — 열린 창에 Ctrl+V")
+        head = m.addAction("그림으로 찾기 — 캡처가 저절로 붙습니다")
         head.setEnabled(False)
         for eng, label in (("google", "구글 렌즈 (그림으로 찾기)"),):
             a = m.addAction(label)

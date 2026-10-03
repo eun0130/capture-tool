@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import threading
 import time
 from datetime import datetime
 from pathlib import Path
@@ -33,6 +34,9 @@ from .overlay import OverlayWindow
 from .pin import PinWindow
 from .render import compose
 from .text_panel import TextPanel, mask
+
+READ_AHEAD_MAX_PX = 8_000_000     # bigger areas (a whole 4K screen) are read only when asked
+READ_AHEAD_WAIT_S = 30.0
 
 log = logging.getLogger("capture_tool")
 
@@ -359,6 +363,49 @@ class Controller(QObject):
         ov.show_toolbar()
         ov.setFocus()
         self.auto_copy_soon(now=True)
+        self._start_read_ahead(ov)
+
+    # --- read ahead: the text is ready by the time a button is pressed ------------------------
+    read_ahead_mode = None              # "thread" | "inline" | "off"; None: thread unless a sync (test) controller
+
+    @staticmethod
+    def _read_key(raw):
+        import hashlib
+        return raw.shape, hashlib.blake2b(np.ascontiguousarray(raw).tobytes(), digest_size=16).digest()
+
+    def _start_read_ahead(self, ov) -> None:
+        mode = self.read_ahead_mode or ("off" if self.sync else "thread")
+        self._ahead = None
+        if mode == "off" or not getattr(self.settings, "read_ahead", True):
+            return
+        sel, doc = self.session.selection, self.session.document
+        if sel is None or sel.w * sel.h * ov.scale * ov.scale > READ_AHEAD_MAX_PX:
+            return
+        raw = mask_outside(ov.crop(sel), doc.clip if doc else None)
+        slot = {"key": self._read_key(raw), "done": threading.Event(), "result": None}
+        self._ahead = slot
+
+        def job():
+            try:
+                slot["result"] = self.ocr.recognize(raw)
+            except Exception as e:  # noqa: BLE001 - kept and raised where the text is used
+                slot["result"] = e
+            slot["done"].set()
+
+        if mode == "inline":
+            job()
+        else:
+            threading.Thread(target=job, name="read-ahead", daemon=True).start()
+
+    def _read(self, raw):
+        """OCR of `raw`, reusing the read-ahead of the same pixels (waiting for it if running)."""
+        slot = getattr(self, "_ahead", None)
+        if slot is not None and slot["key"] == self._read_key(raw) and slot["done"].wait(READ_AHEAD_WAIT_S):
+            res = slot["result"]
+            if isinstance(res, Exception):
+                raise res
+            return list(res)
+        return self.ocr.recognize(raw)
 
     # --- live copy: Ctrl+V works without Ctrl+C -----------------------------------------
     def auto_copy_soon(self, now: bool = False) -> None:
@@ -717,7 +764,7 @@ class Controller(QObject):
 
         def work():
             try:
-                lines = self.ocr.recognize(raw)
+                lines = self._read(raw)
             except OcrUnavailable:
                 lines = []
             return "text", engine, websearch.text_url(engine, full_text(lines)) if lines else None
@@ -985,7 +1032,7 @@ class Controller(QObject):
 
         def work():
             try:
-                return self.ocr.recognize(raw), None
+                return self._read(raw), None
             except OcrUnavailable as e:
                 return [], str(e)
 
@@ -1437,7 +1484,7 @@ class Controller(QObject):
         def work():
             lines, err = [], None
             try:
-                lines = self.ocr.recognize(raw)
+                lines = self._read(raw)
             except OcrUnavailable as e:
                 err = str(e)
             if kind == "table_preview":        # ▾ 미리 보고 고치기: always the editable preview

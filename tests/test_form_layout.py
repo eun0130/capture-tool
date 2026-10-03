@@ -91,3 +91,32 @@ def test_FORM_08_radio_buttons_and_check_boxes(ocr):
     t = texts(det)
     assert "O" not in [x.strip() for x in t]
     assert sum("위수탁" in x for x in t) == 2 and any("전자세금계산서" in x for x in t)
+
+
+def test_FORM_09_tables_on_a_screen_keep_their_cells(ocr):
+    """User (v0.7.7): the tables came out as one box with loose headers - no cells, no header colour."""
+    _, _, det = layout(ocr, "form_tax_tables.png")
+    head1 = [d for d in det if d.kind == "rect" and 130 <= d.y <= 145 and 35 <= d.h <= 55 and d.w >= 60]
+    head2 = [d for d in det if d.kind == "rect" and 350 <= d.y <= 362 and 35 <= d.h <= 55 and d.w >= 200]
+    assert len(head1) >= 10, [(d.kind, d.x, d.y, d.w, d.h) for d in det if d.kind != "text"]
+    assert len(head2) == 6, [(d.kind, d.x, d.y, d.w, d.h) for d in det if d.kind != "text"]
+    assert all(d.fill and d.fill.upper() != "#FFFFFF" for d in head2)          # header colour kept
+    assert all(d.text in ("은행명", "계좌번호") for d in head2)                 # each header in its cell
+    body2 = [d for d in det if d.kind == "rect" and 400 <= d.y <= 450 and d.w >= 200 and 35 <= d.h <= 55]
+    assert len(body2) >= 12
+
+
+def test_FORM_10_buttons_keep_their_colour_and_no_box_inside(ocr):
+    _, _, det = layout(ocr, "form_tax_tables.png")
+    ok = next(d for d in det if d.text == "확인")
+    one = next(d for d in det if d.text == "1")
+    assert ok.kind != "text" and ok.fill.upper() == "#8E8E8E", ok
+    assert one.kind != "text" and one.fill.upper() == "#8E8E8E", one
+    assert not [d for d in det if d.kind == "text" and d.fill]                  # no coloured patches
+
+
+def test_FORM_11_ring_icon_is_not_a_letter(ocr):
+    _, _, det = layout(ocr, "form_tax_tables.png")
+    title = next(d for d in det if d.text and "가상계좌 내역" in d.text)
+    assert title.text == "가상계좌 내역", title.text
+    assert [d for d in det if d.kind == "ellipse" and d.x < 30 and 320 <= d.y <= 345]
