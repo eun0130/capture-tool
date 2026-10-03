@@ -2,23 +2,30 @@
 from __future__ import annotations
 
 from PySide6.QtCore import QSize, Qt, Signal
-from PySide6.QtWidgets import QGridLayout, QToolButton, QWidget
+from PySide6.QtWidgets import QGridLayout, QHBoxLayout, QToolButton, QWidget
 
 from . import icons
 
+# (action, icon, label, tooltip, row): "basic" = the one-row bar, "extra" = shown under 전체
 ACTIONS = [
-    ("copy", "copy", "복사", "클립보드에 복사 (Enter)"),
-    ("save_as", "save_as", "저장", "저장 위치를 골라 저장 (Ctrl+Shift+S)"),
-    ("text", "ocr", "텍스트", "이미지 속 글자를 인식해 복사"),
-    ("table", "table", "표", "캡처 속 표를 칸 그대로 복사 — 엑셀·PowerPoint에 붙이면 고칠 수 있는 표"),
-    ("ppt", "ppt", "PPT로", "캡처한 그대로 PowerPoint에 넣기 — 그림(그린 것 포함), 텍스트 모드에서는 글자"),
-    ("ppt_shapes", "shapes", "도형PPT", "도형을 알아봐서 PowerPoint에서 고칠 수 있는 도형으로 넣기"),
-    ("scroll", "scroll", "스크롤", "아래로 자동 스크롤하며 길게 캡처 — 브라우저 창 전체를 고르면 페이지 처음부터 끝까지 (Esc 중지)"),
-    ("link", "link", "링크", "링크 복사 — ① 파일 링크: 저장한 파일 위치(인터넷에 올리지 않음, 같은 PC·공유 폴더에서 열림) "
-                             "② 인터넷 공유 링크: 누구나 열 수 있는 주소, 정해진 시간 뒤 자동 삭제"),
-    ("pin", "pin", "고정", "캡처를 다른 모든 창 위에 계속 떠 있게 붙여 둡니다 — 자료를 보며 작업할 때 (F3)"),
+    ("copy", "copy", "복사", "클립보드에 복사하고 닫기 (Enter · Ctrl+C) — 영역을 고르면 이미 복사되어 있습니다", "basic"),
+    ("autosave", "save", "자동저장", "켜 두면 캡처를 끝낼 때마다 저장 폴더에 파일로도 저장 (누를 때마다 켜기/끄기)", "basic"),
+    ("text", "ocr", "텍스트", "이미지 속 글자를 인식해 복사", "basic"),
+    ("table", "table", "표", "캡처 속 표를 칸 그대로 복사 — 엑셀·PowerPoint에 붙이면 고칠 수 있는 표", "basic"),
+    ("ppt", "ppt", "PPT", "캡처한 그대로 PowerPoint에 넣기 — 그림(그린 것 포함), 텍스트 모드에서는 글자", "basic"),
+    ("mail", "mail", "메일", "메일로 보내기 — 받는 사람을 고르면 네이버·Gmail 등의 쓰기 화면이 열리고, 도우미 창으로 붙여 넣기 "
+                             "([보내기]는 직접)", "basic"),
     ("kakao", "talk", "카톡", "카카오톡으로 보내기 — 열려 있는 채팅방을 고르면 그곳에 붙여 넣습니다 "
-                              "(카카오톡의 [전송]을 눌러야 보내집니다)"),
+                              "(카카오톡의 [전송]을 눌러야 보내집니다)", "basic"),
+    ("pin", "pin", "고정", "캡처를 다른 모든 창 위에 계속 떠 있게 붙여 둡니다 — 여러 장 가능 (F3)", "basic"),
+    ("more", "more", "전체", "모든 기능 펼치기 / 기본만 보기 (마지막 상태를 기억)", "basic"),
+    ("save_as", "save_as", "다른 이름 저장", "저장 위치를 골라 저장 (Ctrl+Shift+S)", "extra"),
+    ("ppt_shapes", "shapes", "도형PPT", "도형을 알아봐서 PowerPoint에서 고칠 수 있는 도형으로 넣기", "extra"),
+    ("scroll", "scroll", "스크롤", "아래로 자동 스크롤하며 길게 캡처 — 브라우저 창 전체를 고르면 페이지 처음부터 끝까지 (Esc 중지)",
+     "extra"),
+    ("link", "link", "링크", "링크 복사 — ① 파일 링크: 저장한 파일 위치(인터넷에 올리지 않음, 같은 PC·공유 폴더에서 열림) "
+                             "② 인터넷 공유 링크: 누구나 열 수 있는 주소, 정해진 시간 뒤 자동 삭제", "extra"),
+    ("open_folder", "folder", "저장 폴더", "저장 폴더 열기", "extra"),
 ]
 
 STYLE = """
@@ -27,10 +34,14 @@ QToolButton { border: none; border-radius: 10px; color: #343A40; font-size: 11px
 QToolButton:hover { background: #E6EEFB; color: #1F5FD1; }
 QToolButton#primary { background: #1F5FD1; color: #FFFFFF; }
 QToolButton#primary:hover { background: #174AA6; }
+QToolButton:checked { background: #E6EEFB; color: #1F5FD1; border: 1.5px solid #1F5FD1; }
 """
 
 
 class SideBar(QWidget):
+    """Quick actions for the capture. Row mode (default): one row of the common actions under
+    the capture, a second row with the rest when expanded (전체). Column mode: everything in a
+    column (the edit window's right side)."""
     action = Signal(str)
 
     def __init__(self, parent=None):
@@ -41,19 +52,25 @@ class SideBar(QWidget):
         self._grid = QGridLayout(self)
         self._grid.setContentsMargins(6, 6, 6, 6)
         self._grid.setSpacing(4)
-        self.columns = 1
+        self._extra = QWidget(self)               # second row: its own spacing, not the first row's columns
+        self._extra_row = QHBoxLayout(self._extra)
+        self._extra_row.setContentsMargins(0, 0, 0, 0)
+        self._extra_row.setSpacing(4)
+        self.columns = 0                  # 0 = row mode
+        self.expanded = False
         self.buttons: dict[str, QToolButton] = {}
-        for name, icon_name, label, tip in ACTIONS:
+        self._row: dict[str, str] = {}
+        for name, icon_name, label, tip, row in ACTIONS:
             b = QToolButton(self)
             primary = name == "copy"
             b.setObjectName("primary" if primary else "")
             b.setIcon(icons.icon(icon_name, "#FFFFFF" if primary else "#343A40"))
-            b.setIconSize(QSize(22, 22))
+            b.setIconSize(QSize(20, 20))
             b.setText(label)
             b.setToolTip(tip)
-            b.setToolButtonStyle(Qt.ToolButtonTextUnderIcon)
-            b.setFixedSize(QSize(56, 54))
             b.setFocusPolicy(Qt.NoFocus)
+            if name == "autosave":
+                b.setCheckable(True)
             if name == "link":
                 b.clicked.connect(lambda _=False, btn=b: self._link_menu(btn))
             elif name == "kakao":
@@ -61,15 +78,69 @@ class SideBar(QWidget):
             else:
                 b.clicked.connect(lambda _=False, n=name: self.action.emit(n))
             self.buttons[name] = b
-        self.set_columns(1)
+            self._row[name] = row
+        self._arrange()
+
+    def _arrange(self) -> None:
+        for b in self.buttons.values():
+            self._grid.removeWidget(b)
+            self._extra_row.removeWidget(b)
+        self._grid.removeWidget(self._extra)
+        while self._extra_row.count():
+            self._extra_row.takeAt(0)
+        if self.columns:
+            self._extra.hide()                  # column: everything but the row-only switches
+            names = [n for n in self.buttons if n not in ("more", "autosave")]
+            for i, n in enumerate(names):
+                b = self.buttons[n]
+                b.setToolButtonStyle(Qt.ToolButtonTextUnderIcon)
+                b.setFixedSize(QSize(64, 54))
+                self._grid.addWidget(b, i // self.columns, i % self.columns)
+                b.setVisible(True)
+            for n in ("more", "autosave"):
+                if n in self.buttons:
+                    self.buttons[n].setVisible(False)
+        else:
+            basic = [n for n in self.buttons if self._row[n] == "basic"]
+            extra = [n for n in self.buttons if self._row[n] == "extra"]
+            for i, n in enumerate(basic):
+                b = self.buttons[n]
+                b.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
+                b.setMinimumSize(QSize(0, 40))
+                b.setMaximumSize(QSize(16777215, 40))
+                b.setVisible(True)
+                self._grid.addWidget(b, 0, i)
+            for n in extra:
+                b = self.buttons[n]
+                b.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
+                b.setMinimumSize(QSize(0, 40))
+                b.setMaximumSize(QSize(16777215, 40))
+                self._extra_row.addWidget(b)
+                b.setVisible(self.expanded)
+            self._extra_row.addStretch(1)
+            self._grid.addWidget(self._extra, 1, 0, 1, max(1, len(basic)))
+            self._extra.setVisible(self.expanded)
+            if "more" in self.buttons:
+                self.buttons["more"].setText("기본" if self.expanded else "전체")
+        self._grid.invalidate()
+        self.adjustSize()
 
     def set_columns(self, n: int) -> None:
-        """One column normally; two when one column would be too tall for the screen."""
+        """Column mode with n columns (the edit window); 0 = back to the row."""
         self.columns = n
-        for i, b in enumerate(self.buttons.values()):
-            self._grid.removeWidget(b)
-            self._grid.addWidget(b, i // n, i % n)
-        self.adjustSize()
+        self._arrange()
+
+    def set_expanded(self, on: bool) -> None:
+        self.expanded = bool(on)
+        if not self.columns:
+            self._arrange()
+
+    def set_autosave(self, on: bool) -> None:
+        b = self.buttons.get("autosave")
+        if b is not None:
+            b.setChecked(bool(on))
+            b.setText("자동저장 켜짐" if on else "자동저장")
+            self.adjustSize()
 
     def remove_action(self, name: str) -> None:
         b = self.buttons.pop(name, None)
@@ -78,9 +149,12 @@ class SideBar(QWidget):
             b.hide()                       # gone right away, not only when Qt deletes it later
             b.setParent(None)
             b.deleteLater()
-            self.set_columns(self.columns)
+            self._arrange()
 
     def fit_height(self, max_height: int) -> None:
+        """Column mode only: two columns when one would be too tall for the screen."""
+        if not self.columns:
+            return
         one = len(self.buttons) * 58 + 12
         want = 1 if one <= max_height else 2
         if want != self.columns:

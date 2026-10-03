@@ -38,6 +38,48 @@ from .text_panel import TextPanel, mask
 log = logging.getLogger("capture_tool")
 
 
+def _protect(text: str) -> str:
+    from ..core.contacts import SecretError
+    from ..platform import secret
+    try:
+        return secret.protect(text)
+    except secret.SecretError as e:
+        raise SecretError(str(e)) from e
+
+
+def _unprotect(blob: str) -> str:
+    from ..platform import secret
+    return secret.unprotect(blob)
+
+
+def _open_url(url: str) -> bool:
+    """The person's default browser (web mail) or mail app (mailto:)."""
+    if not url.startswith(("https://", "mailto:")):
+        return False
+    import os
+    try:
+        os.startfile(url)
+        return True
+    except OSError:
+        return False
+
+
+def _open_folder(path) -> None:
+    import os
+    try:
+        os.startfile(str(path))
+    except OSError:
+        pass
+
+
+def _reveal_file(path) -> None:
+    import subprocess
+    try:
+        subprocess.Popen(["explorer", "/select,", str(path)])
+    except OSError:
+        pass
+
+
 class _Job(QRunnable):
     def __init__(self, fn, done):
         super().__init__()
@@ -121,6 +163,15 @@ class Controller(QObject):
         self.uploader = None                # tests replace the upload
         self.scroll_limits: dict = {}   # tests: max_height / max_pixels / max_steps
         self.ask_save_path = self._ask_save_path_dialog
+        # 메일: address book (per Windows user, encrypted), compose page, paste helper
+        self.contacts_path = self.settings_path.parent / "contacts.dat"
+        self.protect, self.unprotect = _protect, _unprotect
+        self.open_url = _open_url
+        self.reveal_file = _reveal_file
+        self.open_folder = _open_folder
+        self.ask_mail = None                # tests replace the picker
+        self.mail_helper = None
+        self._book = None
         from ..platform.powerpoint import PowerPointSender
         from ..platform.security_software import detect_drm
         self.powerpoint = PowerPointSender()
@@ -366,12 +417,17 @@ class Controller(QObject):
 
     # --- finishing ---------------------------------------------------------------
     def on_toolbar_action(self, name: str) -> None:
+        if name in ("autosave", "more", "open_folder"):
+            self._bar_action(name)
+            return
         if name not in ("undo", "redo"):
             self._acted = True
         if name in ("link_file", "link_web"):
             self._link_from_capture(name)
         elif name.startswith("kakao"):
             self._send_to_kakao(name)
+        elif name == "mail":
+            self._send_mail()
         elif name in ("copy", "save", "save_as", "pin"):
             self.finish(name)
         elif name == "cancel":
@@ -587,6 +643,103 @@ class Controller(QObject):
         return out
 
     # --- links -------------------------------------------------------------------------------------------
+    # --- action bar switches ---------------------------------------------------------------------
+    def _bar_action(self, name: str) -> None:
+        s = self.settings
+        if name == "autosave":
+            s.auto_save = not s.auto_save
+            self._persist()
+            for ov in self.overlays:
+                ov.side_bar.set_autosave(s.auto_save)
+            if s.auto_save:
+                folder, _ = resolve_save_dir(s.save_dir, self.fallback_dir)
+                self.notify(f"자동 저장을 켰습니다. 캡처를 끝낼 때마다 {folder}에 저장합니다.")
+            else:
+                self.notify("자동 저장을 껐습니다.")
+        elif name == "more":
+            s.bar_expanded = not s.bar_expanded
+            self._persist()
+            for ov in self.overlays:
+                ov.side_bar.set_expanded(s.bar_expanded)
+                if ov is self.active_overlay:
+                    ov.show_toolbar()
+        elif name == "open_folder":
+            folder, _ = resolve_save_dir(s.save_dir, self.fallback_dir)
+            self.open_folder(folder)
+
+    # --- mail -----------------------------------------------------------------------------------
+    def address_book(self):
+        if self._book is None:
+            from ..core import contacts
+            self._book, warn = contacts.load(self.contacts_path, unprotect=self.unprotect)
+            if warn:
+                self.notify(warn)
+        return self._book
+
+    def _save_book(self) -> None:
+        from ..core import contacts
+        try:
+            contacts.save(self.address_book(), self.contacts_path, protect=self.protect)
+        except Exception as e:  # noqa: BLE001 - the mail still goes ahead; say why it wasn't kept
+            log.warning("address book not saved: %s", type(e).__name__)
+            self.notify("주소록을 저장하지 못했습니다. 이번 메일은 그대로 진행합니다.")
+
+    def _send_mail(self) -> None:
+        """Copy the capture, choose recipients, open the mail service's compose page in the
+        person's own browser (their own sign-in), and show the paste helper. Never sends."""
+        if self.session.state is not State.EDITING:
+            return
+        from ..core.contacts import BookFull, InvalidEmail
+        from ..core.mailcompose import compose as compose_mail
+        from ..core.mailcompose import default_subject
+        ov, sel, doc, raw = self._take()
+        final = compose(raw, doc)
+        payload = self._image_payload(final, 96 * ov.scale)
+        if payload:
+            self._set_clipboard(payload)
+        book = self.address_book()
+        from .mail_ui import ask_mail
+        choice = (self.ask_mail or ask_mail)(book, self.settings, None)
+        if choice is None:
+            self.notify("메일 보내기를 취소했습니다. 캡처는 복사되어 있습니다.")
+            return
+        for email, name in choice.new.items():
+            try:
+                book.add(name, email)
+            except (InvalidEmail, BookFull):
+                pass
+        to, cc = book.resolve(choice.to, choice.cc)
+        if self.settings.mail_provider != choice.provider:
+            self.settings.mail_provider = choice.provider
+            self._persist()
+        subject = default_subject(self.now())
+        try:
+            page = compose_mail(choice.provider, to, cc, subject, account=self.settings.mail_account,
+                                custom=self.settings.mail_custom_url)
+        except ValueError:
+            self.notify("회사 메일 쓰기 주소가 올바르지 않습니다. 설정 → 메일에서 https:// 로 시작하는 주소를 넣어 주세요. "
+                        "캡처는 복사되어 있습니다.")
+            return
+        book.mark_used(to + cc)
+        self._save_book()
+        if not self.open_url(page.url):
+            self.notify("브라우저를 열지 못했습니다. 메일 사이트를 직접 열고 도우미 창으로 붙여 넣으세요.")
+        else:
+            self.notify("메일 쓰기 화면을 열었습니다. 도우미 창의 버튼으로 붙여 넣고 [보내기]는 직접 누르세요.")
+        from .mail_ui import MailHelper
+        if self.mail_helper is not None:
+            self.mail_helper.close()
+
+        def save_for_attachment() -> None:
+            path = self._save(final)
+            if path is not None:
+                self.reveal_file(path)
+                self.notify(f"첨부용으로 저장했습니다: {path.name}")
+        self.mail_helper = MailHelper(self._set_clipboard)
+        self.mail_helper.set_data(to, cc, subject, page.prefilled, payload, save_for_attachment)
+        self.mail_helper.place()
+        self.mail_helper.show()
+
     def _send_to_kakao(self, name: str) -> None:
         """Copy the capture (drawings included), then bring the chosen chat to the front and
         paste it there - KakaoTalk shows its own send confirmation - or open KakaoTalk."""

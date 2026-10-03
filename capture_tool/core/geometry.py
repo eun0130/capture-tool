@@ -155,6 +155,39 @@ def layout_bars(sel: Rect, monitor: Rect, tb_size: tuple[int, int], sb_size: tup
     return (tx, ty), (corner_x, monitor.y + gap)
 
 
+def layout_action_bars(sel: Rect, monitor: Rect, tb_size: tuple[int, int], ab_size: tuple[int, int],
+                       gap: int = 8) -> tuple[tuple[int, int], tuple[int, int]]:
+    """The action bar (one row) right under the selection, the drawing toolbar under it; when
+    there is no room below: above, then inside the selection's bottom. Both stay on the monitor
+    and never cover each other. Returns ((toolbar x, y), (action bar x, y))."""
+    tw, th = tb_size
+    aw, ah = ab_size
+
+    def cx(w):
+        return max(monitor.x, min(sel.x, monitor.right - w))
+
+    tx, ax = cx(tw), cx(aw)
+    below, above = sel.bottom + gap, sel.y - gap
+    inside_ab = min(sel.bottom, monitor.bottom) - gap - ah
+    options = [
+        (below + ah + gap, below),                      # bar below, toolbar below the bar
+        (above - th, below),                            # bar below, toolbar above
+        (below, above - ah),                            # bar above, toolbar below
+        (above - ah - gap - th, above - ah),            # both above
+        (inside_ab - gap - th, inside_ab),              # both inside the bottom of the selection
+        (monitor.y + gap, monitor.bottom - ah - gap),   # last resort: toolbar top, bar bottom
+    ]
+    for ty, ay in options:
+        t, a = Rect(tx, ty, tw, th), Rect(ax, ay, aw, ah)
+        if (monitor.y <= ty and t.bottom <= monitor.bottom and monitor.y <= ay and a.bottom <= monitor.bottom
+                and not _overlaps(t, a)):
+            return (tx, ty), (ax, ay)
+    ty, ay = monitor.y, max(monitor.y, monitor.bottom - ah)
+    if _overlaps(Rect(tx, ty, tw, th), Rect(ax, ay, aw, ah)):       # tiny monitor: side by side
+        ax = max(monitor.x, min(tx + tw + gap, monitor.right - aw))
+    return (tx, ty), (ax, ay)
+
+
 def match_screen(monitor: Monitor, screens: Sequence[tuple[str, tuple[int, int, int, int], float]]) -> str | None:
     """Pick the Qt screen (name, (x, y, w, h) logical geometry, dpr) that shows `monitor`.
 

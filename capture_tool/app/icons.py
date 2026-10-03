@@ -27,6 +27,10 @@ _P = {
     "scroll": '<rect x="6" y="3" width="12" height="18" rx="2"/><path d="M12 8v8M9 13l3 3 3-3"/>',
     "link": '<path d="M10 14a4 4 0 005.7 0l3-3a4 4 0 00-5.7-5.7l-1 1"/><path d="M14 10a4 4 0 00-5.7 0l-3 3a4 4 0 005.7 5.7l1-1"/>',
     "pin": '<path d="M9 4h6l-1 5 3 3H7l3-3zM12 12v8"/>',
+    "more": '<circle cx="5" cy="12" r="1.6" fill="{c}"/><circle cx="12" cy="12" r="1.6" fill="{c}"/>'
+            '<circle cx="19" cy="12" r="1.6" fill="{c}"/>',
+    "folder": '<path d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2z"/>',
+    "mail": '<rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 7l9 6 9-6"/>',
     "table": '<rect x="3" y="5" width="18" height="14" rx="1.5"/><path d="M3 10h18M3 14.5h18M9 5v14M15 5v14"/>',
     "talk": '<path d="M12 4c-4.7 0-8.5 3-8.5 6.6 0 2.3 1.5 4.3 3.8 5.5L6.5 20l4.2-2.9c.4 0 .9.1 1.3.1 '
             '4.7 0 8.5-3 8.5-6.6S16.7 4 12 4z"/>',

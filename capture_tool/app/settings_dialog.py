@@ -126,6 +126,24 @@ class SettingsDialog(QDialog):
         self.keep_style.setChecked(settings.keep_style)
         for w in (self.auto_save, self.auto_copy, self.redact, self.startup, self.ppt_new_slide, self.keep_style):
             v.addWidget(w)
+        # --- mail ------------------------------------------------------------------------------
+        from ..core.mailcompose import PROVIDERS
+        from .mail_ui import ORDER
+        v.addWidget(QLabel("<b>메일</b> — [메일] 버튼이 여는 메일 쓰기 화면. 보내기는 항상 직접 누릅니다."))
+        mrow = QHBoxLayout()
+        self.mail_provider = QComboBox()
+        self.mail_provider.addItem("처음 보낼 때 고르기", "")
+        for pid in ORDER:
+            self.mail_provider.addItem(PROVIDERS[pid].label, pid)
+        self.mail_provider.setCurrentIndex(max(0, self.mail_provider.findData(settings.mail_provider)))
+        mrow.addWidget(self.mail_provider, 1)
+        self.mail_account = QLineEdit(settings.mail_account)
+        self.mail_account.setPlaceholderText("Gmail 계정이 여러 개면 보낼 계정 (선택)")
+        mrow.addWidget(self.mail_account, 1)
+        v.addLayout(mrow)
+        self.mail_custom = QLineEdit(settings.mail_custom_url)
+        self.mail_custom.setPlaceholderText("직접 입력: 회사 메일 쓰기 주소 https://… ({to} {cc} {subject} 사용 가능)")
+        v.addWidget(self.mail_custom)
         # --- AI: translate / summary --------------------------------------------------------
         v.addWidget(QLabel("<b>AI 번역·요약</b> — 번역은 항상 무료·오프라인. 요약 방식을 고르세요."))
         self.ai_local = QRadioButton("요약: 오프라인 AI (PC 안에서 처리 · 무료 · 느림, 처음 한 번 약 1.4GB 받기)")
@@ -213,6 +231,15 @@ class SettingsDialog(QDialog):
             parsed[action] = hk
         for a, b in find_duplicates(parsed):
             errors.append(f"'{labels[a]}'와 '{labels[b]}' 단축키가 겹칩니다.")
+        from ..core.mailcompose import valid_custom
+        custom = self.mail_custom.text().strip()
+        if (self.mail_provider.currentData() == "custom" or custom) and not valid_custom(custom):
+            errors.append("회사 메일 쓰기 주소는 https:// 로 시작해야 합니다. (예: https://mail.회사.com/write)")
+        acct = self.mail_account.text().strip()
+        if acct:
+            from ..core.contacts import is_email
+            if not is_email(acct):
+                errors.append("메일: Gmail 계정 주소가 올바르지 않습니다.")
         return errors
 
     def warnings(self) -> list[str]:
@@ -243,6 +270,9 @@ class SettingsDialog(QDialog):
         s.auto_copy = self.auto_copy.isChecked()
         s.keep_style = self.keep_style.isChecked()
         s.ai_summary_engine = "cloud" if self.ai_cloud.isChecked() else "local"
+        s.mail_provider = self.mail_provider.currentData() or ""
+        s.mail_account = self.mail_account.text().strip()
+        s.mail_custom_url = self.mail_custom.text().strip()
         s.ai_cloud_translate = self.ai_cloud_translate.isChecked()
         s.ai_key = self._ai_key
         s.share_expiry = self.share_expiry.currentData()

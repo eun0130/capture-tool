@@ -13,7 +13,7 @@ from PySide6.QtWidgets import QHBoxLayout, QLabel, QLineEdit, QPushButton, QWidg
 from ..core.annotations import Shape
 from ..core.clip import polygon
 from ..core.color import pixel_color
-from ..core.geometry import Rect, layout_bars, match_screen
+from ..core.geometry import Rect, layout_action_bars, layout_bars, match_screen
 from ..core.session import State
 from .render import FONT_FAMILY, bgr_to_pixmap, bgr_to_qimage, mosaic_region, paint_document, pixelate
 from .side_bar import SideBar
@@ -351,8 +351,11 @@ class OverlayWindow(QWidget):
         local = Rect(int(lr.x()), int(lr.y()), int(lr.width()), int(lr.height()))
         screen = Rect(0, 0, self.width(), self.height())
         sb = self.side_bar
-        sb.fit_height(int(self.height() * 0.6))
-        (x, y), (sx, sy) = layout_bars(local, screen, (tb.width(), tb.height()), (sb.width(), sb.height()))
+        settings = getattr(self.c, "settings", None)
+        if settings is not None:
+            sb.set_expanded(getattr(settings, "bar_expanded", False))
+            sb.set_autosave(getattr(settings, "auto_save", False))
+        (x, y), (sx, sy) = layout_action_bars(local, screen, (tb.width(), tb.height()), (sb.width(), sb.height()))
         tb.move(x, y)
         if self.ocr_lines is None:
             tb.show()

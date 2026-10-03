@@ -35,8 +35,12 @@ class Settings:
     last_font_family: str = "Malgun Gothic"
     drm_notice_shown: bool = False
     ppt_new_slide: bool = True           # PPT: insert on a new slide after the current one
+    bar_expanded: bool = False           # action bar shows every button (전체) instead of the basic row
     auto_copy: bool = True               # choosing an area copies it at once (Ctrl+V without Ctrl+C)
     keep_style: bool = True              # PPT/shapes/tables keep colours and fonts (off: plain)
+    mail_provider: str = ""               # gmail / naver / naverworks / daum / outlook / mailto / custom ('' = ask)
+    mail_account: str = ""                # Gmail account to send from (several signed in)
+    mail_custom_url: str = ""             # company mail compose address (https://, {to} {cc} {subject})
     last_highlight_color: str = "#FFE066"
     last_text_bg: str | None = None
     ai_summary_engine: str = "local"     # "local" (offline) or "cloud" (Gemini, own key)
@@ -98,7 +102,7 @@ def _apply(s: Settings, data: dict, warnings: list[str]) -> None:
                 if not _is_int(v):
                     raise TypeError
                 s.jpg_quality = min(100, max(1, v))
-            elif name in ("auto_save", "launch_at_startup", "redact_pii", "drm_notice_shown", "ppt_new_slide", "auto_copy", "keep_style",
+            elif name in ("auto_save", "launch_at_startup", "redact_pii", "drm_notice_shown", "ppt_new_slide", "auto_copy", "keep_style", "bar_expanded",
                           "ai_cloud_translate", "ai_cloud_consent", "share_consent"):
                 if not isinstance(v, bool):
                     raise TypeError
@@ -143,6 +147,15 @@ def _apply(s: Settings, data: dict, warnings: list[str]) -> None:
                 if v != "" and v not in LANGS:
                     raise TypeError
                 s.ai_target_lang = v
+            elif name == "mail_provider":
+                from .mailcompose import PROVIDERS
+                if v != "" and v not in PROVIDERS:
+                    raise TypeError
+                s.mail_provider = v
+            elif name in ("mail_account", "mail_custom_url"):
+                if not isinstance(v, str) or len(v) > 2000:
+                    raise TypeError
+                setattr(s, name, v)
             elif name == "last_highlight_color":
                 s.last_highlight_color = normalize_hex(v)
             elif name == "last_text_bg":
