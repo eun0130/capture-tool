@@ -8,6 +8,9 @@ UNUSED_MODELS = ("PP-OCRv6_det_small", "PP-OCRv6_rec_small")
 
 datas = [d for d in collect_data_files("rapidocr") if not any(m in d[0] for m in UNUSED_MODELS)]
 datas += collect_data_files("sacremoses")            # tokenizer rules of some translation packs
+# pictures of the in-app beginner's guide (tools/make_guide_images.py)
+GUIDE = os.path.join(ROOT, "capture_tool", "app", "guide_images")
+datas += [(os.path.join(GUIDE, f), os.path.join("capture_tool", "app", "guide_images")) for f in os.listdir(GUIDE)]
 binaries = collect_dynamic_libs("onnxruntime")
 binaries += collect_dynamic_libs("ctranslate2") + collect_dynamic_libs("onnxruntime_genai")
 

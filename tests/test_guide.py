@@ -71,3 +71,38 @@ def test_GUIDE_07_guide_setting_is_saved(tmp_path):
     s.guide_shown = True
     save(s, tmp_path / "s.json")
     assert load(tmp_path / "s.json")[0].guide_shown is True
+
+
+# --- pictures (v0.7.5): only where a picture explains faster ------------------------------------
+PKG_IMG = ROOT / "capture_tool" / "app" / "guide_images"
+DOC_IMG = ROOT / "docs" / "images" / "guide"
+
+
+def test_GUIDE_08_a_few_pages_have_a_picture_in_app_and_document():
+    with_img = [p for p in guide.PAGES if p.image]
+    assert 3 <= len(with_img) <= 6                                   # helpful, not overdone
+    for p in with_img:
+        a, b = PKG_IMG / p.image, DOC_IMG / p.image
+        assert a.is_file() and b.is_file() and a.read_bytes() == b.read_bytes(), p.image
+        assert f"](images/guide/{p.image})" in guide.as_markdown()
+
+
+def test_GUIDE_09_pictures_are_small_and_readable():
+    import cv2
+    for p in guide.PAGES:
+        if p.image:
+            f = PKG_IMG / p.image
+            img = cv2.imread(str(f))
+            assert img is not None and 200 <= img.shape[1] <= 900 and f.stat().st_size < 250_000, p.image
+
+
+def test_GUIDE_10_window_shows_the_picture(qt_app):
+    w = guide.GuideWindow()
+    i = next(i for i, p in enumerate(guide.PAGES) if p.image)
+    w.show_page(i)
+    assert "<img" in w.body.toHtml() and guide.image_path(guide.PAGES[i].image).is_file()
+
+
+def test_GUIDE_11_installer_carries_the_pictures():
+    spec = (ROOT / "packaging" / "capture_tool.spec").read_text(encoding="utf-8")
+    assert "guide_images" in spec

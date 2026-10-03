@@ -149,3 +149,12 @@ def test_PIN_11_pin_actions_from_a_capture(make):
     drag(c.overlays[0], (100, 100), (300, 250))
     c.on_toolbar_action("pin_other")
     assert len(c.pins) == 2
+
+
+def test_PIN_12_hover_bar_is_solid(make):
+    """Bug (v0.7.4): the pinned picture's text showed through the hover bar ("+비고")."""
+    from PySide6.QtCore import Qt
+    c = make()
+    p = c.pin(img(400, 200, 255), QPoint(10, 10))
+    assert p.hover_bar.testAttribute(Qt.WA_StyledBackground)
+    assert "rgba" not in p.hover_bar.styleSheet().split("QToolButton")[0]

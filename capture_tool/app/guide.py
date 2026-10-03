@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import html
 from dataclasses import dataclass
+from pathlib import Path
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QHBoxLayout, QLabel, QListWidget, QPushButton, QTextBrowser, QVBoxLayout, QWidget
@@ -16,6 +17,15 @@ class Page:
     intro: str
     steps: tuple[str, ...]
     tip: str = ""
+    image: str = ""            # picture under the steps (guide_images/, docs/images/guide/)
+    caption: str = ""
+
+
+IMAGES = Path(__file__).with_name("guide_images")
+
+
+def image_path(name: str) -> Path:
+    return IMAGES / name
 
 
 PAGES = (
@@ -25,7 +35,8 @@ PAGES = (
           "찍고 싶은 곳을 마우스로 **끌어서** 네모를 그립니다. 창 하나를 통째로 찍으려면 그 창의 **제목 줄을 한 번 클릭**하세요.",
           "다 그리면 **그 순간 복사**됩니다. 카카오톡·메일·문서에 가서 **Ctrl + V** 하면 붙습니다.",
           "취소하려면 **Esc** 를 누릅니다."),
-         "단축키는 설정에서 바꿀 수 있습니다. 화면 오른쪽 아래 트레이의 캡처 도구 아이콘을 눌러도 시작됩니다."),
+         "단축키는 설정에서 바꿀 수 있습니다. 화면 오른쪽 아래 트레이의 캡처 도구 아이콘을 눌러도 시작됩니다.",
+         "capture.png", "표를 골랐을 때: 파란 네모가 고른 곳, 바로 아래가 버튼 막대, 그 아래가 그리기 도구"),
     Page("2. 아래 버튼 막대 한눈에",
          "캡처하면 바로 아래에 버튼이 한 줄로 나옵니다.",
          ("**복사**: 복사하고 캡처 화면을 닫습니다 (Enter, Ctrl+C 도 같음).",
@@ -33,7 +44,8 @@ PAGES = (
           "**텍스트**: 그림 속 글자를 읽어 복사합니다. **표**: 그림 속 표를 칸 그대로 복사합니다.",
           "**PPT**: 파워포인트 새 슬라이드에 넣습니다. **메일** · **카톡** · **검색**: 아래 각 장을 보세요.",
           "**고정**: 캡처를 화면 위에 띄워 둡니다. **전체**: 나머지 버튼(다른 이름 저장 · 도형PPT · 스크롤 · 링크 · 저장 폴더 · 도움말)을 펼칩니다."),
-         "버튼 위에 마우스를 잠시 올리면 설명이 나옵니다."),
+         "버튼 위에 마우스를 잠시 올리면 설명이 나옵니다.",
+         "bar_full.png", "전체를 누르면 둘째 줄이 펼쳐집니다 (다시 누르면 기본)"),
     Page("3. 그림 그리기 · 글자 넣기",
          "붙이기 전에 표시를 하고 싶을 때.",
          ("캡처 아래의 그리기 도구에서 **네모 · 원 · 화살표 · 펜 · 글자(T) · 번호 · 형광펜 · 모자이크** 중 하나를 고릅니다.",
@@ -47,7 +59,8 @@ PAGES = (
           "엑셀을 골랐다면 엑셀에서 **Ctrl + V**. PPT를 골랐다면 파워포인트에 표가 바로 들어갑니다.",
           "표 모양이 아닌 글이면 **미리보기**가 떠서, 칸을 나누는 방법을 고르고 칸을 고친 뒤 붙일 수 있습니다.",
           "나중에 바꾸려면 **표** 버튼 옆 **▾** 를 누르세요."),
-         "\"다음부터 이 설정으로 바로\"를 켜 두면 표 버튼 한 번에 끝납니다."),
+         "\"다음부터 이 설정으로 바로\"를 켜 두면 표 버튼 한 번에 끝납니다.",
+         "table_options.png", "처음 표 버튼을 누르면 나오는 창: 붙일 곳과 모양을 고릅니다"),
     Page("5. 글자 복사 · 번역 · 요약",
          "그림 속 글자를 글로 옮기고, 번역하거나 요약합니다.",
          ("캡처하고 **텍스트** 를 누르면 글자가 바로 복사됩니다.",
@@ -68,7 +81,8 @@ PAGES = (
           "브라우저에 메일 쓰기 화면이 열립니다. 네이버·Gmail은 받는 사람과 제목이 이미 채워져 있습니다.",
           "본문을 누르고 **Ctrl + V** 하면 캡처가 붙습니다. 오른쪽 **도우미 창**의 버튼으로 받는 사람·참조·제목·캡처를 하나씩 다시 복사할 수도 있습니다.",
           "확인하고 메일의 **[보내기]** 를 직접 누릅니다."),
-         "로그인 화면이 나오면 로그인한 뒤 계속하세요. 주소록은 [주소·그룹 편집]에서 추가·삭제하고, 이 PC에만 암호화되어 저장됩니다."),
+         "로그인 화면이 나오면 로그인한 뒤 계속하세요. 주소록은 [주소·그룹 편집]에서 추가·삭제하고, 이 PC에만 암호화되어 저장됩니다.",
+         "mail_helper.png", "메일 쓰기 화면 옆에 뜨는 도우미 창: 위에서부터 눌러 차례로 붙여 넣습니다"),
     Page("8. 카카오톡으로 보내기",
          "",
          ("카카오톡에서 보낼 채팅방을 **따로 창으로 열어 둡니다**.",
@@ -87,7 +101,7 @@ PAGES = (
           "여러 장을 계속 고정할 수 있습니다. 끌어서 옮기고, 마우스 휠로 크기를 바꿉니다.",
           "고정한 그림에 마우스를 올리면 작은 막대가 나옵니다: **50%**(반투명) · **+ / −** · **복사** · **✕**.",
           "여러 장을 한꺼번에 정리하려면 고정 메뉴의 **고정한 캡처 관리** 를 여세요(나란히 · 모두 숨기기 · 모두 닫기)."),
-         ""),
+         "", "pin.png", "고정한 캡처에 마우스를 올리면 오른쪽 위에 작은 막대가 나옵니다"),
     Page("11. 긴 화면 찍기 (스크롤)",
          "웹 페이지나 PDF처럼 화면보다 긴 내용을 한 장으로 찍습니다.",
          ("캡처할 때 브라우저 창의 **제목 줄을 클릭**해 창 전체를 고르거나, 찍을 부분을 네모로 고릅니다.",
@@ -125,8 +139,12 @@ def page_html(p: Page) -> str:
     intro = f"<p style='color:#3A4150'>{_md_bold_to_html(p.intro)}</p>" if p.intro else ""
     tip = (f"<p style='background:#FFF4D6;color:#5C3D00;padding:8px'>💡 {_md_bold_to_html(p.tip)}</p>"
            if p.tip else "")
+    pic = ""
+    if p.image and image_path(p.image).is_file():
+        pic = (f"<p><img src='{image_path(p.image).as_uri()}' width='560'></p>"
+               f"<p style='color:#5B6472;font-size:13px'>▲ {html.escape(p.caption)}</p>")
     return (f"<div style='font-size:15px;line-height:150%'><h2 style='color:#1D2330'>{html.escape(p.title)}</h2>"
-            f"{intro}<table>{steps}</table>{tip}</div>")
+            f"{intro}<table>{steps}</table>{pic}{tip}</div>")
 
 
 def as_markdown() -> str:
@@ -138,6 +156,8 @@ def as_markdown() -> str:
         if p.intro:
             parts.append(p.intro + "\n")
         parts.append("\n".join(f"{i}. {s}" for i, s in enumerate(p.steps, 1)) + "\n")
+        if p.image:
+            parts.append(f"![{p.caption}](images/guide/{p.image})\n\n*▲ {p.caption}*\n")
         if p.tip:
             parts.append(f"> 💡 {p.tip}\n")
     return "\n".join(parts)

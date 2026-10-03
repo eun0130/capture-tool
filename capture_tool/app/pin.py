@@ -37,7 +37,8 @@ class PinWindow(QWidget):
                         "Ctrl+C 복사 · Ctrl+S 저장 · 우클릭: 메뉴")
         # small bar shown on hover: opacity, size, copy, close (only ✕ when the pin is tiny)
         self.hover_bar = QWidget(self)
-        self.hover_bar.setStyleSheet("QWidget { background: rgba(15,18,24,215); border-radius: 8px; }"
+        self.hover_bar.setAttribute(Qt.WA_StyledBackground, True)   # solid: the picture must not show through
+        self.hover_bar.setStyleSheet("QWidget { background: #1D2330; border-radius: 8px; }"
                                      "QToolButton { background: transparent; color: #FFFFFF; border: none; "
                                      "border-radius: 6px; font-size: 11px; padding: 0 4px; }"
                                      "QToolButton:hover { background: rgba(255,255,255,40); }")
