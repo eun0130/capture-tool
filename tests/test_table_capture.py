@@ -253,6 +253,7 @@ def test_TCAP_18_table_button_copies_the_table_of_the_capture(make, ocr):
     from tests.test_app import FakeOcr
     img = cv2.imread(str(DATA / "dark_grid_table_2.png"))
     c = make(ocr=FakeOcr([OcrLine(t, b, s) for t, b, s in _scored(ocr, img)]))
+    c.settings.table_quick = True                 # v0.7.3: the options dialog was answered before
     c._run_recognition_on(img, "table", dpi=96)
     rows = c.clipboard.last[UNICODE].split("\r\n")
     assert len(rows) == 3 and rows[0].split("\t")[0] == "모델" and len(rows[0].split("\t")) == 4

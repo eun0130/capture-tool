@@ -21,7 +21,8 @@ class Provider:
 
 PROVIDERS = {
     "gmail": Provider("Gmail", "https://mail.google.com/mail/?view=cm&fs=1", "gmail"),
-    "naver": Provider("네이버 메일", "https://mail.naver.com/v2/new"),
+    # confirmed by a signed-in user (2026-10-03): the popup compose page fills To and Subject
+    "naver": Provider("네이버 메일", "https://mail.naver.com/write/popup", "naver"),
     "naverworks": Provider("네이버웍스", "https://mail.worksmobile.com/"),
     "daum": Provider("다음 메일", "https://mail.daum.net/"),
     "outlook": Provider("Outlook (웹)", "https://outlook.office.com/mail/deeplink/compose", "outlook"),
@@ -74,6 +75,13 @@ def compose(provider: str, to: list[str], cc: list[str], subject: str, account: 
             q["authuser"] = account
         url = p.url + "&" + urlencode(q, quote_via=quote, safe="@,")
         base = p.url + (("&" + urlencode({"authuser": account}, quote_via=quote, safe="@")) if account else "")
+    elif p.prefill == "naver":
+        q = {"to": to_s}
+        if cc_s:
+            q["cc"] = cc_s
+        q["subject"] = subject
+        url = p.url + "?" + urlencode(q, quote_via=quote, safe="@,")
+        base = p.url
     elif p.prefill == "outlook":
         q = {"to": to_s}
         if cc_s:

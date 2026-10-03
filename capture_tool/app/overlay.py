@@ -148,6 +148,7 @@ class OverlayWindow(QWidget):
         self.side_bar.hide()
         self.side_bar.action.connect(controller.on_toolbar_action)
         self.side_bar.kakao_provider = lambda: getattr(controller, "kakao", None)
+        self.side_bar.settings_provider = lambda: getattr(controller, "settings", None)
         self.ocr_bar = OcrBar(self)
         self.ocr_bar.hide()
         self.ocr_bar.action.connect(controller.on_ocr_action)

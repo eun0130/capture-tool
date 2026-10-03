@@ -20,7 +20,7 @@ def fake_unprotect(s):
 
 @pytest.fixture
 def mail(make, tmp_path):
-    def build(choice=None, open_ok=True, provider="naver"):
+    def build(choice=None, open_ok=True, provider="daum"):
         from capture_tool.app.mail_ui import MailChoice
         c = make()
         c.contacts_path = tmp_path / "contacts.dat"
@@ -51,7 +51,7 @@ def test_MAPP_01_mail_opens_compose_and_shows_the_helper(mail):
     c, opened, asked = mail()
     c.on_toolbar_action("mail")
     assert c.overlays == [] and asked                                   # capture closed, picker shown
-    assert opened == ["https://mail.naver.com/v2/new"]
+    assert opened == ["https://mail.daum.net/"]           # a service without prefill: helper does it
     h = c.mail_helper
     assert h is not None and h.isVisible()
     assert h.buttons["to"].text().startswith("① 받는 사람 복사 (1명)") and h.buttons["cc"].text().startswith("② 참조 복사 (2명)")
@@ -99,7 +99,7 @@ def test_MAPP_05_used_addresses_are_remembered_encrypted(mail):
 
 def test_MAPP_06_new_address_typed_in_the_picker_is_added_to_the_book(mail):
     from capture_tool.app.mail_ui import MailChoice
-    c, _, _ = mail(MailChoice(["new.person@x.com"], [], "naver", new={"new.person@x.com": "새 사람"}))
+    c, _, _ = mail(MailChoice(["new.person@x.com"], [], "daum", new={"new.person@x.com": "새 사람"}))
     c.on_toolbar_action("mail")
     assert c.address_book().get("new.person@x.com").name == "새 사람"
 
@@ -223,3 +223,33 @@ def test_MAPP_16_settings_dialog_mail_section(qt_app):
     s = d.result_settings()
     assert (s.mail_provider, s.mail_custom_url, s.mail_account) == ("custom", "https://mail.corp.com/new?to={to}",
                                                                      "me@gmail.com")
+
+
+def test_MAPP_17_without_prefill_the_recipients_are_ready_to_paste_first(mail):
+    """Naver etc. can't take recipients in the address: the compose page opens with the
+    recipients already on the clipboard (one Ctrl+V in 받는 사람), step ① shown as done."""
+    c, _, _ = mail()
+    c.on_toolbar_action("mail")
+    assert c.clipboard.last[UNICODE] == "boss@corp.com"
+    assert "✓" in c.mail_helper.buttons["to"].text()
+
+
+def test_MAPP_18_with_prefill_the_capture_is_ready_to_paste(mail):
+    from capture_tool.app.mail_ui import MailChoice
+    c, _, _ = mail(MailChoice(["boss@corp.com"], [], "gmail"), provider="gmail")
+    c.on_toolbar_action("mail")
+    assert PNG in c.clipboard.last
+
+
+def test_MAPP_19_naver_opens_with_recipients_and_subject(mail):
+    """Bug (v0.7.2): Naver's compose page opened with 받는 사람 empty. The person confirmed that
+    /write/popup?to=…&subject=… fills both."""
+    from urllib.parse import parse_qs, urlsplit
+    from capture_tool.app.mail_ui import MailChoice
+    c, opened, _ = mail(MailChoice(["boss@corp.com", "lee@corp.com"], [], "naver"), provider="naver")
+    c.on_toolbar_action("mail")
+    u = urlsplit(opened[0])
+    assert (u.netloc, u.path) == ("mail.naver.com", "/write/popup")
+    q = parse_qs(u.query)
+    assert q["to"] == ["boss@corp.com,lee@corp.com"] and q["subject"][0].startswith("캡처 공유")
+    assert PNG in c.clipboard.last and "이미 채워" in c.mail_helper.hint.text()

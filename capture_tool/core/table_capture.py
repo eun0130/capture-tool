@@ -41,6 +41,11 @@ class CapturedTable:
     col_widths: list[float] = field(default_factory=list)            # points
 
 
+def plain_style(font_size: float = 11) -> TableStyle:
+    """White cells, black text, thin black lines, bold header: a table for documents."""
+    return TableStyle("#FFFFFF", "#FFFFFF", "#000000", "#000000", "#000000", True, float(font_size))
+
+
 def _median_color(img, mask):
     px = img[mask]
     return None if len(px) == 0 else tuple(int(v) for v in np.median(px, axis=0))

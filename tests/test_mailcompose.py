@@ -19,7 +19,7 @@ def test_MAIL_01_gmail_is_prefilled_with_utf8_subject_and_account():
 
 
 def test_MAIL_02_other_web_mail_opens_compose_without_guessing_parameters():
-    for pid in ("naver", "naverworks", "daum"):
+    for pid in ("naverworks", "daum"):
         c = M.compose(pid, ["a@x.com"], [], "제목")
         assert c.url.startswith("https://") and not c.prefilled
         assert "a@x.com" not in c.url and "제목" not in unquote(c.url)
@@ -89,3 +89,13 @@ def test_MAIL_11_every_preset_is_https_or_mailto():
         c = M.compose(pid, ["a@x.com"], [], "s")
         assert c.url.startswith(("https://", "mailto:")), pid
         assert p.label
+
+
+def test_MAIL_12_naver_compose_popup_takes_to_cc_and_subject():
+    c = M.compose("naver", ["a@x.com", "b@y.com"], ["c@z.com"], "캡처 공유 — 10월 3일")
+    u = urlsplit(c.url)
+    q = parse_qs(u.query)
+    assert c.prefilled and u.netloc == "mail.naver.com" and u.path == "/write/popup"
+    assert q["to"] == ["a@x.com,b@y.com"] and q["cc"] == ["c@z.com"] and q["subject"] == ["캡처 공유 — 10월 3일"]
+    many = M.compose("naver", [f"person{i:03d}@example-company.co.kr" for i in range(120)], [], "s")
+    assert not many.prefilled and "person000" not in many.url

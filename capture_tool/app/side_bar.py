@@ -77,6 +77,13 @@ class SideBar(QWidget):
                 b.clicked.connect(lambda _=False, btn=b: self._link_menu(btn))
             elif name == "kakao":
                 b.clicked.connect(lambda _=False, btn=b: self._kakao_popup(btn))
+            elif name == "table":
+                from PySide6.QtWidgets import QMenu, QToolButton as _TB
+                b.setPopupMode(_TB.MenuButtonPopup)
+                menu = QMenu(b)
+                menu.aboutToShow.connect(lambda m=menu: self._fill_table_menu(m))
+                b.setMenu(menu)
+                b.clicked.connect(lambda _=False: self.action.emit("table"))
             elif name == "pin":
                 b.clicked.connect(lambda _=False, btn=b: self.pin_menu().exec(btn.mapToGlobal(btn.rect().bottomLeft())))
             elif name == "search":
@@ -187,6 +194,37 @@ class SideBar(QWidget):
             m.addSeparator()
         b = m.addAction("카카오톡 열기 — 채팅방을 직접 골라 Ctrl+V")
         b.triggered.connect(lambda: self.action.emit("kakao_main"))
+        return m
+
+    settings_provider = staticmethod(lambda: None)    # -> Settings (set by the overlay)
+
+    def _fill_table_menu(self, m, settings=None) -> None:
+        from PySide6.QtGui import QActionGroup
+        m.clear()
+        s = settings or self.settings_provider()
+        target = getattr(s, "table_target", "excel")
+        style = getattr(s, "table_style", "keep")
+        for options, current, key in (((("excel", "엑셀로 복사"), ("ppt", "PPT에 넣기")), target, "target"),
+                                      ((("keep", "캡처 모양 그대로"), ("plain", "흰 바탕 · 검은 글씨")), style, "style")):
+            group = QActionGroup(m)
+            for val, label in options:
+                a = m.addAction(label)
+                a.setCheckable(True)
+                a.setChecked(val == current)
+                group.addAction(a)
+                a.triggered.connect(lambda _=False, k=key, x=val: self.action.emit(f"tableopt:{k}:{x}"))
+            m.addSeparator()
+        a = m.addAction("미리 보고 고치기…")
+        a.triggered.connect(lambda: self.action.emit("table_preview"))
+        q = m.addAction("표 버튼 누를 때마다 묻기")
+        q.setCheckable(True)
+        q.setChecked(not getattr(s, "table_quick", False))
+        q.triggered.connect(lambda on: self.action.emit(f"tableopt:quick:{0 if on else 1}"))
+
+    def table_menu(self, settings):
+        from PySide6.QtWidgets import QMenu
+        m = QMenu(self)
+        self._fill_table_menu(m, settings)
         return m
 
     def pin_menu(self):

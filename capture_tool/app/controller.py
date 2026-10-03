@@ -181,6 +181,7 @@ class Controller(QObject):
         self.open_folder = _open_folder
         self.ask_mail = None                # tests replace the picker
         self.ask_table_preview = None       # tests replace the preview dialog
+        self.ask_table_options = None       # tests replace the 표 options dialog
         self.mail_helper = None
         self._book = None
         from ..platform.powerpoint import PowerPointSender
@@ -432,7 +433,10 @@ class Controller(QObject):
 
     # --- finishing ---------------------------------------------------------------
     def on_toolbar_action(self, name: str) -> None:
-        if name in ("autosave", "more", "open_folder"):
+        if name in ("autosave", "more", "open_folder") or name.startswith("tableopt:"):
+            if name.startswith("tableopt:"):
+                self._table_option(name)
+                return
             self._bar_action(name)
             return
         if name not in ("undo", "redo"):
@@ -465,8 +469,10 @@ class Controller(QObject):
             self._start_scroll()
         elif name == "ppt_shapes":
             self._run_recognition("ppt")
-        elif name in ("text", "shapes", "table"):
+        elif name in ("text", "shapes", "table", "table_preview"):
             self._run_recognition(name)
+        elif name.startswith("tableopt:"):
+            self._table_option(name)
 
     # --- scroll capture ----------------------------------------------------------------------
     def _scroll_target(self, ov, sel):
@@ -806,6 +812,8 @@ class Controller(QObject):
                 self.notify(f"첨부용으로 저장했습니다: {path.name}")
         self.mail_helper = MailHelper(self._set_clipboard)
         self.mail_helper.set_data(to, cc, subject, page.prefilled, payload, save_for_attachment)
+        if to and not page.prefilled:              # first step done: Ctrl+V in 받는 사람 right away
+            self.mail_helper.press("to")
         self.mail_helper.place()
         self.mail_helper.show()
 
@@ -1405,6 +1413,8 @@ class Controller(QObject):
                 lines = self.ocr.recognize(raw)
             except OcrUnavailable as e:
                 err = str(e)
+            if kind == "table_preview":        # ▾ 미리 보고 고치기: always the editable preview
+                return kind, lines, err, None, None
             if kind == "table":                # 표 button: the capture's table straight to the clipboard
                 scored = [(l.text, l.box, l.score) for l in lines]
                 return kind, lines, err, None, find_table(raw, scored, [], dpi) if lines else None
@@ -1443,11 +1453,13 @@ class Controller(QObject):
             self.notify(f"인식 중 오류가 발생했습니다: {result}")
             return
         kind, lines, err, qr, extra = result
-        if kind == "table":
+        if kind in ("table", "table_preview"):
             if err:
                 self.notify(err)
             elif extra is not None:
-                self._finish_table(extra, send=False)
+                if self._table_choice():
+                    self._deliver_table(extra.rows, "\n".join(t for t, _ in extra.outside) or None, extra.style,
+                                        extra.col_widths)
             elif not lines:
                 self.notify("캡처에서 글자를 찾지 못해 표를 만들 수 없습니다. (그림은 클립보드에 있습니다)")
             else:
@@ -1472,12 +1484,51 @@ class Controller(QObject):
         if not rows:
             self.notify("표가 비어 있어 복사하지 않았습니다.")
             return
+        self._deliver_table(rows, title, None, [], target=action)
+
+    def _table_option(self, name: str) -> None:
+        _, key, val = (name.split(":") + ["", ""])[:3]
+        s = self.settings
+        if key == "target" and val in ("excel", "ppt"):
+            s.table_target = val
+        elif key == "style" and val in ("keep", "plain"):
+            s.table_style = val
+        elif key == "quick" and val in ("0", "1"):
+            s.table_quick = val == "1"
+        else:
+            return
+        self._persist()
+
+    def _table_choice(self) -> bool:
+        """The first time (or when the person wants to be asked): where and how."""
+        if self.settings.table_quick:
+            return True
+        from .table_options import ask_table_options
+        answer = (self.ask_table_options or ask_table_options)(self.settings, None)
+        if answer is None:
+            self.notify("표 복사를 취소했습니다. (그림은 클립보드에 있습니다)")
+            return False
+        self.settings.table_target, self.settings.table_style, self.settings.table_quick = answer
+        self._persist()
+        return True
+
+    def _deliver_table(self, rows, title, captured, col_widths, target: str | None = None) -> None:
+        """Rows -> Excel (clipboard) or PowerPoint, in the capture's look or white/black."""
+        from ..core.table_capture import plain_style
+        target = target or self.settings.table_target
+        keep = self.settings.table_style == "keep"
+        size_pt = captured.font_size if captured is not None else 11
+        style = captured if keep else plain_style(size_pt)
+        if not self._set_clipboard(table_payload(rows, style=style, title=title)):
+            return
         size = f"표 {len(rows)}행×{len(rows[0])}열"
-        if action == "ppt":
-            self._set_clipboard(table_payload(rows, title=title))
-            self._send_item_to_ppt(TableItem(rows, title=title), f"{size}를")
-        elif self._set_clipboard(table_payload(rows, title=title)):
-            self.notify(f"{size}로 복사했습니다. Excel·PowerPoint에서 Ctrl+V 하면 표가 됩니다.")
+        look = "캡처 모양 그대로" if keep else "흰 바탕·검은 글씨"
+        if target == "ppt":
+            item = TableItem(rows, style=style, title=title, col_widths=col_widths if keep else [],
+                             font_size=size_pt if captured is not None else 14)
+            self._send_item_to_ppt(item, f"{size}({look})를")
+        else:
+            self.notify(f"{size}({look})로 복사했습니다. 엑셀에서 Ctrl+V 하세요. (▾ 메뉴에서 PPT·모양 변경)")
 
     def _finish_table(self, t, send: bool) -> None:
         keep = self.settings.keep_style

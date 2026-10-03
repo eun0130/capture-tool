@@ -398,9 +398,13 @@ class MailHelper(QWidget):
         self.buttons["capture"].setVisible(capture_payload is not None)
         self.hint.setText("받는 사람·제목이 이미 채워져 있습니다. ④ 캡처만 본문에 붙이면 됩니다. [보내기]는 직접 누르세요."
                           if prefilled else
-                          "메일 쓰기 화면에서 칸을 누르고, 아래 버튼을 누른 뒤 Ctrl+V. 위에서부터 차례로. "
+                          "받는 사람은 이미 복사되어 있습니다: 받는 사람 칸을 누르고 Ctrl+V. 그다음 버튼을 차례로 누르고 "
+                          "각 칸에 Ctrl+V. "
                           "[보내기]는 직접 누르세요. 로그인 화면이 나오면 로그인 후 계속하세요.")
         self._idle.start(self.IDLE_MS)
+
+    def press(self, key: str) -> None:
+        self._press(key)
 
     def _press(self, key: str) -> None:
         self._idle.start(self.IDLE_MS)

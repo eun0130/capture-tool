@@ -35,6 +35,9 @@ class Settings:
     last_font_family: str = "Malgun Gothic"
     drm_notice_shown: bool = False
     ppt_new_slide: bool = True           # PPT: insert on a new slide after the current one
+    table_target: str = "excel"           # 표 button: "excel" (clipboard) or "ppt" (insert)
+    table_style: str = "keep"             # "keep" the capture's look or "plain" white/black
+    table_quick: bool = False             # skip the 표 options dialog (use the saved choice)
     bar_expanded: bool = False           # action bar shows every button (전체) instead of the basic row
     auto_copy: bool = True               # choosing an area copies it at once (Ctrl+V without Ctrl+C)
     keep_style: bool = True              # PPT/shapes/tables keep colours and fonts (off: plain)
@@ -102,7 +105,7 @@ def _apply(s: Settings, data: dict, warnings: list[str]) -> None:
                 if not _is_int(v):
                     raise TypeError
                 s.jpg_quality = min(100, max(1, v))
-            elif name in ("auto_save", "launch_at_startup", "redact_pii", "drm_notice_shown", "ppt_new_slide", "auto_copy", "keep_style", "bar_expanded",
+            elif name in ("auto_save", "launch_at_startup", "redact_pii", "drm_notice_shown", "ppt_new_slide", "auto_copy", "keep_style", "bar_expanded", "table_quick",
                           "ai_cloud_translate", "ai_cloud_consent", "share_consent"):
                 if not isinstance(v, bool):
                     raise TypeError
@@ -147,6 +150,14 @@ def _apply(s: Settings, data: dict, warnings: list[str]) -> None:
                 if v != "" and v not in LANGS:
                     raise TypeError
                 s.ai_target_lang = v
+            elif name == "table_target":
+                if v not in ("excel", "ppt"):
+                    raise TypeError
+                s.table_target = v
+            elif name == "table_style":
+                if v not in ("keep", "plain"):
+                    raise TypeError
+                s.table_style = v
             elif name == "mail_provider":
                 from .mailcompose import PROVIDERS
                 if v != "" and v not in PROVIDERS:

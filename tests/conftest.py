@@ -33,3 +33,17 @@ def qt_app():
     # regardless of which test ran first
     QFontDatabase.addApplicationFont(r"C:\Windows\Fonts\malgun.ttf")
     yield app
+
+
+@pytest.fixture(autouse=True)
+def _no_modal_dialogs(monkeypatch, request):
+    """A modal dialog opened by mistake would wait forever under the test runner: fail at once.
+    Tests that drive a dialog themselves don't call exec()."""
+    if "real" in request.node.nodeid or "office" in request.node.nodeid:
+        return
+    from PySide6.QtWidgets import QDialog, QMessageBox
+
+    def refuse(self, *a, **k):
+        raise AssertionError(f"modal dialog opened in a test: {type(self).__name__} {self.windowTitle()!r}")
+    monkeypatch.setattr(QDialog, "exec", refuse)
+    monkeypatch.setattr(QMessageBox, "exec", refuse)
