@@ -17,6 +17,8 @@ ACTIONS = [
                              "([보내기]는 직접)", "basic"),
     ("kakao", "talk", "카톡", "카카오톡으로 보내기 — 열려 있는 채팅방을 고르면 그곳에 붙여 넣습니다 "
                               "(카카오톡의 [전송]을 눌러야 보내집니다)", "basic"),
+    ("search", "search", "검색", "검색 — 그림으로 찾기(구글·네이버, 검색창에 Ctrl+V) 또는 캡처 속 글자로 찾기(구글·네이버·파파고)",
+     "basic"),
     ("pin", "pin", "고정", "캡처를 다른 모든 창 위에 계속 떠 있게 붙여 둡니다 — 여러 장 가능 (F3)", "basic"),
     ("more", "more", "전체", "모든 기능 펼치기 / 기본만 보기 (마지막 상태를 기억)", "basic"),
     ("save_as", "save_as", "다른 이름 저장", "저장 위치를 골라 저장 (Ctrl+Shift+S)", "extra"),
@@ -75,6 +77,10 @@ class SideBar(QWidget):
                 b.clicked.connect(lambda _=False, btn=b: self._link_menu(btn))
             elif name == "kakao":
                 b.clicked.connect(lambda _=False, btn=b: self._kakao_popup(btn))
+            elif name == "pin":
+                b.clicked.connect(lambda _=False, btn=b: self.pin_menu().exec(btn.mapToGlobal(btn.rect().bottomLeft())))
+            elif name == "search":
+                b.clicked.connect(lambda _=False, btn=b: self.search_menu().exec(btn.mapToGlobal(btn.rect().bottomLeft())))
             else:
                 b.clicked.connect(lambda _=False, n=name: self.action.emit(n))
             self.buttons[name] = b
@@ -181,6 +187,34 @@ class SideBar(QWidget):
             m.addSeparator()
         b = m.addAction("카카오톡 열기 — 채팅방을 직접 골라 Ctrl+V")
         b.triggered.connect(lambda: self.action.emit("kakao_main"))
+        return m
+
+    def pin_menu(self):
+        from PySide6.QtWidgets import QMenu
+        m = QMenu(self)
+        for key, label in (("pin", "찍은 자리에 그대로 (F3)"), ("pin_stack", "화면 오른쪽 위에 쌓기"),
+                           ("pin_other", "다른 모니터로")):
+            a = m.addAction(label)
+            a.triggered.connect(lambda _=False, k=key: self.action.emit(k))
+        m.addSeparator()
+        a = m.addAction("고정한 캡처 관리…")
+        a.triggered.connect(lambda: self.action.emit("pin_manager"))
+        return m
+
+    def search_menu(self):
+        from PySide6.QtWidgets import QMenu
+        m = QMenu(self)
+        head = m.addAction("그림으로 찾기 — 열린 검색창에 Ctrl+V")
+        head.setEnabled(False)
+        for eng, label in (("google", "구글 (이미지 검색·렌즈)"), ("naver", "네이버 (이미지 검색)")):
+            a = m.addAction(label)
+            a.triggered.connect(lambda _=False, e=eng: self.action.emit(f"search_img:{e}"))
+        m.addSeparator()
+        head2 = m.addAction("캡처 속 글자로 찾기")
+        head2.setEnabled(False)
+        for eng, label in (("google", "구글 검색"), ("naver", "네이버 검색"), ("papago", "파파고 번역")):
+            a = m.addAction(label)
+            a.triggered.connect(lambda _=False, e=eng: self.action.emit(f"search_text:{e}"))
         return m
 
     def _kakao_popup(self, btn) -> None:

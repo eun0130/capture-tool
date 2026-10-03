@@ -261,8 +261,14 @@ def test_TCAP_18_table_button_copies_the_table_of_the_capture(make, ocr):
 
 
 def test_TCAP_19_table_button_without_a_table_says_so(make):
+    """v0.7: text that isn't a table opens the preview; cancelling it says so. No text at all:
+    nothing to make a table from."""
     from capture_tool.core.ocr import OcrLine
     from tests.test_app import FakeOcr
     c = make(ocr=FakeOcr([OcrLine("그냥 한 줄", (10, 10, 120, 20), 0.99)]))
+    c.ask_table_preview = lambda lines, parent=None: None
     c._run_recognition_on(np.full((100, 300, 3), 255, np.uint8), "table", dpi=96)
-    assert any("표를 찾지 못" in m for m in c.messages)
+    assert any("취소" in m for m in c.messages)
+    c2 = make(ocr=FakeOcr([]))
+    c2._run_recognition_on(np.full((100, 300, 3), 255, np.uint8), "table", dpi=96)
+    assert any("글자를 찾지 못" in m for m in c2.messages)

@@ -136,8 +136,17 @@ class TrayApp:
         auto.toggled.connect(self._set_auto_save)
         m.addAction(auto)
         self.auto_save_action = auto
+
+        def sync_auto_save():                    # the capture's 자동저장 button may have changed it
+            auto.blockSignals(True)
+            auto.setChecked(self.controller.settings.auto_save)
+            auto.blockSignals(False)
+        m.aboutToShow.connect(sync_auto_save)
+        a = QAction("고정한 캡처 관리…", m)
+        a.triggered.connect(self.controller.show_pin_manager)
+        m.addAction(a)
         a = QAction("고정 이미지 모두 닫기", m)
-        a.triggered.connect(self.controller.close_pins)
+        a.triggered.connect(self.controller.close_all_pins)
         m.addAction(a)
         a = QAction("설정…", m)
         a.triggered.connect(self.open_settings)

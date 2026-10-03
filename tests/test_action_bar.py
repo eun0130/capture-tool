@@ -8,7 +8,7 @@ import pytest
 from capture_tool.core.geometry import Rect, layout_action_bars
 from tests.test_app import drag, make  # noqa: F401 (fixture)
 
-BASIC = ["copy", "autosave", "text", "table", "ppt", "mail", "kakao", "pin", "more"]
+BASIC = ["copy", "autosave", "text", "table", "ppt", "mail", "kakao", "search", "pin", "more"]
 
 
 def selected(make, a=(100, 100), b=(400, 300), **kw):

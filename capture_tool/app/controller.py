@@ -8,7 +8,7 @@ from pathlib import Path
 
 import cv2
 import numpy as np
-from PySide6.QtCore import QObject, QPoint, QRunnable, Qt, QThreadPool, QTimer, Signal
+from PySide6.QtCore import QObject, QPoint, QRect, QRunnable, Qt, QThreadPool, QTimer, Signal
 from PySide6.QtGui import QCursor
 
 from ..core import settings as settings_io
@@ -64,6 +64,13 @@ def _open_url(url: str) -> bool:
         return False
 
 
+def _confirm(text: str) -> bool:
+    from PySide6.QtWidgets import QMessageBox
+    box = QMessageBox(QMessageBox.Question, "캡처 도구", text, QMessageBox.Yes | QMessageBox.No)
+    box.setWindowFlags(box.windowFlags() | Qt.WindowStaysOnTopHint)
+    return box.exec() == QMessageBox.Yes
+
+
 def _open_folder(path) -> None:
     import os
     try:
@@ -96,6 +103,7 @@ class _Job(QRunnable):
 class Controller(QObject):
     _job_done = Signal(object)
     _kakao_done = Signal(object)
+    _search_done = Signal(object)
     _ppt_done = Signal(object)
     _text_ready = Signal(object)
     _ai_done = Signal(object)
@@ -118,6 +126,8 @@ class Controller(QObject):
         self._pool: dict[str, OverlayWindow] = {}
         self.active_overlay: OverlayWindow | None = None
         self.pins: list[PinWindow] = []
+        self.pin_manager = None
+        self.confirm = _confirm
         self.text_panel: TextPanel | None = None
         self.messages: list[str] = []
         self.mode = "draw"
@@ -170,6 +180,7 @@ class Controller(QObject):
         self.reveal_file = _reveal_file
         self.open_folder = _open_folder
         self.ask_mail = None                # tests replace the picker
+        self.ask_table_preview = None       # tests replace the preview dialog
         self.mail_helper = None
         self._book = None
         from ..platform.powerpoint import PowerPointSender
@@ -178,6 +189,7 @@ class Controller(QObject):
         from ..platform.kakao import KakaoSender
         self.kakao = KakaoSender()
         self._kakao_done.connect(self.notify)
+        self._search_done.connect(self._open_search)
         self.drm = detect_drm()
 
     # --- helpers -----------------------------------------------------------------
@@ -307,6 +319,9 @@ class Controller(QObject):
         self.close_pins()
         if self.text_panel:
             self.text_panel.close()
+        for w in (self.pin_manager, self.mail_helper):
+            if w is not None:
+                w.close()
 
     # --- selection ---------------------------------------------------------------
     def _clamp_point(self, p, mon):
@@ -428,6 +443,12 @@ class Controller(QObject):
             self._send_to_kakao(name)
         elif name == "mail":
             self._send_mail()
+        elif name in ("pin_stack", "pin_other"):
+            self._pin_from_capture(name)
+        elif name == "pin_manager":
+            self.show_pin_manager()
+        elif name.startswith(("search_img:", "search_text:")):
+            self._web_search(name)
         elif name in ("copy", "save", "save_as", "pin"):
             self.finish(name)
         elif name == "cancel":
@@ -666,6 +687,54 @@ class Controller(QObject):
         elif name == "open_folder":
             folder, _ = resolve_save_dir(s.save_dir, self.fallback_dir)
             self.open_folder(folder)
+
+    # --- web search -------------------------------------------------------------------------------
+    def _web_search(self, name: str) -> None:
+        from ..core import websearch
+        kind, engine = name.split(":", 1)
+        if (kind == "search_img" and engine not in ("google", "naver")) or \
+                (kind == "search_text" and engine not in websearch.LABELS):
+            return
+        if self.session.state is not State.EDITING:
+            return
+        ov, sel, doc, raw = self._take()
+        final = compose(raw, doc)
+        payload = self._image_payload(final, 96 * ov.scale)
+        if payload:
+            self._set_clipboard(payload)
+        if kind == "search_img":
+            self._open_search(("img", engine, websearch.image_page(engine)))
+            return
+
+        def work():
+            try:
+                lines = self.ocr.recognize(raw)
+            except OcrUnavailable:
+                lines = []
+            return "text", engine, websearch.text_url(engine, full_text(lines)) if lines else None
+
+        if self.sync:
+            self._open_search(work())
+        else:
+            self.notify("캡처 속 글자를 읽는 중…")
+            QThreadPool.globalInstance().start(_Job(work, self._search_done))
+
+    def _open_search(self, result) -> None:
+        from ..core.websearch import LABELS
+        if isinstance(result, Exception):
+            self.notify(f"검색하지 못했습니다: {result}")
+            return
+        kind, engine, url = result
+        if url is None:
+            self.notify("캡처에서 글자를 찾지 못해 검색할 수 없습니다.")
+            return
+        if not self.open_url(url):
+            self.notify("브라우저를 열지 못했습니다. 캡처는 복사되어 있습니다.")
+        elif kind == "img":
+            self.notify(f"{LABELS[engine]} 검색을 열었습니다. 검색창을 누르고 Ctrl+V 하면 캡처로 찾습니다 "
+                        "(카메라 아이콘 → 이미지 붙여넣기). 붙여 넣기 전에는 아무것도 올라가지 않습니다.")
+        else:
+            self.notify(f"캡처 속 글자로 찾기를 열었습니다 ({LABELS[engine]}).")
 
     # --- mail -----------------------------------------------------------------------------------
     def address_book(self):
@@ -1201,7 +1270,8 @@ class Controller(QObject):
         if screen is not None:
             p.setScreen(screen)
             p.move(pos)
-        p.closed.connect(lambda w: self.pins.remove(w) if w in self.pins else None)
+        p.closed.connect(self._pin_closed)
+        p.managerRequested.connect(lambda w: self.show_pin_manager())
         p.copyRequested.connect(lambda w: self._copy_image(w.image, 96 * w.dpr))
         p.saveRequested.connect(lambda w: self._save(w.image))
         self.pins.append(p)
@@ -1209,6 +1279,105 @@ class Controller(QObject):
         self.notify("화면에 고정했습니다. 다른 창 위에 계속 떠 있습니다. "
                     "끌어서 옮기기 · 휠로 확대 · 닫기: Esc, X 버튼, 더블클릭")
         return p
+
+    def _pin_closed(self, w) -> None:
+        if w in self.pins:
+            self.pins.remove(w)
+        if self.pin_manager is not None:
+            self.pin_manager.refresh()
+
+    def _pin_from_capture(self, how: str) -> None:
+        if self.session.state is not State.EDITING:
+            return
+        ov, sel, doc, raw = self._take()
+        final = compose(raw, doc)
+        if how == "pin_stack":
+            self.pin_stacked(final, ov.devicePixelRatioF() or ov.scale)
+        else:
+            pos = ov.mapToGlobal(ov.local_rect(sel).topLeft().toPoint())
+            self.pin_other_screen(final, pos, ov.devicePixelRatioF() or ov.scale, ov.screen())
+
+    def _screen_rect(self, screen=None):
+        from PySide6.QtGui import QGuiApplication
+        scr = screen or QGuiApplication.primaryScreen()
+        return scr.availableGeometry() if scr is not None else QRect(0, 0, 1280, 720)
+
+    def _stack_slots(self, sizes, g, gap: int = 12):
+        """Top-right of the screen, downwards; a full column continues to its left."""
+        out = []
+        x_right, y, col_w = g.right() - gap, g.top() + gap, 0
+        for w, h in sizes:
+            if y + h > g.bottom() - gap and y > g.top() + gap:
+                x_right -= col_w + gap
+                y, col_w = g.top() + gap, 0
+            out.append(QPoint(max(g.left(), x_right - w), y))
+            y += h + gap
+            col_w = max(col_w, w)
+        return out
+
+    def pin_stacked(self, img, dpr: float = 1.0) -> PinWindow:
+        p = self.pin(img, QPoint(0, 0), dpr)
+        g = self._screen_rect()
+        others = [q for q in self.pins if q is not p and q.isVisible()]
+        y = g.top() + 12
+        for q in others:                              # below the pins already at the right edge
+            r = q.frameGeometry()
+            if r.right() >= g.right() - 40 and r.left() <= g.right() - p.width() - 12 + p.width():
+                y = max(y, r.bottom() + 12)
+        if y + p.height() > g.bottom():
+            self.arrange_pins()
+        else:
+            p.move(g.right() - 12 - p.width(), y)
+        return p
+
+    def pin_other_screen(self, img, pos: QPoint, dpr: float = 1.0, screen=None) -> PinWindow:
+        from PySide6.QtGui import QGuiApplication
+        screens = QGuiApplication.screens()
+        here = screen or QGuiApplication.screenAt(pos) or QGuiApplication.primaryScreen()
+        other = next((s for s in screens if s is not here), None)
+        if other is None:
+            p = self.pin(img, pos, dpr, screen)
+            self.notify("모니터가 하나라서 찍은 자리에 고정했습니다.")
+            return p
+        g = other.availableGeometry()
+        return self.pin(img, QPoint(g.x() + 40, g.y() + 40), dpr, other)
+
+    def arrange_pins(self) -> None:
+        g = self._screen_rect()
+        pins = [p for p in self.pins]
+        for p in pins:                                # very tall pins shrink to fit a column
+            if p.height() > g.height() - 24:
+                p.zoom *= (g.height() - 24) / p.height()
+                p._resize()
+        for p, pos in zip(pins, self._stack_slots([(p.width(), p.height()) for p in pins], g)):
+            p.move(pos)
+
+    def toggle_pins_hidden(self) -> None:
+        hide = any(p.isVisible() for p in self.pins)
+        for p in self.pins:
+            p.setVisible(not hide)
+
+    def toggle_pins_faded(self) -> None:
+        fade = any(p.windowOpacity() > 0.99 for p in self.pins)
+        for p in self.pins:
+            p.setWindowOpacity(0.5 if fade else 1.0)
+            p.bar_buttons["fade"].setText("100%" if fade else "50%")
+
+    def close_all_pins(self) -> None:
+        if not self.pins:
+            return
+        if not self.confirm(f"고정한 캡처 {len(self.pins)}개를 모두 닫을까요? (저장하지 않은 고정은 다시 띄울 수 없습니다)"):
+            return
+        self.close_pins()
+
+    def show_pin_manager(self):
+        from .pin_manager import PinManager
+        if self.pin_manager is None:
+            self.pin_manager = PinManager(self)
+        self.pin_manager.refresh()
+        self.pin_manager.show()
+        self.pin_manager.raise_()
+        return self.pin_manager
 
     def close_pins(self) -> None:
         for p in list(self.pins):
@@ -1277,17 +1446,38 @@ class Controller(QObject):
         if kind == "table":
             if err:
                 self.notify(err)
-            elif extra is None:
-                self.notify("캡처에서 표를 찾지 못했습니다. 칸이 나란히 맞춰진 표를 골라 주세요. "
-                            "(그림은 클립보드에 있습니다)")
-            else:
+            elif extra is not None:
                 self._finish_table(extra, send=False)
+            elif not lines:
+                self.notify("캡처에서 글자를 찾지 못해 표를 만들 수 없습니다. (그림은 클립보드에 있습니다)")
+            else:
+                self._table_preview(lines)
         elif kind == "text":
             self._finish_text(lines, err, qr, pos, extra)
         elif isinstance(extra, CapturedTable):
             self._finish_table(extra, send=kind == "ppt")
         else:
             self._finish_shapes(extra or [], user_shapes, final, err, send=kind == "ppt", dpi=dpi)
+
+    def _table_preview(self, lines) -> None:
+        """Not laid out as a table: show how it would be split, let the person pick and fix."""
+        from ..core.table_split import ocr_row_lines
+        from .table_preview import ask_table_preview
+        rows_text = ocr_row_lines([(l.text, l.box) for l in lines])
+        answer = (self.ask_table_preview or ask_table_preview)(rows_text, None)
+        if answer is None:
+            self.notify("표로 붙여넣기를 취소했습니다. (그림은 클립보드에 있습니다)")
+            return
+        action, title, rows = answer
+        if not rows:
+            self.notify("표가 비어 있어 복사하지 않았습니다.")
+            return
+        size = f"표 {len(rows)}행×{len(rows[0])}열"
+        if action == "ppt":
+            self._set_clipboard(table_payload(rows, title=title))
+            self._send_item_to_ppt(TableItem(rows, title=title), f"{size}를")
+        elif self._set_clipboard(table_payload(rows, title=title)):
+            self.notify(f"{size}로 복사했습니다. Excel·PowerPoint에서 Ctrl+V 하면 표가 됩니다.")
 
     def _finish_table(self, t, send: bool) -> None:
         keep = self.settings.keep_style

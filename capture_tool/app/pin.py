@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from PySide6.QtCore import QPoint, QRect, QSize, Qt, Signal
 from PySide6.QtGui import QAction, QColor, QPainter, QPen
-from PySide6.QtWidgets import QMenu, QToolButton, QWidget
+from PySide6.QtWidgets import QHBoxLayout, QMenu, QToolButton, QWidget
 
 from . import icons
 from .render import bgr_to_pixmap
@@ -19,6 +19,7 @@ class PinWindow(QWidget):
     closed = Signal(object)
     copyRequested = Signal(object)
     saveRequested = Signal(object)
+    managerRequested = Signal(object)
 
     def __init__(self, image, pos: QPoint, dpr: float = 1.0):
         super().__init__(None, Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.Tool)
@@ -34,16 +35,35 @@ class PinWindow(QWidget):
         self.setCursor(Qt.SizeAllCursor)
         self.setToolTip("Esc·✕·더블클릭: 닫기 · 드래그: 이동 · 휠: 확대/축소 · Ctrl+휠: 투명도 · "
                         "Ctrl+C 복사 · Ctrl+S 저장 · 우클릭: 메뉴")
-        self.close_button = QToolButton(self)
-        self.close_button.setIcon(icons.icon("close", "#FFFFFF"))
-        self.close_button.setIconSize(QSize(14, 14))
-        self.close_button.setFixedSize(QSize(24, 24))
-        self.close_button.setToolTip("닫기 (Esc)")
-        self.close_button.setCursor(Qt.ArrowCursor)
-        self.close_button.setStyleSheet("QToolButton { background: rgba(15,18,24,200); border: none; border-radius: 12px; }"
-                                        "QToolButton:hover { background: #E03131; }")
-        self.close_button.clicked.connect(self.close)
-        self.close_button.hide()
+        # small bar shown on hover: opacity, size, copy, close (only ✕ when the pin is tiny)
+        self.hover_bar = QWidget(self)
+        self.hover_bar.setStyleSheet("QWidget { background: rgba(15,18,24,215); border-radius: 8px; }"
+                                     "QToolButton { background: transparent; color: #FFFFFF; border: none; "
+                                     "border-radius: 6px; font-size: 11px; padding: 0 4px; }"
+                                     "QToolButton:hover { background: rgba(255,255,255,40); }")
+        row = QHBoxLayout(self.hover_bar)
+        row.setContentsMargins(3, 2, 3, 2)
+        row.setSpacing(1)
+        self.bar_buttons: dict[str, QToolButton] = {}
+        for key, text, tip, fn in [("fade", "50%", "반투명 / 다시 또렷하게", self.toggle_fade),
+                                   ("bigger", "+", "크게", lambda: self.zoom_by(1)),
+                                   ("smaller", "−", "작게", lambda: self.zoom_by(-1)),
+                                   ("copy", "복사", "복사 (Ctrl+C)", lambda: self.copyRequested.emit(self)),
+                                   ("close", "", "닫기 (Esc)", self.close)]:
+            b = QToolButton(self.hover_bar)
+            if key == "close":
+                b.setIcon(icons.icon("close", "#FFFFFF"))
+                b.setIconSize(QSize(12, 12))
+            else:
+                b.setText(text)
+            b.setToolTip(tip)
+            b.setFixedHeight(22)
+            b.setCursor(Qt.ArrowCursor)
+            b.clicked.connect(fn)
+            row.addWidget(b)
+            self.bar_buttons[key] = b
+        self.close_button = self.bar_buttons["close"]
+        self.hover_bar.hide()
         self._resize()
         self.move(pos)
 
@@ -54,7 +74,18 @@ class PinWindow(QWidget):
     def _resize(self) -> None:
         w, h = self.image_size
         self.resize(max(8, round(w / self.dpr * self.zoom)), max(8, round(h / self.dpr * self.zoom)))
-        self.close_button.move(self.width() - self.close_button.width() - 4, 4)
+        self._place_bar()
+
+    def _place_bar(self) -> None:
+        full = self.width() >= 170
+        for k, b in self.bar_buttons.items():
+            b.setVisible(full or k == "close")
+        self.hover_bar.adjustSize()
+        self.hover_bar.move(max(0, self.width() - self.hover_bar.width() - 4), 4)
+
+    def toggle_fade(self) -> None:
+        self.setWindowOpacity(1.0 if self.windowOpacity() < 0.99 else 0.5)
+        self.bar_buttons["fade"].setText("100%" if self.windowOpacity() < 0.99 else "50%")
 
     def zoom_by(self, steps: int) -> None:
         self.zoom = min(4.0, max(MIN_ZOOM, self.zoom * (1.1 ** steps)))
@@ -78,11 +109,12 @@ class PinWindow(QWidget):
         self._focus_requested = True
 
     def enterEvent(self, e):
-        self.close_button.show()
-        self.close_button.raise_()
+        self._place_bar()
+        self.hover_bar.show()
+        self.hover_bar.raise_()
 
     def leaveEvent(self, e):
-        self.close_button.hide()
+        self.hover_bar.hide()
 
     # --- painting --------------------------------------------------------------------
     def paintEvent(self, _):
@@ -99,9 +131,10 @@ class PinWindow(QWidget):
             self._drag = e.globalPosition().toPoint() - self.frameGeometry().topLeft()
 
     def mouseMoveEvent(self, e):
-        if not self.close_button.isVisible():
-            self.close_button.show()
-            self.close_button.raise_()
+        if not self.hover_bar.isVisible():
+            self._place_bar()
+            self.hover_bar.show()
+            self.hover_bar.raise_()
         if self._drag is not None and e.buttons() & Qt.LeftButton:
             self.move(e.globalPosition().toPoint() - self._drag)
         else:
@@ -143,6 +176,8 @@ class PinWindow(QWidget):
         for label, fn in [("복사 (Ctrl+C)", lambda: self.copyRequested.emit(self)),
                           ("저장 (Ctrl+S)", lambda: self.saveRequested.emit(self)),
                           ("원래 크기 (0)", self.reset_zoom),
+                          ("반투명 / 또렷하게", self.toggle_fade),
+                          ("고정 관리…", lambda: self.managerRequested.emit(self)),
                           ("닫기 (Esc)", self.close)]:
             a = QAction(label, m)
             a.triggered.connect(fn)
