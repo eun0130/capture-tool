@@ -4,6 +4,7 @@ the cloud fails, and run one job at a time."""
 from __future__ import annotations
 
 import threading
+from collections import OrderedDict
 from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Callable
@@ -14,6 +15,7 @@ from .gemini import GeminiError
 from .redact import mask
 
 MAX_INPUT = 20000
+CACHE_SIZE = 20          # recent results kept in memory (never on disk)
 
 
 @dataclass
@@ -44,6 +46,20 @@ class AiService:
         self.cloud_factory = cloud_factory
         self.get_key = get_key or (lambda: None)
         self._lock = threading.Lock()
+        self._cache: OrderedDict = OrderedDict()
+
+    def _cached(self, key):
+        hit = self._cache.get(key)
+        if hit is not None:
+            self._cache.move_to_end(key)
+        return hit
+
+    def _remember(self, key, result: AiResult) -> AiResult:
+        self._cache[key] = result
+        self._cache.move_to_end(key)
+        while len(self._cache) > CACHE_SIZE:
+            self._cache.popitem(last=False)
+        return result
 
     @property
     def busy(self) -> bool:
@@ -77,35 +93,50 @@ class AiService:
         return " ".join(n for n in notes if n)
 
     def translate(self, text: str, src: str | None = None, tgt: str | None = None, cancel=None) -> AiResult:
+        text, note = self._cap(text)
+        src = src or detect_lang(text)
+        tgt = tgt or self.settings.ai_target_lang or default_target(src)
+        key = ("translate", text, src, tgt, bool(self.settings.ai_cloud_translate))
+        hit = self._cached(key)
+        if hit is not None:
+            return hit
         with self._job():
-            text, note = self._cap(text)
-            src = src or detect_lang(text)
-            tgt = tgt or self.settings.ai_target_lang or default_target(src)
             if self.settings.ai_cloud_translate:
                 cloud, why = self._cloud()
                 if cloud is not None:
                     try:
                         out = cloud.generate(translate_prompt(mask(text), src, tgt))
-                        return AiResult(out, "cloud", src, tgt, note)
+                        return self._remember(key, AiResult(out, "cloud", src, tgt, note))
                     except GeminiError as e:
                         why = _FALLBACK.get(e.kind, str(e) + " 오프라인으로 처리했습니다.")
                 note = self._join(note, why)
+                out = self.translator.translate(text, src, tgt, cancel=cancel)
+                return AiResult(out, "local", src, tgt, note)         # fallback: try the cloud again next time
             out = self.translator.translate(text, src, tgt, cancel=cancel)
-            return AiResult(out, "local", src, tgt, note)
+            return self._remember(key, AiResult(out, "local", src, tgt, note))
 
     def summarize(self, text: str, lang: str = "ko", on_text=None, cancel=None) -> AiResult:
+        text, note = self._cap(text)
+        key = ("summary", text, lang, self.settings.ai_summary_engine)
+        hit = self._cached(key)
+        if hit is not None:
+            if on_text:
+                on_text(hit.text)
+            return hit
         with self._job():
-            text, note = self._cap(text)
             if self.settings.ai_summary_engine == "cloud":
                 cloud, why = self._cloud()
                 if cloud is not None:
                     try:
-                        return AiResult(cloud.generate(summary_prompt(mask(text), lang)), "cloud", tgt=lang, note=note)
+                        return self._remember(key, AiResult(cloud.generate(summary_prompt(mask(text), lang)),
+                                                            "cloud", tgt=lang, note=note))
                     except GeminiError as e:
                         why = _FALLBACK.get(e.kind, str(e) + " 오프라인으로 처리했습니다.")
                 note = self._join(note, why)
+                out = self.summarizer.summarize(text, lang, on_text=on_text, cancel=cancel)
+                return AiResult(out, "local", tgt=lang, note=note)
             out = self.summarizer.summarize(text, lang, on_text=on_text, cancel=cancel)
-            return AiResult(out, "local", tgt=lang, note=note)
+            return self._remember(key, AiResult(out, "local", tgt=lang, note=note))
 
     def preload(self, text: str) -> None:
         """Load the models the next translate / summary of `text` would need, ahead of time

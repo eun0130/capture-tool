@@ -3,17 +3,28 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import threading
 from typing import Callable
 
 from . import model_store as ms
-from .ai_text import chunk_text, restore_layout, route, split_for_mt, summary_prompt
+from .ai_text import (chunk_text, clean_summary, dedupe_text, restore_layout, route, split_for_mt,
+                      summary_prompt, summary_should_stop)
 
 BATCH = 16                # sentences per translation call (bounded memory, lets cancel act)
 SUMMARY_CHUNK = 2500      # characters per summary pass
-SUMMARY_TOKENS = 320      # new tokens per summary
-THREADS = 4               # never all cores: the PC stays usable
+SUMMARY_TOKENS = 256      # new tokens per summary (3-5 bullets need ~80-180)
+THREADS = 4               # translation: 4 measured faster than 8 (small model, short sentences)
+
+
+def llm_threads(cores: int | None) -> int:
+    """Half the cores, at most 8: reading the text (prefill) scales with threads - 4 -> 8 made a
+    long summary 33% faster - while half the PC stays free."""
+    return max(1, min(8, (cores or 4) // 2))
+
+
+LLM_THREADS = llm_threads(os.cpu_count())
 
 
 class ModelMissing(Exception):
@@ -133,7 +144,7 @@ class LocalTranslator:
 
 # --- summary -------------------------------------------------------------------------------------------
 class _GenaiLLM:
-    def __init__(self, model_dir, threads: int = THREADS):
+    def __init__(self, model_dir, threads: int = LLM_THREADS):
         import onnxruntime_genai as og
         self.og = og
         cfg = og.Config(str(model_dir))
@@ -142,7 +153,7 @@ class _GenaiLLM:
         self.model = og.Model(cfg)
         self.tok = og.Tokenizer(self.model)
 
-    def generate(self, prompt: str, max_new_tokens: int, on_text=None, cancel=None) -> str:
+    def generate(self, prompt: str, max_new_tokens: int, on_text=None, cancel=None, stop=None) -> str:
         og = self.og
         chat = json.dumps([{"role": "user", "content": prompt + " /no_think"}], ensure_ascii=False)
         ids = self.tok.encode(self.tok.apply_chat_template(chat, add_generation_prompt=True))
@@ -159,6 +170,8 @@ class _GenaiLLM:
             out += stream.decode(gen.get_next_tokens()[0])
             if on_text:
                 on_text(out)
+            if stop and stop(out):
+                break
         return out
 
 
@@ -167,7 +180,7 @@ def _find_llm():
 
 
 class LocalSummarizer:
-    def __init__(self, find: Callable | None = None, loader: Callable | None = None, threads: int = THREADS):
+    def __init__(self, find: Callable | None = None, loader: Callable | None = None, threads: int = LLM_THREADS):
         self.find = find or _find_llm
         self.loader = loader or (lambda d, t: _GenaiLLM(d, t))
         self.threads = threads
@@ -186,20 +199,27 @@ class LocalSummarizer:
                 self._llm = self.loader(d, self.threads)
             return self._llm
 
+    @staticmethod
+    def _one(llm, text: str, lang: str, on_text=None, cancel=None) -> str:
+        show = (lambda t: on_text(clean_summary(t))) if on_text else None
+        raw = llm.generate(summary_prompt(text, lang), SUMMARY_TOKENS, on_text=show, cancel=cancel,
+                           stop=summary_should_stop)
+        out = clean_summary(raw)
+        if not out or strip_think(raw).startswith("<text>"):      # copied the input: ask once more
+            out = clean_summary(llm.generate(summary_prompt(text, lang, instruction_last=True), SUMMARY_TOKENS,
+                                             on_text=show, cancel=cancel, stop=summary_should_stop))
+        return out
+
     def summarize(self, text: str, lang: str = "ko", on_text=None, cancel=None) -> str:
-        chunks = chunk_text(text, SUMMARY_CHUNK)
+        chunks = chunk_text(dedupe_text(text), SUMMARY_CHUNK)
         if not chunks:
             return ""
         llm = self._get()
         if len(chunks) == 1:
-            return strip_think(llm.generate(summary_prompt(chunks[0], lang), SUMMARY_TOKENS,
-                                            on_text=(lambda t: on_text(strip_think(t))) if on_text else None,
-                                            cancel=cancel))
-        parts = [strip_think(llm.generate(summary_prompt(c, lang), SUMMARY_TOKENS, cancel=cancel)) for c in chunks]
+            return self._one(llm, chunks[0], lang, on_text, cancel)
+        parts = [self._one(llm, c, lang, cancel=cancel) for c in chunks]
         joined = "\n".join(parts)[:SUMMARY_CHUNK * 2]
-        return strip_think(llm.generate(summary_prompt(joined, lang), SUMMARY_TOKENS,
-                                        on_text=(lambda t: on_text(strip_think(t))) if on_text else None,
-                                        cancel=cancel))
+        return self._one(llm, joined, lang, on_text, cancel)
 
     def unload(self) -> None:
         with self._lock:

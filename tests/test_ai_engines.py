@@ -86,7 +86,7 @@ class FakeLLM:
     def __init__(self):
         self.prompts = []
 
-    def generate(self, prompt, max_new_tokens, on_text=None, cancel=None):
+    def generate(self, prompt, max_new_tokens, on_text=None, cancel=None, stop=None):
         self.prompts.append(prompt)
         out = "<think>\n\n</think>\n• 요점 " + str(len(self.prompts))
         if on_text:
@@ -108,7 +108,7 @@ def test_AIE_08_short_text_one_call_think_removed():
 
 def test_AIE_09_long_text_is_summarized_in_parts_then_combined():
     s, llm = make_summarizer()
-    long = "\n\n".join("문단 " + "내용 " * 400 for _ in range(4))
+    long = "\n\n".join(f"문단 {i} " + "내용 " * 400 for i in range(4))
     out = s.summarize(long, "ko")
     assert len(llm.prompts) >= 3 and out.startswith("•")
     assert "요점 1" in llm.prompts[-1]                 # the final pass sees the part summaries
