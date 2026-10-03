@@ -468,6 +468,10 @@ def attach_text(shapes: list[Detected], lines: list[tuple[str, tuple]], img=None
     return rest
 
 
+def _luma(h: str) -> float:
+    return 0.299 * int(h[1:3], 16) + 0.587 * int(h[3:5], 16) + 0.114 * int(h[5:7], 16)
+
+
 def _near_color(a: str, b: str, tol: int = 60) -> bool:
     return max(abs(int(a[k:k + 2], 16) - int(b[k:k + 2], 16)) for k in (1, 3, 5)) <= tol
 
@@ -499,8 +503,15 @@ def text_boxes_for(lines: list[tuple[str, tuple]], img, dpi: float = 96) -> list
         x2 = max(b[0] + b[2] for _, b, _ in g)
         y2 = max(b[1] + b[3] for _, b, _ in g)
         st = g[0][2]
+        fill = None
+        if _luma(st.color) > 150:                       # light text: keep its page colour or it vanishes
+            bx, by, bw, bh = (int(v) for v in g[0][1])  # on a white slide
+            crop = img[max(0, by):by + bh, max(0, bx):bx + bw]
+            if crop.size:
+                bg = np.median(np.concatenate([crop[0], crop[-1], crop[:, 0], crop[:, -1]]), axis=0)
+                fill = _hex(tuple(int(v) for v in bg))
         out.append(Detected("text", int(x1 - pad_x), int(y1 - pad_y), int(x2 - x1 + 2 * pad_x),
-                            int(y2 - y1 + 2 * pad_y), text="\n".join(t for t, _, _ in g),
+                            int(y2 - y1 + 2 * pad_y), fill=fill, text="\n".join(t for t, _, _ in g),
                             text_color=st.color, font_size=st.size, bold=st.bold))
     return out
 
@@ -545,22 +556,32 @@ def _edge_distance(p, s: Detected) -> float:
     return (dx * dx + dy * dy) ** 0.5
 
 
-def to_drawing(detected: list[Detected]) -> tuple[list[DShape], list[DConnector]]:
+def to_drawing(detected: list[Detected], keep_style: bool = True) -> tuple[list[DShape], list[DConnector]]:
+    """keep_style=False: plain look (white fill, black outline and text, no bold) - same
+    shapes, sizes and text, for decks with their own design."""
     closed = [d for d in detected if d.kind not in ("line", "arrow")]
 
     def color(d: Detected) -> str:
+        if not keep_style:
+            return "#000000"
         return d.text_color or ("#000000" if not d.fill else _text_color(d.fill))
 
     shapes = []
     for d in closed:
+        bold = d.bold and keep_style
         if d.kind == "text":
-            shapes.append(DShape("rect", d.x, d.y, d.w, d.h, fill=None, stroke=None, text=d.text,
-                                 text_color=color(d), font_size=d.font_size, bold=d.bold, wrap=False, align="l"))
-        else:
+            shapes.append(DShape("rect", d.x, d.y, d.w, d.h, fill=d.fill if keep_style else None, stroke=None,
+                                 text=d.text, text_color=color(d), font_size=d.font_size, bold=bold,
+                                 wrap=False, align="l"))
+        elif keep_style:
             stroke = d.stroke if (d.stroke or d.fill) else "#000000"
             shapes.append(DShape(d.kind, d.x, d.y, d.w, d.h, fill=d.fill, stroke=stroke,
                                  stroke_width=d.stroke_width, text=d.text, text_color=color(d),
-                                 font_size=d.font_size, bold=d.bold))
+                                 font_size=d.font_size, bold=bold))
+        else:
+            shapes.append(DShape(d.kind, d.x, d.y, d.w, d.h, fill="#FFFFFF", stroke="#000000",
+                                 stroke_width=d.stroke_width, text=d.text, text_color="#000000",
+                                 font_size=d.font_size))
     conns = []
     for d in detected:
         if d.kind not in ("line", "arrow"):
@@ -580,7 +601,8 @@ def to_drawing(detected: list[Detected]) -> tuple[list[DShape], list[DConnector]
         a, b = near((x1, y1)), near((x2, y2))
         linked = a is not None and b is not None and a != b
         conns.append(DConnector(start=a if linked else None, end=b if linked else None,
-                                x1=x1, y1=y1, x2=x2, y2=y2, color=d.stroke or "#000000",
+                                x1=x1, y1=y1, x2=x2, y2=y2,
+                                color=(d.stroke or "#000000") if keep_style else "#000000",
                                 width=d.stroke_width, arrow=d.kind == "arrow"))
     return shapes, conns
 

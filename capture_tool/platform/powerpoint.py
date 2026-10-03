@@ -67,11 +67,19 @@ class TableItem:
     rows: list
     font_family: str = "Malgun Gothic"
     font_size: float = 14      # points
+    style: object = None       # TableStyle: captured fills / text colours / border; None = PowerPoint's own
+    title: str | None = None   # a line above the table (the capture's caption)
+    col_widths: list = field(default_factory=list)   # points, as on screen
 
 
 # every cell is one COM round trip; a slide can't show more anyway
 MAX_TABLE_ROWS = 50
 MAX_TABLE_COLS = 15
+
+
+def _bgr_int(hex_color: str) -> int:
+    """'#RRGGBB' -> the BGR integer Office COM uses for colours."""
+    return int(hex_color[5:7], 16) << 16 | int(hex_color[3:5], 16) << 8 | int(hex_color[1:3], 16)
 
 
 def table_fits(rows: list) -> bool:
@@ -179,20 +187,58 @@ def _insert(app, item, new_presentation: bool, hook, new_slide: bool = False) ->
     elif isinstance(item, TableItem):
         rows = [list(r)[:MAX_TABLE_COLS] for r in item.rows[:MAX_TABLE_ROWS]]
         nr, nc = len(rows), max(len(r) for r in rows)
-        widest = [max((len(r[c]) if c < len(r) else 0) for r in rows) for c in range(nc)]
-        tw = min(sw * FIT, max(120.0 * nc, sum(max(4, w) * item.font_size * 0.9 for w in widest)))
-        th = min(sh * FIT, nr * item.font_size * 2.0)
-        left, top, tw, th = place(tw, th, sw, sh)
-        new = slide.Shapes.AddTable(nr, nc, left, top, tw, th)
+        size = float(getattr(item.style, "font_size", 0) or item.font_size)
+        widths = list(item.col_widths[:nc]) if len(item.col_widths) >= nc else []
+        if not widths:
+            widest = [max((len(r[c]) if c < len(r) else 0) for r in rows) for c in range(nc)]
+            widths = [max(4, w) * size * 0.9 for w in widest]
+            widths = [w * max(1.0, 120.0 * nc / sum(widths)) for w in widths]
+        k = min(1.0, sw * FIT / sum(widths))
+        widths = [w * k for w in widths]
+        title_h = size * 2.2 if item.title else 0.0
+        th = min(sh * FIT - title_h, nr * size * 2.0)
+        left, top, tw, th2 = place(sum(widths), th + title_h, sw, sh)
+        if item.title:
+            cap = slide.Shapes.AddTextbox(MSO_TEXT_HORIZONTAL, left, top, tw, title_h)
+            rng = cap.TextFrame.TextRange
+            rng.Text = item.title
+            rng.Font.Name = rng.Font.NameFarEast = item.font_family
+            rng.Font.Size = size
+        new = slide.Shapes.AddTable(nr, nc, left, top + title_h, tw, th)
         table = new.Table
+        st = item.style
+        if st is not None:
+            try:
+                table.ApplyStyle("{5940675A-B579-460E-94D1-54222C63F5DA}", False)   # "No Style, Table Grid"
+            except Exception:  # noqa: BLE001 - older PowerPoint: explicit fills below still apply
+                pass
+        for c in range(1, nc + 1):
+            try:
+                table.Columns(c).Width = widths[c - 1]
+            except Exception:  # noqa: BLE001
+                pass
         for r, row in enumerate(rows, 1):
             for c in range(1, nc + 1):
-                rng = table.Cell(r, c).Shape.TextFrame.TextRange
-                cell = row[c - 1] if c <= len(row) else ""
-                rng.Text = cell.replace("\r\n", "\r").replace("\n", "\r")     # PowerPoint paragraphs
+                cell = table.Cell(r, c)
+                rng = cell.Shape.TextFrame.TextRange
+                text = row[c - 1] if c <= len(row) else ""
+                rng.Text = text.replace("\r\n", "\r").replace("\n", "\r")     # PowerPoint paragraphs
                 rng.Font.Name = item.font_family
                 rng.Font.NameFarEast = item.font_family
-                rng.Font.Size = item.font_size
+                rng.Font.Size = size
+                if st is not None:
+                    head = r == 1
+                    cell.Shape.Fill.Visible = True
+                    cell.Shape.Fill.Solid()
+                    cell.Shape.Fill.ForeColor.RGB = _bgr_int(st.header_fill if head else st.body_fill)
+                    rng.Font.Color.RGB = _bgr_int(st.header_text if head else st.body_text)
+                    rng.Font.Bold = bool(head and st.header_bold)
+                    if st.border:
+                        for side in (1, 2, 3, 4):              # top, left, bottom, right
+                            b = cell.Borders(side)
+                            b.Visible = True
+                            b.ForeColor.RGB = _bgr_int(st.border)
+                            b.Weight = 0.75
         added = 1
     elif isinstance(item, ClipboardShapes):
         new = slide.Shapes.Paste()

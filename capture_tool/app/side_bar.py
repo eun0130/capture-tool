@@ -16,6 +16,8 @@ ACTIONS = [
     ("link", "link", "링크", "링크 복사 — ① 파일 링크: 저장한 파일 위치(인터넷에 올리지 않음, 같은 PC·공유 폴더에서 열림) "
                              "② 인터넷 공유 링크: 누구나 열 수 있는 주소, 정해진 시간 뒤 자동 삭제"),
     ("pin", "pin", "고정", "캡처를 다른 모든 창 위에 계속 떠 있게 붙여 둡니다 — 자료를 보며 작업할 때 (F3)"),
+    ("kakao", "talk", "카톡", "카카오톡으로 보내기 — 열려 있는 채팅방을 고르면 그곳에 붙여 넣습니다 "
+                              "(카카오톡의 [전송]을 눌러야 보내집니다)"),
 ]
 
 STYLE = """
@@ -53,6 +55,8 @@ class SideBar(QWidget):
             b.setFocusPolicy(Qt.NoFocus)
             if name == "link":
                 b.clicked.connect(lambda _=False, btn=b: self._link_menu(btn))
+            elif name == "kakao":
+                b.clicked.connect(lambda _=False, btn=b: self._kakao_popup(btn))
             else:
                 b.clicked.connect(lambda _=False, n=name: self.action.emit(n))
             self.buttons[name] = b
@@ -83,6 +87,29 @@ class SideBar(QWidget):
 
     def trigger(self, name: str) -> None:
         self.action.emit(name)
+
+    kakao_provider = staticmethod(lambda: None)    # -> KakaoSender (set by the overlay)
+
+    def kakao_menu(self, sender):
+        """Open chats first (paste straight into one), then "open KakaoTalk"."""
+        from PySide6.QtWidgets import QMenu
+        m = QMenu(self)
+        if sender is None or not sender.installed():
+            a = m.addAction("카카오톡이 설치되어 있지 않습니다 (캡처는 복사됩니다)")
+            a.triggered.connect(lambda: self.action.emit("kakao_main"))
+            return m
+        chats = sender.chats()
+        for hwnd, title in chats[:15]:
+            a = m.addAction(f"💬 {title} — 이 채팅방에 붙여 넣기")
+            a.triggered.connect(lambda _=False, h=hwnd: self.action.emit(f"kakao_chat:{h}"))
+        if chats:
+            m.addSeparator()
+        b = m.addAction("카카오톡 열기 — 채팅방을 직접 골라 Ctrl+V")
+        b.triggered.connect(lambda: self.action.emit("kakao_main"))
+        return m
+
+    def _kakao_popup(self, btn) -> None:
+        self.kakao_menu(self.kakao_provider()).exec(btn.mapToGlobal(btn.rect().topRight()))
 
     def _link_menu(self, btn) -> None:
         from PySide6.QtWidgets import QMenu

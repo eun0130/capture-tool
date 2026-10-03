@@ -97,7 +97,7 @@ class OcrBar(QWidget):
         lay.setSpacing(6)
         lay.addWidget(QLabel("드래그한 부분의 글자를 바로 복사합니다"))
         self.buttons = {}
-        for name, label in [("all", "전체 복사 (Enter)"), ("translate", "번역"), ("summarize", "요약"),
+        for name, label in [("all", "전체 복사 (Enter)"), ("table", "표로 복사"), ("translate", "번역"), ("summarize", "요약"),
                             ("window", "창으로 보기"), ("back", "그리기로 돌아가기 (Esc)")]:
             b = QPushButton(label, self)
             b.setFocusPolicy(Qt.NoFocus)
@@ -111,6 +111,14 @@ class OcrBar(QWidget):
 
 
 class OverlayWindow(QWidget):
+    def update(self, *args):
+        """Every edit repaints: let the live clipboard copy catch up (it skips when nothing
+        in the picture changed, e.g. a hover repaint)."""
+        super().update(*args)
+        auto = getattr(getattr(self, "c", None), "auto_copy_soon", None)
+        if auto is not None and self.embedded is None:
+            auto()
+
     def __init__(self, controller, monitor, image, windows=(), embedded=None):
         if embedded is None:
             super().__init__(None, Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.Tool)
@@ -139,6 +147,7 @@ class OverlayWindow(QWidget):
         self.side_bar = SideBar(self)
         self.side_bar.hide()
         self.side_bar.action.connect(controller.on_toolbar_action)
+        self.side_bar.kakao_provider = lambda: getattr(controller, "kakao", None)
         self.ocr_bar = OcrBar(self)
         self.ocr_bar.hide()
         self.ocr_bar.action.connect(controller.on_ocr_action)
@@ -236,7 +245,8 @@ class OverlayWindow(QWidget):
         self.update()
 
     # --- text mode (drag to copy part of the recognized text) ----------------------
-    def enter_ocr_mode(self, lines) -> None:
+    def enter_ocr_mode(self, lines, table: bool = False) -> None:
+        self.ocr_bar.buttons["table"].setVisible(table)     # only when the text is laid out as a table
         self.ocr_lines = list(lines)
         self._ocr_sel = None
         self.toolbar.hide()

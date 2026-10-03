@@ -35,6 +35,8 @@ class Settings:
     last_font_family: str = "Malgun Gothic"
     drm_notice_shown: bool = False
     ppt_new_slide: bool = True           # PPT: insert on a new slide after the current one
+    auto_copy: bool = True               # choosing an area copies it at once (Ctrl+V without Ctrl+C)
+    keep_style: bool = True              # PPT/shapes/tables keep colours and fonts (off: plain)
     last_highlight_color: str = "#FFE066"
     last_text_bg: str | None = None
     ai_summary_engine: str = "local"     # "local" (offline) or "cloud" (Gemini, own key)
@@ -96,7 +98,7 @@ def _apply(s: Settings, data: dict, warnings: list[str]) -> None:
                 if not _is_int(v):
                     raise TypeError
                 s.jpg_quality = min(100, max(1, v))
-            elif name in ("auto_save", "launch_at_startup", "redact_pii", "drm_notice_shown", "ppt_new_slide",
+            elif name in ("auto_save", "launch_at_startup", "redact_pii", "drm_notice_shown", "ppt_new_slide", "auto_copy", "keep_style",
                           "ai_cloud_translate", "ai_cloud_consent", "share_consent"):
                 if not isinstance(v, bool):
                     raise TypeError

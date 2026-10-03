@@ -12,7 +12,7 @@ from PySide6.QtCore import QObject, QPoint, QRunnable, Qt, QThreadPool, QTimer, 
 from PySide6.QtGui import QCursor
 
 from ..core import settings as settings_io
-from ..core.clipboard_payload import (HTML, UNICODE, cf_html, dib_from_bgr, image_payload, png_with_dpi,
+from ..core.clipboard_payload import (HTML, UNICODE, cf_html, dib_from_bgr, image_payload, png_with_dpi, table_payload,
                                       shapes_payload, text_payload)
 from ..core.clip import flatten, mask_outside
 from ..core.color import pixel_color, push_recent
@@ -26,6 +26,7 @@ from ..core.session import CaptureSession, State
 from ..core.shapes import (attach_found_text, attach_text, detect, drop_doubtful_inside, split_doubtful,
                            text_boxes_for, to_drawing)
 from ..core.table import detect_grid, grid_from_cells, table_is_plausible
+from ..core.table_capture import CapturedTable, find_table
 from ..core.text_table import find_text_table
 from ..platform.powerpoint import (ClipboardShapes, Picture, PowerPointBusy, PowerPointUnavailable, TableItem,
                                    TextItem, clip_text, table_fits)
@@ -52,6 +53,7 @@ class _Job(QRunnable):
 
 class Controller(QObject):
     _job_done = Signal(object)
+    _kakao_done = Signal(object)
     _ppt_done = Signal(object)
     _text_ready = Signal(object)
     _ai_done = Signal(object)
@@ -122,6 +124,9 @@ class Controller(QObject):
         from ..platform.powerpoint import PowerPointSender
         from ..platform.security_software import detect_drm
         self.powerpoint = PowerPointSender()
+        from ..platform.kakao import KakaoSender
+        self.kakao = KakaoSender()
+        self._kakao_done.connect(self.notify)
         self.drm = detect_drm()
 
     # --- helpers -----------------------------------------------------------------
@@ -273,6 +278,7 @@ class Controller(QObject):
     def _after_select(self, ov) -> None:
         if self.session.state is not State.EDITING:
             return
+        self._auto_copied, self._auto_sig = False, None      # a new area: copy it afresh
         self.active_overlay = ov
         for o in self.overlays:
             o.update()
@@ -285,6 +291,45 @@ class Controller(QObject):
             return
         ov.show_toolbar()
         ov.setFocus()
+        self.auto_copy_soon(now=True)
+
+    # --- live copy: Ctrl+V works without Ctrl+C -----------------------------------------
+    def auto_copy_soon(self, now: bool = False) -> None:
+        """Keep the clipboard equal to what the capture shows while editing (debounced:
+        encoding a 4K picture takes ~50 ms, so a burst of edits copies once)."""
+        if not self.settings.auto_copy or self.session.state is not State.EDITING or self.mode != "draw":
+            return
+        if now or self.sync:
+            self._auto_copy()
+            return
+        if not hasattr(self, "_auto_timer"):
+            self._auto_timer = QTimer()
+            self._auto_timer.setSingleShot(True)
+            self._auto_timer.setInterval(300)
+            self._auto_timer.timeout.connect(self._auto_copy)
+        self._auto_timer.start()
+
+    def flush_auto_copy(self) -> None:
+        timer = getattr(self, "_auto_timer", None)
+        if timer is not None and timer.isActive():
+            timer.stop()
+            self._auto_copy()
+
+    def _auto_copy(self) -> None:
+        ov = self.active_overlay
+        sel = self.session.selection
+        if ov is None or sel is None or self.session.state is not State.EDITING:
+            return
+        doc = self.session.document
+        sig = ((sel.x, sel.y, sel.w, sel.h), repr(doc.shapes) if doc else "")
+        if sig == getattr(self, "_auto_sig", None) and getattr(self, "_auto_copied", False):
+            return                                        # repaint without a change
+        self._auto_sig = sig
+        img = compose(ov.crop(sel), doc)
+        payload = self._image_payload(img, 96 * ov.scale)
+        if payload and self._set_clipboard(payload) and not getattr(self, "_auto_copied", False):
+            self._auto_copied = True
+            self.notify("클립보드에 복사했습니다 — 바로 Ctrl+V 하면 됩니다. 그림을 그리면 복사본도 바뀝니다.")
 
     def _warn_protected(self, ov, sel) -> None:
         """Windows that asked to be hidden from screenshots (banking, DRM video, secure apps)
@@ -303,6 +348,7 @@ class Controller(QObject):
         self.session.resize(nudge(self.session.selection, dx, dy, ov.monitor.rect))
         ov.show_toolbar()
         ov.update()
+        self.auto_copy_soon()
 
     def cancel(self) -> None:
         ov, sel, doc = self.active_overlay, self.session.selection, self.session.document
@@ -324,6 +370,8 @@ class Controller(QObject):
             self._acted = True
         if name in ("link_file", "link_web"):
             self._link_from_capture(name)
+        elif name.startswith("kakao"):
+            self._send_to_kakao(name)
         elif name in ("copy", "save", "save_as", "pin"):
             self.finish(name)
         elif name == "cancel":
@@ -539,6 +587,41 @@ class Controller(QObject):
         return out
 
     # --- links -------------------------------------------------------------------------------------------
+    def _send_to_kakao(self, name: str) -> None:
+        """Copy the capture (drawings included), then bring the chosen chat to the front and
+        paste it there - KakaoTalk shows its own send confirmation - or open KakaoTalk."""
+        hwnd = 0
+        if name.startswith("kakao_chat:"):
+            try:
+                hwnd = int(name.split(":", 1)[1])
+            except ValueError:
+                return
+        if self.session.state is not State.EDITING:
+            return
+        self.finish("copy")
+        kakao = self.kakao
+        if not kakao.installed():
+            self.notify("카카오톡이 설치되어 있지 않습니다. 캡처는 복사되어 있으니 보낼 곳에 Ctrl+V 하세요.")
+            return
+
+        def work() -> str:
+            if hwnd:
+                title = dict(kakao.chats()).get(hwnd)
+                if title is None:
+                    kakao.open_main()
+                    return "그 채팅방이 닫혀 있어 카카오톡을 열었습니다. 보낼 채팅방을 열고 Ctrl+V → [전송]."
+                if kakao.paste_into(hwnd):
+                    return f"'{title}' 채팅방에 캡처를 붙여 넣었습니다. 카카오톡 창의 [전송]을 누르면 보내집니다."
+                return f"'{title}' 채팅방을 앞으로 띄우지 못했습니다. 그 채팅방에서 Ctrl+V → [전송] 하세요."
+            if kakao.open_main():
+                return "카카오톡을 열었습니다. 보낼 채팅방을 열고 Ctrl+V → [전송] 하세요 (캡처는 복사되어 있습니다)."
+            return "카카오톡을 열지 못했습니다. 캡처는 복사되어 있으니 카카오톡 채팅방에서 Ctrl+V 하세요."
+
+        if self.sync:
+            self.notify(work())
+        else:
+            QThreadPool.globalInstance().start(_Job(work, self._kakao_done))
+
     def _link_from_capture(self, kind: str) -> None:
         if self.session.state is not State.EDITING:
             return
@@ -692,9 +775,10 @@ class Controller(QObject):
             ov.unsetCursor()
             return
         self._text_lines, self._text_grid = lines, self._grid_for(raw, lines)
+        self._text_table = self._text_grid or self._table_rows(raw, lines, 96 * ov.scale)
         self._last_text = self._last_raw = ""
         self._copy_text(lines, self._text_grid, drag_hint=True)
-        ov.enter_ocr_mode(lines)
+        ov.enter_ocr_mode(lines, table=bool(self._text_table))
         self._preload_ai(full_text(lines))
 
     def _preload_ai(self, text: str) -> None:
@@ -724,6 +808,14 @@ class Controller(QObject):
             return None
         grid = grid_from_cells([(l.text, *l.box) for l in lines], *found)
         return grid if table_is_plausible(grid) else None
+
+    @staticmethod
+    def _table_rows(raw, lines, dpi: float = 96):
+        """Rows of a table laid out on screen without ruling lines (dark pages, web tables)."""
+        found = find_table(raw, [(l.text, l.box, l.score) for l in lines], [], dpi)
+        if found is None:
+            return None
+        return found.rows
 
     def _copy_text(self, lines, grid=None, drag_hint=False) -> None:
         redact = self.settings.redact_pii
@@ -758,6 +850,14 @@ class Controller(QObject):
         ov = self.active_overlay
         if name == "all":
             self._copy_text(self._text_lines, self._text_grid)
+        elif name == "table":
+            rows = getattr(self, "_text_table", None)
+            if not rows:
+                self.notify("표 모양을 찾지 못했습니다. 칸이 나란히 맞춰진 글에서 쓸 수 있습니다.")
+            else:
+                cells = [[mask(c) if self.settings.redact_pii else c for c in r] for r in rows]
+                if self._set_clipboard(table_payload(cells)):
+                    self.notify(f"표 {len(cells)}행×{len(cells[0])}열로 복사했습니다. Excel·PowerPoint에서 Ctrl+V 하세요.")
         elif name in ("translate", "summarize"):
             self.ai_request(name, self._last_raw or full_text(self._text_lines))
         elif name == "back" and ov is not None:
@@ -970,8 +1070,12 @@ class Controller(QObject):
         user_shapes = list(doc.shapes) if doc else []
         final = compose(raw, doc)
         raw = mask_outside(raw, doc.clip if doc else None)   # recognize only what is kept
-        pos = self._below(ov, sel)
-        dpi = 96 * ov.scale
+        self._run_recognition_on(raw, kind, 96 * ov.scale, final, user_shapes, self._below(ov, sel))
+
+    def _run_recognition_on(self, raw, kind: str, dpi: float, final=None, user_shapes=(), pos=None) -> None:
+        final = raw if final is None else final
+        pos = pos if pos is not None else QPoint(0, 0)
+        user_shapes = list(user_shapes)
 
         def work():
             lines, err = [], None
@@ -989,6 +1093,10 @@ class Controller(QObject):
                 return kind, lines, err, qr, self._grid_for(raw, lines) if lines else None
             scored = [(l.text, l.box, l.score) for l in lines]
             det = detect(raw, text_boxes=split_doubtful(scored)[0])
+            if not user_shapes:                # a table on screen -> a real table, not loose text boxes
+                table = find_table(raw, scored, det, dpi)
+                if table is not None:
+                    return kind, lines, err, None, table
             found = drop_doubtful_inside(det, scored)
             if err is None:                    # dark text on a saturated fill: that shape is read again
                 rest = attach_found_text(raw, det, found, lambda crop: [(l.text, l.box) for l in self.ocr.recognize(crop)],
@@ -1012,8 +1120,25 @@ class Controller(QObject):
         kind, lines, err, qr, extra = result
         if kind == "text":
             self._finish_text(lines, err, qr, pos, extra)
+        elif isinstance(extra, CapturedTable):
+            self._finish_table(extra, send=kind == "ppt")
         else:
             self._finish_shapes(extra or [], user_shapes, final, err, send=kind == "ppt", dpi=dpi)
+
+    def _finish_table(self, t, send: bool) -> None:
+        keep = self.settings.keep_style
+        style = t.style if keep else None
+        title = "\n".join(text for text, _ in t.outside) or None
+        if not self._set_clipboard(table_payload(t.rows, style=style, title=title)):
+            return
+        size = f"표 {len(t.rows)}행×{len(t.rows[0])}열"
+        look = "색·글꼴 그대로" if keep else "기본 모양으로"
+        if send:
+            item = TableItem(t.rows, style=style, title=title, col_widths=t.col_widths if keep else [],
+                             font_size=t.style.font_size if (keep and t.style) else 14)
+            self._send_item_to_ppt(item, f"{size}({look})를")
+        else:
+            self.notify(f"{size}({look})로 복사했습니다. PowerPoint·Excel에서 Ctrl+V 하면 칸마다 고칠 수 있는 표가 됩니다.")
 
     def _finish_text(self, lines, err, qr, pos, grid=None) -> None:
         """Direct "text" hotkey: copy everything at once and show the text window."""
@@ -1031,7 +1156,7 @@ class Controller(QObject):
         self._show_text_panel(lines, qr, pos, grid)
 
     def _finish_shapes(self, det, user_shapes, final, err, send: bool = False, dpi: float = 96) -> None:
-        shapes, conns = to_drawing(det)
+        shapes, conns = to_drawing(det, keep_style=self.settings.keep_style)
         us, uc = annotations_to_drawing(user_shapes, scale=dpi / 96)
         shapes, conns = shapes + us, conns + uc
         if not shapes and not conns:

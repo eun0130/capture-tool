@@ -245,3 +245,28 @@ def test_STY_12_a_doubtful_ocr_line_neither_cuts_the_shape_nor_becomes_its_text(
     from capture_tool.core.shapes import drop_doubtful_inside
     kept = drop_doubtful_inside(det, lines)
     assert [t for t, _ in kept] == ["제목", "확실"]            # the doubtful word inside the shape is read again
+
+
+def test_STY_13_without_style_shapes_are_plain_but_keep_size(qt_app):
+    det = [Detected("rect", 10, 10, 100, 60, fill="#1F5FD1", stroke="#0B3A8C", text="가",
+                    text_color="#FFFFFF", font_size=20, bold=True),
+           Detected("text", 10, 100, 100, 30, text="제목", text_color="#FFFFFF", font_size=28, bold=True,
+                    fill="#1F1F1E")]
+    shapes, _ = to_drawing(det, keep_style=False)
+    box, title = shapes
+    assert box.fill == "#FFFFFF" and box.stroke == "#000000" and box.text_color == "#000000" and not box.bold
+    assert box.font_size == 20 and title.fill is None and title.text_color == "#000000" and title.font_size == 28
+
+
+def test_STY_14_light_free_text_keeps_its_dark_background_so_it_stays_visible(qt_app):
+    img = canvas(600, 200, "#1F1F1E")
+    text(img, "어두운 화면 글자", 30, 100, 32, "#F0F0F0")
+    a = arr(img)
+    boxes = text_boxes_for([("어두운 화면 글자", ink_box(a, (0, 0, 600, 200)))], a, DPI)
+    assert boxes[0].fill and near(boxes[0].fill, "#1F1F1E", 12)
+    shapes, _ = to_drawing(boxes)
+    assert shapes[0].fill and near(shapes[0].fill, "#1F1F1E", 12)
+    img2 = canvas(600, 200)
+    text(img2, "밝은 화면 글자", 30, 100, 32, "#202020")
+    b = arr(img2)
+    assert text_boxes_for([("밝은 화면 글자", ink_box(b, (0, 0, 600, 200)))], b, DPI)[0].fill is None

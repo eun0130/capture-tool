@@ -134,7 +134,7 @@ def test_APP_04_escape_cancels(make):
     drag(ov, (100, 100), (400, 300))
     QTest.keyClick(ov, Qt.Key_Escape)
     assert c.overlays == []
-    assert c.clipboard.payloads == []
+    assert [sorted(p) for p in c.clipboard.payloads] == [sorted(["PNG", "CF_DIB"])]  # only the live copy (v0.6.5)
 
 
 # --- drawing & copy ----------------------------------------------------------
@@ -277,7 +277,7 @@ def test_APP_16_text_mode_no_text_found(make):
     c.start_capture()
     drag(c.overlays[0], (100, 100), (400, 300))
     c.overlays[0].toolbar.trigger("text")
-    assert c.clipboard.payloads == []
+    assert all(set(p) == {"PNG", "CF_DIB"} for p in c.clipboard.payloads)   # only the live copy
     assert any("텍스트를 찾지 못" in m for m in c.messages)
 
 
@@ -349,7 +349,7 @@ def test_APP_21_shapes_mode_nothing_found(make):
     c.start_capture()
     drag(c.overlays[0], (100, 100), (400, 300))
     c.overlays[0].toolbar.trigger("shapes")
-    assert c.clipboard.payloads == []
+    assert all(set(p) == {"PNG", "CF_DIB"} for p in c.clipboard.payloads)   # only the live copy
     assert any("도형을 찾지 못" in m for m in c.messages)
 
 
@@ -543,7 +543,7 @@ def test_APP_31_side_bar_next_to_selection(make):
     assert sb.isVisible()
     g = sb.geometry()
     assert g.left() >= 400 and g.top() == 100 and g.right() <= 800
-    assert list(sb.buttons) == ["copy", "save_as", "text", "ppt", "ppt_shapes", "scroll", "link", "pin"]
+    assert list(sb.buttons) == ["copy", "save_as", "text", "ppt", "ppt_shapes", "scroll", "link", "pin", "kakao"]
     assert sb.columns == 2 and sb.height() <= 600 * 0.6          # small screen: two columns
 
 

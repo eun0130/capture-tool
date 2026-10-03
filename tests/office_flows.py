@@ -209,6 +209,44 @@ def ppt_table() -> None:
     print("RESULT", out.get("cells"))
 
 
+
+def ppt_dark_table(keep: str) -> None:
+    """tests/data/dark_table.png -> table recognition -> PowerPoint table (styled or plain);
+    prints the title and each cell's text, fill and font colour."""
+    from pathlib import Path
+    import cv2
+    from capture_tool.core.ocr import OcrEngine
+    from capture_tool.core.table_capture import find_table
+    from capture_tool.platform.powerpoint import TableItem, send
+    img = cv2.imread(str(Path(__file__).parent / "data" / "dark_table.png"))
+    lines = [(l.text, l.box, l.score) for l in OcrEngine().recognize(img)]
+    t = find_table(img, lines, [], 144)
+    style = t.style if keep == "1" else None
+    out = {}
+
+    def hook(pres, slide, added):
+        shp = [s for s in slide.Shapes if s.HasTable][0]
+        tb = shp.Table
+        cells = []
+        for r in range(1, tb.Rows.Count + 1):
+            for c in range(1, tb.Columns.Count + 1):
+                sh = tb.Cell(r, c).Shape
+                cells.append((r, c, sh.TextFrame.TextRange.Text, _hex(sh.Fill.ForeColor.RGB),
+                              _hex(sh.TextFrame.TextRange.Font.Color.RGB), bool(sh.TextFrame.TextRange.Font.Bold)))
+        out["title"] = [s.TextFrame.TextRange.Text for s in slide.Shapes if not s.HasTable and s.HasTextFrame]
+        out["cells"] = cells
+        out["width"] = round(shp.Width)
+        pres.Saved = True
+        pres.Close()
+    send(TableItem(t.rows, style=style, title="\n".join(x for x, _ in t.outside) or None,
+                   col_widths=t.col_widths if style else [], font_size=t.style.font_size if style else 14),
+         new_presentation=True, hook=hook, timeout=90)
+    print("TITLE", out.get("title"))
+    for c in out.get("cells", []):
+        print("CELL", c)
+    print("RESULT width", out.get("width"))
+
+
 if __name__ == "__main__":
     sys.stdout.reconfigure(encoding="utf-8")
     globals()[sys.argv[1]](*sys.argv[2:])

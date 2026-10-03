@@ -71,6 +71,31 @@ def text_payload(text: str, table: list[list[str]] | None = None) -> dict:
     return {UNICODE: plain, HTML: cf_html(frag)}
 
 
+def table_payload(rows: list[list[str]], style=None, title: str | None = None) -> dict:
+    """A table for Excel / PowerPoint / Word: TSV + HTML; with `style` (TableStyle) the HTML
+    carries the captured fills, text colours, bold header and borders."""
+    def td(v: str, r: int) -> str:
+        if style is None:
+            return _td(v)
+        fill = style.header_fill if r == 0 else style.body_fill
+        color = style.header_text if r == 0 else style.body_text
+        css = f"background:{fill};color:{color};font-size:{style.font_size:g}pt"
+        if r == 0 and style.header_bold:
+            css += ";font-weight:bold"
+        if style.border:
+            css += f";border:1px solid {style.border}"
+        if _keep_as_text(v):
+            css += ';mso-number-format:"\\@"'
+        return f"<td style='{css}'>" + html.escape(v) + "</td>"
+    body = "".join("<tr>" + "".join(td(c, r) for c in row) + "</tr>" for r, row in enumerate(rows))
+    frag = (f"<p>{html.escape(title)}</p>" if title else "") + \
+        ("<table style='border-collapse:collapse'>" if style else "<table>") + body + "</table>"
+    plain = "\r\n".join("\t".join(_cell(c) for c in row) for row in rows)
+    if title:
+        plain = _cell(title) + "\r\n" + plain
+    return {UNICODE: plain, HTML: cf_html(frag)}
+
+
 def image_payload(png: bytes, dib: bytes) -> dict:
     if not png or not dib:
         raise ValueError("empty image data")

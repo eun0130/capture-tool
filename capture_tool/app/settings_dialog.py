@@ -120,7 +120,11 @@ class SettingsDialog(QDialog):
         self.startup.setChecked(settings.launch_at_startup)
         self.ppt_new_slide = QCheckBox("PPT로 보낼 때 새 슬라이드에 넣기 (끄면 보고 있는 슬라이드에)")
         self.ppt_new_slide.setChecked(settings.ppt_new_slide)
-        for w in (self.auto_save, self.redact, self.startup, self.ppt_new_slide):
+        self.auto_copy = QCheckBox("영역을 고르면 바로 클립보드에 복사 (Ctrl+C 없이 Ctrl+V 가능, 그리면 복사본도 바뀜)")
+        self.auto_copy.setChecked(settings.auto_copy)
+        self.keep_style = QCheckBox("PPT·도형·표로 보낼 때 색·글꼴 모양 그대로 (끄면 기본 모양: 흰 바탕·검은 글자)")
+        self.keep_style.setChecked(settings.keep_style)
+        for w in (self.auto_save, self.auto_copy, self.redact, self.startup, self.ppt_new_slide, self.keep_style):
             v.addWidget(w)
         # --- AI: translate / summary --------------------------------------------------------
         v.addWidget(QLabel("<b>AI 번역·요약</b> — 번역은 항상 무료·오프라인. 요약 방식을 고르세요."))
@@ -187,6 +191,8 @@ class SettingsDialog(QDialog):
         for action, ed in self.edits.items():
             ed.setText(d.hotkeys.get(action, ""))
         self.ppt_new_slide.setChecked(d.ppt_new_slide)
+        self.auto_copy.setChecked(d.auto_copy)
+        self.keep_style.setChecked(d.keep_style)
 
     def validate(self) -> list[str]:
         errors: list[str] = []
@@ -234,6 +240,8 @@ class SettingsDialog(QDialog):
         s.redact_pii = self.redact.isChecked()
         s.launch_at_startup = self.startup.isChecked()
         s.ppt_new_slide = self.ppt_new_slide.isChecked()
+        s.auto_copy = self.auto_copy.isChecked()
+        s.keep_style = self.keep_style.isChecked()
         s.ai_summary_engine = "cloud" if self.ai_cloud.isChecked() else "local"
         s.ai_cloud_translate = self.ai_cloud_translate.isChecked()
         s.ai_key = self._ai_key

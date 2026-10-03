@@ -399,3 +399,21 @@ def test_PPT_27_table_is_capped_and_cells_are_single_paragraph_safe():
     t = app.ActivePresentation.Slides(2).Shapes.items[0].Table
     assert t.Rows.Count == pp.MAX_TABLE_ROWS and t.Columns.Count == pp.MAX_TABLE_COLS
     assert t.Cell(1, 1).Shape.TextFrame.TextRange.Text == "줄\r바꿈"
+
+
+def test_PPT_28_com_is_released_after_every_send(monkeypatch):
+    """BUG-017: COM was initialised for each PowerPoint job but never released."""
+    import sys
+    import types
+    calls = []
+    fake_com = types.SimpleNamespace(CoInitialize=lambda: calls.append("init"),
+                                     CoUninitialize=lambda: calls.append("uninit"))
+    monkeypatch.setitem(sys.modules, "pythoncom", fake_com)
+    monkeypatch.setattr(pp, "installed", lambda: True)
+    app = FakeApp(with_deck=True)
+    monkeypatch.setattr(pp, "_real_app", lambda: app)
+    send(Picture(IMG))
+    with pytest.raises(PowerPointUnavailable):
+        monkeypatch.setattr(pp, "_real_app", lambda: (_ for _ in ()).throw(RuntimeError("boom")))
+        send(Picture(IMG))
+    assert calls == ["init", "uninit", "init", "uninit"]
