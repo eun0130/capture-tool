@@ -55,7 +55,7 @@ def test_CLIP_05_table_payload():
     p = text_payload("ignored", table=[["품목", "수량"], ["A", "3"]])
     assert p[UNICODE] == "품목\t수량\r\nA\t3"
     html = p[HTML].decode("utf-8")
-    assert "<table>" in html and html.count("<tr>") == 2 and "<td>품목</td>" in html
+    assert "<table>" in html and html.count("<tr>") == 2 and ">품목</td>" in html
 
 
 def test_CLIP_06_html_escaped():
@@ -130,6 +130,18 @@ def test_CLIP_12_table_cells_that_excel_would_change_stay_text():
             ["007", "=SUM(A1)", "-12", "2026-10-03", "1,250,000", "12.5%"],
             ["+82 10", "@user", "-", "=1+1", "0", "0.5"]]
     html = text_payload("", table=grid)[HTML].decode("utf-8")
-    text_cells = re.findall(r"<td style='mso-number-format:\"\\@\"'>([^<]*)</td>", html)
+    text_cells = re.findall(r"<td style='white-space:nowrap;mso-number-format:\"\\@\"'>([^<]*)</td>", html)
     assert text_cells == ["007", "=SUM(A1)", "+82 10", "@user", "=1+1"]
-    assert "<td>-12</td>" in html and "<td>1,250,000</td>" in html and "<td>0</td>" in html
+    assert "<td style='white-space:nowrap'>-12</td>" in html and "<td style='white-space:nowrap'>0</td>" in html
+
+
+def test_CLIP_13_table_cells_never_wrap_in_excel():
+    """Bug (v0.7.1): pasted into Excel, long cells wrapped in the narrow default columns and
+    rows became 3-4 times taller than the captured table."""
+    from capture_tool.core.clipboard_payload import table_payload, text_payload
+    from capture_tool.core.table_capture import TableStyle
+    rows = [["구성요소", "책임"], ["연계 서비스", "Jira·GitHub·CI·메신저 이벤트 연결"]]
+    st = TableStyle("#1F1F1E", "#1F1F1E", "#F9E2AF", "#FAFAFA", "#8C8C8C", False, 10)
+    for payload in (text_payload("", table=rows), table_payload(rows), table_payload(rows, style=st)):
+        html = payload[HTML].decode("utf-8")
+        assert html.count("<td") == 4 and html.count("white-space:nowrap") == 4

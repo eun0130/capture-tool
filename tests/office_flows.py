@@ -83,7 +83,8 @@ def excel_paste() -> None:
     import win32com.client
     from capture_tool.core.clipboard_payload import text_payload
     from capture_tool.platform import win_clipboard
-    grid = [["코드", "금액", "식"], ["007", "1,250,000", "=SUM(A1)"]]
+    grid = [["코드", "금액", "식"], ["007", "1,250,000", "=SUM(A1)"],
+            ["긴 칸", "다음 행동 안내, 증거 미리보기, 신고·검토 UI", "Jira·GitHub·CI·메신저 이벤트 연결"]]
     win_clipboard.set_formats(text_payload("", table=grid), retries=10, delay=0.05)
     pythoncom.CoInitialize()
     xl = win32com.client.DispatchEx("Excel.Application")
@@ -94,6 +95,7 @@ def excel_paste() -> None:
         ws.Range("A1").Select()
         ws.Paste()
         cells = [(ws.Cells(2, c).Formula, type(ws.Cells(2, c).Value).__name__) for c in (1, 2, 3)]
+        print("HEIGHTS", [ws.Rows(r).RowHeight for r in (1, 2, 3)], ws.StandardHeight)
     finally:
         wb.Saved = True
         wb.Close(False)

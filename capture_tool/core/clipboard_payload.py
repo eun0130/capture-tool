@@ -42,7 +42,9 @@ def _cell(v: str) -> str:
 
 
 _NUMBER = re.compile(r"[+-]?(\d[\d,]*)?\.?\d+%?")
-_AS_TEXT = "<td style='mso-number-format:\"\\@\"'>"
+_NOWRAP = "white-space:nowrap"           # Excel would wrap into narrow default columns (tall rows)
+_AS_TEXT = "<td style='" + _NOWRAP + ";mso-number-format:\"\\@\"'>"
+_PLAIN = "<td style='" + _NOWRAP + "'>"
 
 
 def _keep_as_text(v: str) -> bool:
@@ -55,7 +57,7 @@ def _keep_as_text(v: str) -> bool:
 
 
 def _td(v: str) -> str:
-    return (_AS_TEXT if _keep_as_text(v) else "<td>") + html.escape(v) + "</td>"
+    return (_AS_TEXT if _keep_as_text(v) else _PLAIN) + html.escape(v) + "</td>"
 
 
 def text_payload(text: str, table: list[list[str]] | None = None) -> dict:
@@ -79,7 +81,7 @@ def table_payload(rows: list[list[str]], style=None, title: str | None = None) -
             return _td(v)
         fill = style.header_fill if r == 0 else style.body_fill
         color = style.header_text if r == 0 else style.body_text
-        css = f"background:{fill};color:{color};font-size:{style.font_size:g}pt"
+        css = f"{_NOWRAP};background:{fill};color:{color};font-size:{style.font_size:g}pt"
         if r == 0 and style.header_bold:
             css += ";font-weight:bold"
         if style.border:

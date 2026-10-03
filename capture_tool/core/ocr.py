@@ -136,6 +136,61 @@ def needs_latin(text: str) -> bool:
     return not _HANGUL.search(text) and bool(_LATIN_LETTER.search(text))
 
 
+def fix_mixed_line(original: str, latin: str) -> str | None:
+    """Put the Latin model's letters and digits into the original text, keeping the original's
+    separators ("·" stays "·" where the Latin model wrote "-"). None when the two disagree on
+    how many letters/digits there are (then the first reading is kept)."""
+    if not latin or _HANGUL.search(latin):
+        return None
+    src = [i for i, ch in enumerate(original) if ch.isalnum()]
+    new = [ch for ch in latin if ch.isalnum()]
+    if not src:
+        return None
+    if len(src) == len(new):
+        out = list(original)
+        for i, ch in zip(src, new):
+            out[i] = ch
+        return "".join(out)
+    # a letter lost or added: match part by part ("Giäub" -> "GitHub"), keeping the separators
+    parts_o = re.split(r"([^\w]+)", original)
+    parts_n = [p for p in re.split(r"[^\w]+", latin) if p]
+    words_o = [p for p in parts_o[::2] if p]
+    if len(words_o) < 2 or len(words_o) != len(parts_n):
+        return None
+    if any(abs(len(a) - len(b)) > 1 for a, b in zip(words_o, parts_n)):
+        return None
+    it = iter(parts_n)
+    return "".join((next(it) if (k % 2 == 0 and p) else p) for k, p in enumerate(parts_o))
+
+
+def _latin_runs(word: str) -> list[tuple[int, int]]:
+    """Index ranges of the English parts of a word. A single Hangul letter between two Latin
+    letters ("Gi채ub") is a misread inside an English word and belongs to it."""
+    def latin_at(i: int) -> bool:
+        ch = word[i]
+        if not _HANGUL.search(ch):
+            return True
+        return (0 < i < len(word) - 1 and word[i - 1].isascii() and word[i - 1].isalpha()
+                and word[i + 1].isascii() and word[i + 1].isalpha())
+    runs, start = [], None
+    for i in range(len(word) + 1):
+        if i < len(word) and latin_at(i):
+            start = i if start is None else start
+        elif start is not None:
+            if _LATIN_LETTER.search(word[start:i]):
+                runs.append((start, i))
+            start = None
+    return runs
+
+
+def _char_weight(ch: str) -> float:
+    if _HANGUL.search(ch) or "\u3040" <= ch <= "\u9fff":
+        return 1.0
+    if ch.isascii() and ch.isalnum():
+        return 0.6
+    return 0.4
+
+
 class OcrEngine:
     def __init__(self, factory: Callable | None = None, secondary_factory: Callable | None = None,
                  secondary_call: Callable | None = None):
@@ -216,20 +271,75 @@ class OcrEngine:
         return reading_order(lines)
 
     def _run_tile(self, engine, img: np.ndarray, x0: int, y0: int) -> list[OcrLine]:
-        r = engine(np.ascontiguousarray(img) if not img.flags["C_CONTIGUOUS"] else img)
+        img = np.ascontiguousarray(img) if not img.flags["C_CONTIGUOUS"] else img
+        try:
+            r = engine(img, return_word_box=True)
+        except TypeError:                         # engines without word boxes (older / test fakes)
+            r = engine(img)
         if r is None or r.txts is None or r.boxes is None:
             return []
+        words_all = getattr(r, "word_results", None) or ()
         out = []
-        for quad, text, score in zip(r.boxes, r.txts, r.scores):
+        for k, (quad, text, score) in enumerate(zip(r.boxes, r.txts, r.scores)):
             if float(score) < MIN_SCORE or not str(text).strip():
                 continue
             q = np.asarray(quad, float)
             x, y = q[:, 0].min(), q[:, 1].min()
             box = (int(round(x)), int(round(y)), int(round(q[:, 0].max() - x)), int(round(q[:, 1].max() - y)))
-            line = self._second_reading(img, OcrLine(str(text), box, float(score)))
+            text = str(text)
+            if _HANGUL.search(text) and _LATIN_LETTER.search(text) and k < len(words_all):
+                text = self._fix_latin_words(img, text, words_all[k] or ())
+            line = self._second_reading(img, OcrLine(text, box, float(score)))
             bx, by, bw, bh = line.box
             out.append(OcrLine(line.text, (bx + x0, by + y0, bw, bh), line.score))
         return out
+
+    def _latin(self, img, box, text: str):
+        eng = self._load_secondary()
+        if eng is None:
+            return None
+        x, y, w, h = box
+        pad = 3
+        crop = img[max(0, y - pad):y + h + pad, max(0, x - pad):x + w + pad]
+        if crop.size == 0:
+            return None
+        try:
+            return self._secondary_call(eng, crop, text)
+        except Exception:  # noqa: BLE001 - a failed reading keeps the first one
+            return None
+
+    def _fix_latin_words(self, img, text: str, words) -> str:
+        """Korean line with English in it: read only the English parts again with the Latin
+        model (the Korean model turns short words like "UI" into "ü", "CI" into "cI")."""
+        for w in words:
+            try:
+                wtext, wscore, wq = str(w[0]), float(w[1]), np.asarray(w[2], float)
+            except (TypeError, ValueError, IndexError):
+                continue
+            if not _LATIN_LETTER.search(wtext) or wtext not in text:
+                continue
+            wx, wy = wq[:, 0].min(), wq[:, 1].min()
+            ww, wh = wq[:, 0].max() - wx, wq[:, 1].max() - wy
+            weights = [_char_weight(ch) for ch in wtext]
+            total = sum(weights) or 1.0
+            new_word = wtext
+            for a, b in reversed(_latin_runs(wtext)):          # right to left: indices stay valid
+                part = wtext[a:b]
+                left = wx + ww * sum(weights[:a]) / total
+                right = wx + ww * sum(weights[:b]) / total
+                res = self._latin(img, (int(left), int(wy), max(1, int(round(right - left))), int(round(wh))), part)
+                if not res or not str(res[0]).strip() or float(res[1]) < wscore - SECOND_READING_MARGIN - 0.1:
+                    continue
+                latin = str(res[0]).strip()
+                fixed = fix_mixed_line(part, latin)
+                if fixed is None and (a, b) == (0, len(wtext)) and not part.isascii() \
+                        and not _HANGUL.search(latin) and len(latin) <= 2 * len(part) + 2:
+                    fixed = latin                      # a whole short word misread ("UI" -> "ü")
+                if fixed:
+                    new_word = new_word[:a] + fixed + new_word[b:]
+            if new_word != wtext:
+                text = text.replace(wtext, new_word, 1)
+        return text
 
     def _second_reading(self, img, line: OcrLine) -> OcrLine:
         if not needs_latin(line.text):

@@ -46,6 +46,8 @@ def test_OFFICE_01_excel_screenshot_becomes_the_same_cells(opts):
 def test_OFFICE_02_pasted_table_keeps_codes_and_never_runs_formulas():
     out = flow("excel_paste")
     assert "('007', 'str')" in out and "('=SUM(A1)', 'str')" in out and "'float'" in out, out
+    heights = eval(out.split("HEIGHTS", 1)[1].split("]")[0].strip() + "]")     # long cells don't wrap
+    assert max(heights) <= 20, out
 
 
 @ppt
