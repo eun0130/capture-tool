@@ -233,3 +233,36 @@ def test_TCAP_16_text_mode_button_for_the_dark_grid_table(make, ocr):
     img = cv2.imread(str(DATA / "dark_grid_table_context.png"))
     c, ov = _text_mode(make, img, _scored(ocr, img))
     assert not ov.ocr_bar.buttons["table"].isHidden()
+
+
+# --- v0.6.7: a "표" button right next to the capture (no need to open text mode first) ----------
+def test_TCAP_17_side_bar_has_a_table_button(make):
+    from tests.test_app import drag
+    c = make()
+    c.start_capture()
+    drag(c.overlays[0], (100, 100), (500, 400))
+    sb = c.overlays[0].side_bar
+    assert "table" in sb.buttons and list(sb.buttons).index("table") == list(sb.buttons).index("text") + 1
+
+
+def test_TCAP_18_table_button_copies_the_table_of_the_capture(make, ocr):
+    """Bug (v0.6.6): the table copy existed only inside text mode, so after capturing a table
+    there was no table button to press."""
+    from capture_tool.core.clipboard_payload import HTML, UNICODE
+    from capture_tool.core.ocr import OcrLine
+    from tests.test_app import FakeOcr
+    img = cv2.imread(str(DATA / "dark_grid_table_2.png"))
+    c = make(ocr=FakeOcr([OcrLine(t, b, s) for t, b, s in _scored(ocr, img)]))
+    c._run_recognition_on(img, "table", dpi=96)
+    rows = c.clipboard.last[UNICODE].split("\r\n")
+    assert len(rows) == 3 and rows[0].split("\t")[0] == "모델" and len(rows[0].split("\t")) == 4
+    assert "<table" in c.clipboard.last[HTML].decode("utf-8")
+    assert any("표 3행×4열" in m for m in c.messages)
+
+
+def test_TCAP_19_table_button_without_a_table_says_so(make):
+    from capture_tool.core.ocr import OcrLine
+    from tests.test_app import FakeOcr
+    c = make(ocr=FakeOcr([OcrLine("그냥 한 줄", (10, 10, 120, 20), 0.99)]))
+    c._run_recognition_on(np.full((100, 300, 3), 255, np.uint8), "table", dpi=96)
+    assert any("표를 찾지 못" in m for m in c.messages)

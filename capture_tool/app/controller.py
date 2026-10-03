@@ -388,7 +388,7 @@ class Controller(QObject):
             self._start_scroll()
         elif name == "ppt_shapes":
             self._run_recognition("ppt")
-        elif name in ("text", "shapes"):
+        elif name in ("text", "shapes", "table"):
             self._run_recognition(name)
 
     # --- scroll capture ----------------------------------------------------------------------
@@ -1083,6 +1083,9 @@ class Controller(QObject):
                 lines = self.ocr.recognize(raw)
             except OcrUnavailable as e:
                 err = str(e)
+            if kind == "table":                # 표 button: the capture's table straight to the clipboard
+                scored = [(l.text, l.box, l.score) for l in lines]
+                return kind, lines, err, None, find_table(raw, scored, [], dpi) if lines else None
             if kind == "text":
                 qr = None
                 try:
@@ -1118,7 +1121,15 @@ class Controller(QObject):
             self.notify(f"인식 중 오류가 발생했습니다: {result}")
             return
         kind, lines, err, qr, extra = result
-        if kind == "text":
+        if kind == "table":
+            if err:
+                self.notify(err)
+            elif extra is None:
+                self.notify("캡처에서 표를 찾지 못했습니다. 칸이 나란히 맞춰진 표를 골라 주세요. "
+                            "(그림은 클립보드에 있습니다)")
+            else:
+                self._finish_table(extra, send=False)
+        elif kind == "text":
             self._finish_text(lines, err, qr, pos, extra)
         elif isinstance(extra, CapturedTable):
             self._finish_table(extra, send=kind == "ppt")

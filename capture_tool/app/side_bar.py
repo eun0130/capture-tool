@@ -10,6 +10,7 @@ ACTIONS = [
     ("copy", "copy", "복사", "클립보드에 복사 (Enter)"),
     ("save_as", "save_as", "저장", "저장 위치를 골라 저장 (Ctrl+Shift+S)"),
     ("text", "ocr", "텍스트", "이미지 속 글자를 인식해 복사"),
+    ("table", "table", "표", "캡처 속 표를 칸 그대로 복사 — 엑셀·PowerPoint에 붙이면 고칠 수 있는 표"),
     ("ppt", "ppt", "PPT로", "캡처한 그대로 PowerPoint에 넣기 — 그림(그린 것 포함), 텍스트 모드에서는 글자"),
     ("ppt_shapes", "shapes", "도형PPT", "도형을 알아봐서 PowerPoint에서 고칠 수 있는 도형으로 넣기"),
     ("scroll", "scroll", "스크롤", "아래로 자동 스크롤하며 길게 캡처 — 브라우저 창 전체를 고르면 페이지 처음부터 끝까지 (Esc 중지)"),
