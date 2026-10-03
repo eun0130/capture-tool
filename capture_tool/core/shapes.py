@@ -123,6 +123,18 @@ def _median_color(img: np.ndarray, mask: np.ndarray):
     return tuple(int(v) for v in np.median(px, axis=0))
 
 
+def _fill_color(img: np.ndarray, mask: np.ndarray):
+    """A flat fill is one exact colour for most pixels; the median per channel of a fill with
+    white letters on it would mix the two into a colour that isn't there."""
+    px = img[mask > 0]
+    if len(px) == 0:
+        return None
+    u, n = np.unique(px.reshape(-1, 3), axis=0, return_counts=True)
+    if n.max() >= 0.4 * len(px):
+        return tuple(int(v) for v in u[n.argmax()])
+    return tuple(int(v) for v in np.median(px, axis=0))
+
+
 def _hex(bgr) -> str:
     return rgb_to_hex(bgr[2], bgr[1], bgr[0])
 
@@ -132,7 +144,7 @@ def _background(img: np.ndarray):
     return tuple(int(v) for v in np.median(border, axis=0))
 
 
-def detect(img: np.ndarray, text_boxes=None) -> list[Detected]:
+def detect(img: np.ndarray, text_boxes=None, threshold: int = FG_THRESHOLD) -> list[Detected]:
     if img is None or img.size == 0 or min(img.shape[:2]) < 8:
         return []
     img = _to_bgr(img)
@@ -140,7 +152,8 @@ def detect(img: np.ndarray, text_boxes=None) -> list[Detected]:
     for (x, y, w, h) in text_boxes or []:
         region[max(0, int(y)):int(y + h), max(0, int(x)):int(x + w)] = 0
     out: list[Detected] = []
-    _detect_in(img, region, _background(img), out, depth=0, budget=_Budget(TIME_BUDGET, MAX_COMPONENTS))
+    _detect_in(img, region, _background(img), out, depth=0, budget=_Budget(TIME_BUDGET, MAX_COMPONENTS),
+               threshold=threshold)
     out = _dedupe(out)[:MAX_COMPONENTS]
     out.sort(key=lambda d: (d.y, d.x))
     return out
@@ -164,8 +177,8 @@ def _dedupe(found: list[Detected]) -> list[Detected]:
     return keep
 
 
-def _detect_in(img, region, bg, out, depth, budget: _Budget):
-    fg = ((_dist(img, bg) > FG_THRESHOLD) & (region > 0)).astype(np.uint8) * 255
+def _detect_in(img, region, bg, out, depth, budget: _Budget, threshold: int = FG_THRESHOLD):
+    fg = ((_dist(img, bg) > threshold) & (region > 0)).astype(np.uint8) * 255
     fg = cv2.morphologyEx(fg, cv2.MORPH_CLOSE, np.ones((3, 3), np.uint8))
     contours, hier = cv2.findContours(fg, cv2.RETR_TREE, cv2.CHAIN_APPROX_NONE)
     if hier is None:
@@ -205,7 +218,7 @@ def _detect_in(img, region, bg, out, depth, budget: _Budget):
                 continue
             out.append(d)
             if d.fill and depth < 3 and d.kind not in ("line", "arrow"):
-                _recurse(img, contour, d, region, out, depth, budget)
+                _recurse(img, contour, d, region, out, depth, budget, threshold)
 
 
 SPLIT_KERNEL = 13  # px; shape bodies are thicker than this, connector lines are thinner
@@ -248,7 +261,7 @@ def _split_attached_lines(img, contour, fg):
     return bodies, lines
 
 
-def _recurse(img, contour, d, region, out, depth, budget: _Budget):
+def _recurse(img, contour, d, region, out, depth, budget: _Budget, threshold: int = FG_THRESHOLD):
     """Look for nested shapes inside a filled shape, using its fill as background.
     Works on the shape's bounding box only (not the whole screenshot)."""
     pad = 14  # margin so erosion treats the outside of the shape as outside
@@ -262,10 +275,10 @@ def _recurse(img, contour, d, region, out, depth, budget: _Budget):
     inner = cv2.erode(filled, np.ones((k, k), np.uint8))
     inner = cv2.bitwise_and(inner, region[y:ey, x:ex])
     fill_bgr = _parse(d.fill)
-    if np.count_nonzero((_dist(sub, fill_bgr) > FG_THRESHOLD) & (inner > 0)) < MIN_AREA:
+    if np.count_nonzero((_dist(sub, fill_bgr) > threshold) & (inner > 0)) < MIN_AREA:
         return
     nested: list[Detected] = []
-    _detect_in(sub, inner, fill_bgr, nested, depth + 1, budget)
+    _detect_in(sub, inner, fill_bgr, nested, depth + 1, budget, threshold)
     for n in nested:
         n.x += x
         n.y += y
@@ -397,6 +410,8 @@ def _classify(img, contour, fg, has_hole, bg) -> Detected | None:
             kind = "roundRect"
     if kind is None and extent >= 0.965:
         kind = "rect"
+    if kind is None and len(approx) == 4 and max(w, h) <= 40 and area / max((w - 1) * (h - 1), 1) >= 0.93:
+        kind = "roundRect"                    # a small box with slightly rounded corners (check box)
     if kind is None:
         return None
     return _colors(img, contour, bg, Detected(kind, x, y, w, h))
@@ -415,6 +430,14 @@ def _colors(img, contour, bg, d: Detected) -> Detected:
     e1 = cv2.erode(filled, np.ones((3, 3), np.uint8))
     e2 = cv2.erode(filled, np.ones((5, 5), np.uint8))
     stroke = _median_color(img, cv2.subtract(e1, e2))
+    outer = _median_color(img, cv2.subtract(filled, e1))
+    inside_c = _median_color(img, cv2.erode(filled, np.ones((7, 7), np.uint8)))
+    thin = (stroke is not None and outer is not None and inside_c is not None
+            and max(abs(a - b) for a, b in zip(stroke, inside_c)) <= 12
+            and max(abs(a - b) for a, b in zip(outer, inside_c)) > 20
+            and max(abs(a - b) for a, b in zip(inside_c, bg)) <= 20)     # a filled shape's soft edge isn't one
+    if thin:                                     # a 1 px outline (web input boxes, check boxes)
+        stroke = outer
     # measure stroke thickness: how far from the edge pixels stay close to stroke color
     width = 1
     prev = e1
@@ -426,9 +449,11 @@ def _colors(img, contour, bg, d: Detected) -> Detected:
             break
         width = k
         prev = ek
+    if thin:
+        width = 1
     k = width * 2 + 5
     inner = cv2.erode(filled, np.ones((k, k), np.uint8))
-    fill = _median_color(img, inner)
+    fill = _fill_color(img, inner)
     d.stroke = _hex(stroke) if stroke else None
     d.stroke_width = float(width)
     if fill is None or max(abs(a - b) for a, b in zip(fill, bg)) <= 12:
@@ -560,6 +585,8 @@ def to_drawing(detected: list[Detected], keep_style: bool = True) -> tuple[list[
     """keep_style=False: plain look (white fill, black outline and text, no bold) - same
     shapes, sizes and text, for decks with their own design."""
     closed = [d for d in detected if d.kind not in ("line", "arrow")]
+    # back to front: big empty panels, then the boxes on them, then free text on top
+    closed.sort(key=lambda d: (d.kind == "text", bool(d.text), -d.w * d.h))
 
     def color(d: Detected) -> str:
         if not keep_style:
@@ -577,11 +604,11 @@ def to_drawing(detected: list[Detected], keep_style: bool = True) -> tuple[list[
             stroke = d.stroke if (d.stroke or d.fill) else "#000000"
             shapes.append(DShape(d.kind, d.x, d.y, d.w, d.h, fill=d.fill, stroke=stroke,
                                  stroke_width=d.stroke_width, text=d.text, text_color=color(d),
-                                 font_size=d.font_size, bold=bold))
+                                 font_size=d.font_size, bold=bold, wrap=False))
         else:
             shapes.append(DShape(d.kind, d.x, d.y, d.w, d.h, fill="#FFFFFF", stroke="#000000",
                                  stroke_width=d.stroke_width, text=d.text, text_color="#000000",
-                                 font_size=d.font_size))
+                                 font_size=d.font_size, wrap=False))
     conns = []
     for d in detected:
         if d.kind not in ("line", "arrow"):
@@ -643,3 +670,190 @@ def drop_doubtful_inside(detected: list[Detected], lines) -> list[tuple[str, tup
             continue
         out.append((text, (x, y, w, h)))
     return out
+
+
+# --- screens with forms (web pages, programs) -------------------------------------------------
+
+LAYOUT_THRESHOLD = 22   # web forms draw boxes in light grey (#B9B9B9) with fainter rounded corners
+SHORT_STROKE = 40       # px; shorter lines/arrows on a screen are bits of borders and icons
+SYMBOLS = set("OoㅇΟ○◯0¸Vv˅∨⌄⌵=<>‹›◀▶◁▷")   # what OCR makes of radio rings, dropdown arrows, icons
+WIDGET_MIN, WIDGET_MAX = 12, 28                # px; radio buttons and check boxes
+WIDGET_THRESHOLD = 10
+
+
+def _ink_box(img: np.ndarray, box, pad: int = 2):
+    """The OCR box shrunk to the letters' ink (+pad). OCR boxes are taller than the text and
+    run over the borders of input boxes and buttons (and over the line above or below); those
+    are left out."""
+    x, y, w, h = (int(round(v)) for v in box)
+    x0, y0 = max(0, x), max(0, y)
+    x1, y1 = min(img.shape[1], x + w), min(img.shape[0], y + h)
+    c = img[y0:y1, x0:x1].astype(np.int16)
+    if c.shape[0] < 3 or c.shape[1] < 3:
+        return box
+    bg = np.median(c.reshape(-1, 3), axis=0)         # letters are the minority of the box
+    m = np.abs(c - bg).max(axis=2) > FG_THRESHOLD
+    m[m.mean(axis=1) > 0.6, :] = False            # a border running along the box
+    m[:, m.mean(axis=0) > 0.6] = False
+    rows = np.nonzero(m.any(axis=1))[0]
+    if len(rows) < 2:
+        return box
+    runs, start = [], rows[0]                      # the text line: the longest run of inked rows
+    for a_, b_ in zip(rows, rows[1:]):
+        if b_ - a_ > 3:
+            runs.append((start, a_))
+            start = b_
+    runs.append((start, rows[-1]))
+    r0, r1 = max(runs, key=lambda r: r[1] - r[0])
+    cols = np.nonzero(m[r0:r1 + 1].any(axis=0))[0]
+    if len(cols) < 2:
+        return box
+    return (x0 + cols[0] - pad, y0 + r0 - pad, cols[-1] - cols[0] + 1 + 2 * pad, r1 - r0 + 1 + 2 * pad)
+
+
+def _boxed(img: np.ndarray, d: Detected, bg) -> Detected | None:
+    """A 'line' or 'arrow' whose bounding box has all four sides drawn is a box (a button or an
+    input box whose outline was cut by the text inside)."""
+    if min(d.w, d.h) < 12:
+        return None
+    x, y, w, h = d.x, d.y, d.w, d.h
+    fg = _dist(img[y:y + h, x:x + w], bg) > LAYOUT_THRESHOLD
+    sides = [fg[:2].any(axis=0), fg[-2:].any(axis=0), fg[:, :2].any(axis=1), fg[:, -2:].any(axis=1)]
+    if min(sd.mean() for sd in sides) < 0.7:
+        return None
+    edge = np.concatenate([img[y, x:x + w], img[y + h - 1, x:x + w], img[y:y + h, x], img[y:y + h, x + w - 1]])
+    inner = img[y + h // 2 - 1:y + h // 2 + 2, x + 3:x + w - 3].reshape(-1, 3)
+    stroke = tuple(int(v) for v in np.median(edge[_dist(edge[None], bg)[0] > LAYOUT_THRESHOLD], axis=0))
+    fill = tuple(int(v) for v in np.median(inner, axis=0)) if len(inner) else None
+    out = Detected("roundRect", x, y, w, h, stroke=_hex(stroke), stroke_width=1.0)
+    if fill is not None and max(abs(a_ - b_) for a_, b_ in zip(fill, bg)) > 12:
+        out.fill = _hex(fill)
+    return out
+
+
+def find_widgets(img: np.ndarray) -> list[Detected]:
+    """Radio buttons (rings, or filled with a dot) and check boxes: small, square, closed."""
+    img = _to_bgr(img)
+    bg = _background(img)
+    fg = (_dist(img, bg) > WIDGET_THRESHOLD).astype(np.uint8) * 255     # greyed-out boxes are very faint
+    fg = cv2.morphologyEx(fg, cv2.MORPH_CLOSE, np.ones((3, 3), np.uint8))
+    contours, hier = cv2.findContours(fg, cv2.RETR_CCOMP, cv2.CHAIN_APPROX_NONE)
+    if hier is None:
+        return []
+    out: list[Detected] = []
+    for i, c in enumerate(contours):
+        if hier[0][i][3] >= 0:                     # a hole
+            continue
+        x, y, w, h = cv2.boundingRect(c)
+        if not (WIDGET_MIN <= w <= WIDGET_MAX and WIDGET_MIN <= h <= WIDGET_MAX and abs(w - h) <= 2):
+            continue
+        has_hole = hier[0][i][2] >= 0
+        if has_hole:                               # a ring or box outline: the hole is most of it
+            hole = contours[hier[0][i][2]]
+            if cv2.contourArea(hole) < 0.35 * w * h:
+                continue
+        d = _classify(img, c, fg, has_hole, bg)
+        if d is None or d.kind not in ("ellipse", "rect", "roundRect"):
+            continue
+        if d.kind == "ellipse" and d.fill is None and d.stroke_width > 2:
+            d.stroke_width = 1.0
+        out.append(d)
+    return out
+
+
+def _overlap(box, d: Detected) -> float:
+    """Share of the widget covered by the box."""
+    x, y, w, h = box
+    iw = max(0, min(x + w, d.x + d.w) - max(x, d.x))
+    ih = max(0, min(y + h, d.y + d.h) - max(y, d.y))
+    return iw * ih / max(d.w * d.h, 1)
+
+
+def _without_widgets(box, widgets: list[Detected]):
+    """OCR often takes a radio button into the word next to it: cut it off the box."""
+    x, y, w, h = box
+    for d in widgets:
+        if _overlap((x, y, w, h), d) < 0.5:
+            continue
+        if d.x + d.w / 2 < x + w / 2:              # on the left: start after it
+            nx = d.x + d.w + 1
+            w, x = x + w - nx, nx
+        else:
+            w = d.x - 1 - x
+    return (x, y, max(1, w), h)
+
+
+def _is_block(items: list[tuple]) -> bool:
+    """Lines (x, y, w, h) that read as one paragraph: each overlaps the next horizontally."""
+    items = sorted(items, key=lambda b: b[1])
+    for a, b in zip(items, items[1:]):
+        if min(a[0] + a[2], b[0] + b[2]) - max(a[0], b[0]) <= 0:
+            return False
+    return True
+
+
+def release_labels(detected: list[Detected], lines: list[tuple[str, tuple]]) -> list[tuple[str, tuple]]:
+    """Lines that should stay where they are instead of moving into the middle of the shape
+    around them: several labels across a panel, or a left-aligned value in an input box."""
+    closed = [d for d in detected if d.kind not in ("line", "arrow", "text")]
+    owner: dict[int, list[int]] = {}
+    for j, (_, (x, y, w, h)) in enumerate(lines):
+        cx, cy = x + w / 2, y + h / 2
+        inside = [i for i, d in enumerate(closed) if d.x <= cx <= d.x + d.w and d.y <= cy <= d.y + d.h]
+        if inside:
+            owner.setdefault(min(inside, key=lambda i: closed[i].w * closed[i].h), []).append(j)
+    free = set()
+    for i, js in owner.items():
+        d = closed[i]
+        boxes = [lines[j][1] for j in js]
+        bx1 = min(b[0] for b in boxes)
+        bx2 = max(b[0] + b[2] for b in boxes)
+        by1 = min(b[1] for b in boxes)
+        by2 = max(b[1] + b[3] for b in boxes)
+        off_x = abs((bx1 + bx2) / 2 - (d.x + d.w / 2)) / max(d.w, 1)
+        off_y = abs((by1 + by2) / 2 - (d.y + d.h / 2)) / max(d.h, 1)
+        if len(js) > 3 or not _is_block(boxes) or off_x > 0.18 or off_y > 0.25:
+            free.update(js)
+    return [l for j, l in enumerate(lines) if j in free]
+
+
+def recognize_layout(img: np.ndarray, lines, recognize, dpi: float = 96, find_again: bool = True) -> list[Detected]:
+    """Screen capture -> shapes and text boxes in their places. lines: (text, box, score) from OCR;
+    recognize(crop) -> [(text, box)] reads one coloured shape again (None: don't)."""
+    img = _to_bgr(img)
+    widgets = find_widgets(img)
+    kept = []
+    for text, box, sc in lines:
+        t = (text or "").strip()
+        if not t:
+            continue
+        if len(t) == 1 and box[2] <= 30 and box[3] <= 30 and (
+                t in SYMBOLS or box[3] <= 12 or any(_overlap(box, w) > 0.5 for w in widgets)):
+            continue                                   # a radio ring, dropdown or scroll arrow, icon: not a word
+        box = _ink_box(img, _without_widgets(box, widgets))
+        kept.append((t, box, sc))
+    det = detect(img, text_boxes=split_doubtful(kept)[0], threshold=LAYOUT_THRESHOLD)
+    for w in widgets:
+        if not any(d.kind not in ("line", "arrow") and _iou(d, w) > 0.5 for d in det):
+            det.append(w)
+    bg = _background(img)
+    for i, d in enumerate(det):
+        if d.kind in ("line", "arrow"):
+            box = _boxed(img, d, bg)
+            if box is None and min(d.w, d.h) >= 20 and any(
+                    d.x <= b[0] + b[2] / 2 <= d.x + d.w and d.y <= b[1] + b[3] / 2 <= d.y + d.h for _, b, _ in kept):
+                box = Detected("roundRect", d.x, d.y, d.w, d.h, stroke=d.stroke, stroke_width=1.0)
+                fill = _fill_color(img[d.y:d.y + d.h, d.x:d.x + d.w], np.full((d.h, d.w), 255, np.uint8))
+                if fill is not None and max(abs(a_ - b_) for a_, b_ in zip(fill, bg)) > 6:
+                    box.fill = _hex(fill)
+            det[i] = box or d
+    det = [d for d in det if not (d.kind in ("line", "arrow") and max(d.w, d.h) < SHORT_STROKE)]
+    found = drop_doubtful_inside(det, kept)
+    free = release_labels(det, found)
+    taken = [l for l in found if l not in free]
+    if find_again and recognize is not None:
+        rest = attach_found_text(img, det, taken, recognize, dpi)
+    else:
+        rest = attach_text(det, taken, img=img, dpi=dpi)
+    det += text_boxes_for(rest + free, img, dpi)
+    return det

@@ -23,8 +23,7 @@ from ..core.naming import SaveDirError, render, resolve_save_dir, unique_path
 from ..core.ocr import OcrUnavailable, full_text, select_text
 from ..core.scroll_session import ScrollCapture, looks_blocked
 from ..core.session import CaptureSession, State
-from ..core.shapes import (attach_found_text, attach_text, detect, drop_doubtful_inside, split_doubtful,
-                           text_boxes_for, to_drawing)
+from ..core.shapes import detect, recognize_layout, split_doubtful, to_drawing
 from ..core.table import detect_grid, grid_from_cells, table_is_plausible
 from ..core.table_capture import CapturedTable, find_table
 from ..core.text_table import find_text_table
@@ -741,8 +740,12 @@ class Controller(QObject):
         if not self.open_url(url):
             self.notify("브라우저를 열지 못했습니다. 캡처는 복사되어 있습니다.")
         elif kind == "img":
-            self.notify("구글 '이미지로 검색' 창을 열었습니다. 그 창에서 Ctrl+V 하면 캡처로 찾습니다 "
-                        "(창이 안 보이면 검색창의 카메라 아이콘을 누른 뒤 Ctrl+V). 붙여 넣기 전에는 아무것도 올라가지 않습니다.")
+            if self._screen("paste_into_new_browser_page", "Google", default=False):
+                self.notify("구글 '이미지로 검색' 창을 열었습니다. 창이 앞에 뜨면 캡처를 자동으로 붙여 넣어 찾습니다. "
+                            "붙지 않으면 그 창에서 Ctrl+V 하세요(안 보이면 카메라 아이콘을 누른 뒤 Ctrl+V).")
+            else:
+                self.notify("구글 '이미지로 검색' 창을 열었습니다. 그 창에서 Ctrl+V 하면 캡처로 찾습니다 "
+                            "(창이 안 보이면 검색창의 카메라 아이콘을 누른 뒤 Ctrl+V). 붙여 넣기 전에는 아무것도 올라가지 않습니다.")
         else:
             self.notify(f"캡처 속 글자로 찾기를 열었습니다 ({LABELS[engine]}).")
 
@@ -1456,13 +1459,9 @@ class Controller(QObject):
                 table = find_table(raw, scored, det, dpi)
                 if table is not None:
                     return kind, lines, err, None, table
-            found = drop_doubtful_inside(det, scored)
-            if err is None:                    # dark text on a saturated fill: that shape is read again
-                rest = attach_found_text(raw, det, found, lambda crop: [(l.text, l.box) for l in self.ocr.recognize(crop)],
-                                         dpi)
-            else:
-                rest = attach_text(det, found, img=raw, dpi=dpi)
-            det += text_boxes_for(rest, raw, dpi)          # titles and labels stay editable text
+            # shapes and labels in their places; dark text on a saturated fill is read again
+            det = recognize_layout(raw, scored, None if err is not None else
+                                   (lambda crop: [(l.text, l.box) for l in self.ocr.recognize(crop)]), dpi)
             return kind, lines, err, None, det
 
         self._pending = (user_shapes, final, pos, dpi)

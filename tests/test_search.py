@@ -102,3 +102,28 @@ def test_SRCH_10_google_picture_search_opens_with_the_image_box_ready(make):
     c2, opened2 = _capture(make)
     c2.on_toolbar_action("search_img:naver")
     assert opened2 == [] and c2.overlays                     # ignored, capture still open
+
+
+def test_SRCH_11_google_picture_search_pastes_the_capture_by_itself(make):
+    """User (v0.7.6): the image box opened but the capture still had to be pasted by hand."""
+    c, opened = _capture(make)
+    asked = []
+    c.screen.paste_into_new_browser_page = lambda want: asked.append(want) or True
+    c.on_toolbar_action("search_img:google")
+    assert opened == ["https://www.google.com/?olud"] and asked == ["Google"]
+    assert any("자동으로 붙" in m for m in c.messages)
+
+
+def test_SRCH_12_picture_search_without_auto_paste_still_explains(make):
+    c, opened = _capture(make)                    # plain fake screen: no auto paste service
+    c.on_toolbar_action("search_img:google")
+    assert opened and any("Ctrl+V" in m for m in c.messages)
+
+
+def test_SRCH_13_auto_paste_only_into_the_new_browser_page():
+    from capture_tool.platform.lens import should_paste
+    assert should_paste(is_browser=True, title="Google - Chrome", want="Google", same_as_before=False)
+    assert not should_paste(is_browser=False, title="Google - 메모장", want="Google", same_as_before=False)
+    assert not should_paste(is_browser=True, title="네이버 - Chrome", want="Google", same_as_before=False)
+    assert not should_paste(is_browser=True, title="Google - Chrome", want="Google", same_as_before=True)
+    assert not should_paste(is_browser=True, title="", want="Google", same_as_before=False)

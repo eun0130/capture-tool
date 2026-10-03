@@ -130,8 +130,7 @@ def ppt_shapes() -> None:
     from capture_tool.core.clipboard_payload import shapes_payload
     from capture_tool.core.drawingml import gvml_package, svg
     from capture_tool.core.ocr import OcrEngine
-    from capture_tool.core.shapes import (attach_found_text, detect, drop_doubtful_inside, split_doubtful,
-                                         text_boxes_for, to_drawing)
+    from capture_tool.core.shapes import recognize_layout, to_drawing
     from capture_tool.platform import win_clipboard
     pythoncom.CoInitialize()
     app = win32com.client.Dispatch("PowerPoint.Application")
@@ -168,10 +167,7 @@ def ppt_shapes() -> None:
     eng = OcrEngine()
     lines = eng.recognize(img)
     scored = [(l.text, l.box, l.score) for l in lines]
-    det = detect(img, text_boxes=split_doubtful(scored)[0])
-    rest = attach_found_text(img, det, drop_doubtful_inside(det, scored),
-                             lambda c: [(l.text, l.box) for l in eng.recognize(c)], dpi)
-    det += text_boxes_for(rest, img, dpi)
+    det = recognize_layout(img, scored, lambda c: [(l.text, l.box) for l in eng.recognize(c)], dpi)
     shapes, conns = to_drawing(det)
     ok, pngb = cv2.imencode(".png", img)
     win_clipboard.set_formats(shapes_payload(gvml_package(shapes, conns, dpi), svg(shapes, conns, dpi),
@@ -188,6 +184,41 @@ def ppt_shapes() -> None:
                 tr = shp.TextFrame.TextRange
                 text = (tr.Text.replace("\r", "/"), _hex(tr.Font.Color.RGB), float(tr.Font.Size), bool(tr.Font.Bold))
             print("SHAPE", int(shp.AutoShapeType), fill, line, text)
+    finally:
+        dst.Saved = True
+        dst.Close()
+        win_clipboard.set_formats({"CF_UNICODETEXT": ""}, retries=10, delay=0.05)
+    print("RESULT done")
+
+
+def ppt_form(src_png: str, out_png: str) -> None:
+    """A screen capture of a web form -> our shapes -> pasted into a new (hidden) deck -> that
+    slide exported to out_png, and each pasted shape printed."""
+    import cv2
+    import pythoncom
+    import win32com.client
+    from capture_tool.core.clipboard_payload import shapes_payload
+    from capture_tool.core.drawingml import gvml_package, svg
+    from capture_tool.core.ocr import OcrEngine
+    from capture_tool.core.shapes import recognize_layout, to_drawing
+    from capture_tool.platform import win_clipboard
+    pythoncom.CoInitialize()
+    img = cv2.imread(src_png)
+    eng = OcrEngine()
+    scored = [(l.text, l.box, l.score) for l in eng.recognize(img)]
+    det = recognize_layout(img, scored, lambda c: [(l.text, l.box) for l in eng.recognize(c)], 96)
+    shapes, conns = to_drawing(det)
+    ok, pngb = cv2.imencode(".png", img)
+    win_clipboard.set_formats(shapes_payload(gvml_package(shapes, conns, 96), svg(shapes, conns, 96),
+                                             pngb.tobytes()), retries=10, delay=0.05)
+    app = win32com.client.Dispatch("PowerPoint.Application")
+    dst = app.Presentations.Add(False)
+    try:
+        dst.PageSetup.SlideWidth = max(720, img.shape[1] * 0.75 + 40)
+        dst.PageSetup.SlideHeight = max(405, img.shape[0] * 0.75 + 40)
+        rng = dst.Slides.Add(1, 12).Shapes.Paste()
+        print("PASTED", rng.Count)
+        dst.Slides(1).Export(out_png, "PNG", int(dst.PageSetup.SlideWidth * 2), int(dst.PageSetup.SlideHeight * 2))
     finally:
         dst.Saved = True
         dst.Close()

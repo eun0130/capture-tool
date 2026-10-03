@@ -33,6 +33,10 @@ class RealScreen:
         from ..platform import scroll
         return scroll.display_affinity(hwnd)
 
+    def paste_into_new_browser_page(self, want):
+        from ..platform import lens
+        return lens.paste_into_new_browser_page(want)
+
     def is_browser(self, hwnd):
         from ..platform import scroll
         return scroll.is_browser(hwnd)
