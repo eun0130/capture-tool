@@ -120,3 +120,14 @@ def test_TOPT_10_settings_saved(tmp_path):
     save(s, tmp_path / "s.json")
     back, _ = load(tmp_path / "s.json")
     assert (back.table_target, back.table_style, back.table_quick) == ("ppt", "plain", True)
+
+
+def test_TOPT_11_table_button_arrow_does_not_cover_its_label(qt_app):
+    """Bug (v0.7.3): the ▾ of the 표 button was drawn over the word "표"."""
+    from capture_tool.app.side_bar import SideBar
+    bar = SideBar()
+    b = bar.buttons["table"]
+    fm = b.fontMetrics()
+    need = b.iconSize().width() + fm.horizontalAdvance(b.text()) + 14 + 12     # icon + text + arrow + gaps
+    assert b.sizeHint().width() >= need
+    assert b.objectName() == "tablebtn"

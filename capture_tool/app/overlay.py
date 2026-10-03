@@ -553,6 +553,8 @@ class OverlayWindow(QWidget):
             self._select(None)
         elif ctrl and k == Qt.Key_S:
             self.c.finish("save_as" if shift else "save")
+        elif k == Qt.Key_F1:
+            self.c.show_guide()
         elif k == Qt.Key_F3:
             self.c.finish("pin")
         elif ctrl and (k == Qt.Key_Y or (shift and k == Qt.Key_Z)):

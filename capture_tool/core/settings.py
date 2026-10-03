@@ -35,6 +35,7 @@ class Settings:
     last_font_family: str = "Malgun Gothic"
     drm_notice_shown: bool = False
     ppt_new_slide: bool = True           # PPT: insert on a new slide after the current one
+    guide_shown: bool = False             # the beginner's guide popped up once on first start
     table_target: str = "excel"           # 표 button: "excel" (clipboard) or "ppt" (insert)
     table_style: str = "keep"             # "keep" the capture's look or "plain" white/black
     table_quick: bool = False             # skip the 표 options dialog (use the saved choice)
@@ -105,7 +106,7 @@ def _apply(s: Settings, data: dict, warnings: list[str]) -> None:
                 if not _is_int(v):
                     raise TypeError
                 s.jpg_quality = min(100, max(1, v))
-            elif name in ("auto_save", "launch_at_startup", "redact_pii", "drm_notice_shown", "ppt_new_slide", "auto_copy", "keep_style", "bar_expanded", "table_quick",
+            elif name in ("auto_save", "launch_at_startup", "redact_pii", "drm_notice_shown", "ppt_new_slide", "auto_copy", "keep_style", "bar_expanded", "table_quick", "guide_shown",
                           "ai_cloud_translate", "ai_cloud_consent", "share_consent"):
                 if not isinstance(v, bool):
                     raise TypeError

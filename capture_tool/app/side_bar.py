@@ -28,6 +28,7 @@ ACTIONS = [
     ("link", "link", "링크", "링크 복사 — ① 파일 링크: 저장한 파일 위치(인터넷에 올리지 않음, 같은 PC·공유 폴더에서 열림) "
                              "② 인터넷 공유 링크: 누구나 열 수 있는 주소, 정해진 시간 뒤 자동 삭제", "extra"),
     ("open_folder", "folder", "저장 폴더", "저장 폴더 열기", "extra"),
+    ("help", "help", "도움말", "처음 쓰는 분을 위한 따라하기 설명서 (F1)", "extra"),
 ]
 
 STYLE = """
@@ -36,6 +37,8 @@ QToolButton { border: none; border-radius: 10px; color: #343A40; font-size: 11px
 QToolButton:hover { background: #E6EEFB; color: #1F5FD1; }
 QToolButton#primary { background: #1F5FD1; color: #FFFFFF; }
 QToolButton#primary:hover { background: #174AA6; }
+QToolButton#tablebtn { padding-right: 20px; }
+QToolButton#tablebtn::menu-button { border: none; width: 16px; }
 QToolButton:checked { background: #E6EEFB; color: #1F5FD1; border: 1.5px solid #1F5FD1; }
 """
 
@@ -80,6 +83,7 @@ class SideBar(QWidget):
             elif name == "table":
                 from PySide6.QtWidgets import QMenu, QToolButton as _TB
                 b.setPopupMode(_TB.MenuButtonPopup)
+                b.setObjectName("tablebtn")          # room for the ▾ next to the label
                 menu = QMenu(b)
                 menu.aboutToShow.connect(lambda m=menu: self._fill_table_menu(m))
                 b.setMenu(menu)

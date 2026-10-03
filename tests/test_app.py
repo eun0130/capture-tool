@@ -545,7 +545,7 @@ def test_APP_31_side_bar_next_to_selection(make):
     # v0.7: one row right under the capture (was a column to its right)
     assert g.left() == 100 and g.top() == 308 and g.right() <= 800
     assert list(sb.buttons) == ["copy", "autosave", "text", "table", "ppt", "mail", "kakao", "search", "pin", "more",
-                                "save_as", "ppt_shapes", "scroll", "link", "open_folder"]
+                                "save_as", "ppt_shapes", "scroll", "link", "open_folder", "help"]
     assert sb.columns == 0 and sb.height() <= 60
 
 

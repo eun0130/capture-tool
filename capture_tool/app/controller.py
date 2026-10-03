@@ -127,6 +127,7 @@ class Controller(QObject):
         self.active_overlay: OverlayWindow | None = None
         self.pins: list[PinWindow] = []
         self.pin_manager = None
+        self.guide_window = None
         self.confirm = _confirm
         self.text_panel: TextPanel | None = None
         self.messages: list[str] = []
@@ -320,7 +321,7 @@ class Controller(QObject):
         self.close_pins()
         if self.text_panel:
             self.text_panel.close()
-        for w in (self.pin_manager, self.mail_helper):
+        for w in (self.pin_manager, self.mail_helper, self.guide_window):
             if w is not None:
                 w.close()
 
@@ -433,6 +434,9 @@ class Controller(QObject):
 
     # --- finishing ---------------------------------------------------------------
     def on_toolbar_action(self, name: str) -> None:
+        if name == "help":
+            self.show_guide()
+            return
         if name in ("autosave", "more", "open_folder") or name.startswith("tableopt:"):
             if name.startswith("tableopt:"):
                 self._table_option(name)
@@ -1377,6 +1381,26 @@ class Controller(QObject):
         if not self.confirm(f"고정한 캡처 {len(self.pins)}개를 모두 닫을까요? (저장하지 않은 고정은 다시 띄울 수 없습니다)"):
             return
         self.close_pins()
+
+    def show_guide(self, topic: str | None = None):
+        """The beginner's guide as a pop-up (stays on top, doesn't block the capture)."""
+        from .guide import GuideWindow
+        if self.guide_window is None:
+            self.guide_window = GuideWindow()
+        if topic:
+            self.guide_window.show_topic(topic)
+        self.guide_window.show()
+        self.guide_window.raise_()
+        self.guide_window.activateWindow()
+        return self.guide_window
+
+    def show_guide_first_time(self) -> bool:
+        if self.settings.guide_shown:
+            return False
+        self.settings.guide_shown = True
+        self._persist()
+        self.show_guide()
+        return True
 
     def show_pin_manager(self):
         from .pin_manager import PinManager

@@ -107,6 +107,8 @@ class TrayApp:
             self.toast(w)
         if not selftest:
             self.apply_hotkeys(first_run=not self.settings_path.exists())
+            # the beginner's guide pops up once (first start, or the first start after updating)
+            QTimer.singleShot(1500, self.controller.show_guide_first_time)
 
     # --- ui ------------------------------------------------------------------------
     def toast(self, msg: str) -> None:
@@ -142,6 +144,9 @@ class TrayApp:
             auto.setChecked(self.controller.settings.auto_save)
             auto.blockSignals(False)
         m.aboutToShow.connect(sync_auto_save)
+        a = QAction("사용 설명서 (따라하기)", m)
+        a.triggered.connect(lambda: self.controller.show_guide())
+        m.addAction(a)
         a = QAction("고정한 캡처 관리…", m)
         a.triggered.connect(self.controller.show_pin_manager)
         m.addAction(a)
