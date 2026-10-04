@@ -51,3 +51,5 @@ def test_WRAP_03_join_rule():
     assert join_wrapped([("one", 50)], 300, 16) == "one"
     assert join_wrapped([("end.", 299), ("Next", 40)], 300, 16) == "end. Next"     # after punctuation: a space
     assert join_wrapped([], 300, 16) == ""
+    assert join_wrapped([("키 강제 안", 299), ("됨", 30)], 300, 16) == "키 강제 안 됨"   # "안" stands alone
+    assert join_wrapped([("최종 제안", 299), ("서", 30)], 300, 16) == "최종 제안서"     # part of a word

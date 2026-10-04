@@ -11,11 +11,12 @@ a line that the terminal wrapped to the left edge belongs to the cell it overflo
 from __future__ import annotations
 
 import re
+import unicodedata
 
 import cv2
 import numpy as np
 
-from .table_capture import CapturedTable, TableStyle
+from .table_capture import CapturedTable, TableStyle, join_wrapped
 
 INK = 40                 # grey-level difference from the background that counts as ink
 RULE_SHARE = 0.5         # a horizontal rule covers at least this share of the width
@@ -64,6 +65,8 @@ HANGUL_BREAK = 1.25      # syllable pitch this many times the usual pitch = a sp
 NORMAL_GAP = 0.5         # ordinary (not spread-out) text: a gap this share of the letter height is a space
 SENTENCE_GAP = 0.25      # after "." / "·": a gap this wide ends the sentence (list dots like "엑셀·PPT" are tight)
 SPREAD_SHARE = 0.6       # Korean read mostly syllable by syllable = a terminal font spreading letters apart
+SPACE_RATIO = 1.6        # a space: blank this many times the widest usual gap inside words (90th percentile) ...
+SPACE_EXTRA = 3          # ... and at least this many px more
 
 
 def _bar_pixels(ink: np.ndarray, min_run: int) -> np.ndarray:
@@ -121,7 +124,52 @@ def _pitch(pt: str, pb, t: str, b) -> float:
     return 1e9            # two whole words: the reader split them at a space (normal, not spread-out text)
 
 
-def _join_runs(words: list, step: float, spread: bool = True, char_h: float = 20.0) -> list[list]:
+def _blank_runs(cols: np.ndarray) -> list[int]:
+    """Widths of the blank stretches between the first and the last ink column."""
+    if not cols.any():
+        return []
+    first, last = int(np.argmax(cols)), len(cols) - int(np.argmax(cols[::-1]))
+    runs, start = [], None
+    for x in range(first, last):
+        if not cols[x] and start is None:
+            start = x
+        elif cols[x] and start is not None:
+            runs.append(x - start)
+            start = None
+    return runs
+
+
+def _ink_gap(ink: np.ndarray, a, b) -> int:
+    """Blank columns between the last ink of word a and the first ink of word b (their own line)."""
+    y0, y1 = int(min(a[1][1], b[1][1])), int(max(a[1][3], b[1][3]))
+    x0, x1 = int(a[1][0]), int(b[1][2])
+    if x1 <= x0 or y1 <= y0:
+        return int(b[1][0] - a[1][2])
+    cols = ink[max(0, y0):y1, max(0, x0):x1].any(axis=0)
+    mid = int(b[1][0]) - x0
+    left, right = cols[:max(1, int(a[1][2]) - x0)], cols[max(0, mid):]
+    last = len(left) - int(np.argmax(left[::-1])) if left.any() else len(left)
+    first = mid + (int(np.argmax(right)) if right.any() else 0)
+    return first - last
+
+
+def _space_threshold(ink: np.ndarray, lines: list[list]) -> float | None:
+    """Blank wider than this between two words is a space: clearly wider than the gaps the reader
+    found inside its words (between letters / syllables) on this very table - so it fits any font."""
+    inner = []
+    for ln in lines:
+        for w in ln:
+            x0, y0, x1, y1 = (int(v) for v in w[1])
+            if len(w[0].strip()) >= 2 and x1 - x0 > 4 and y1 > y0:
+                inner += [r for r in _blank_runs(ink[max(0, y0):y1, max(0, x0):x1].any(axis=0)) if r >= 2]
+    if len(inner) < 5:
+        return None
+    g = float(np.percentile(inner, 90))
+    return max(SPACE_RATIO * g, g + SPACE_EXTRA)
+
+
+def _join_runs(words: list, step: float, spread: bool = True, char_h: float = 20.0,
+               gap_of=None, space_px: float | None = None) -> list[list]:
     """Words of one cell, left to right -> [[text, colour], ...] (the text starting with its space).
     Between Korean syllables a space only where the gap is clearly wider than between the letters
     of a word (step: the usual gap)."""
@@ -135,11 +183,16 @@ def _join_runs(words: list, step: float, spread: bool = True, char_h: float = 20
         if prev is None:
             pieces.append([t, color])
             prev = (t, b)
+            prev_w = w
             continue
         pt, pb = prev
         gap = b[0] - pb[2]
         last = pieces[-1][0]
-        if last[-1:] in ("·", ".") and gap > SENTENCE_GAP * char_h and t[:1] not in PUNCT:
+        if space_px is not None and not spread:              # blank clearly wider than inside words
+            space = gap_of(prev_w, w) > space_px
+            if space and last[-1:] == "·" and t[:1] not in PUNCT:
+                pieces[-1][0] = last[:-1] + "."                  # a full stop read as "·"
+        elif last[-1:] in ("·", ".") and gap > SENTENCE_GAP * char_h and t[:1] not in PUNCT:
             pieces[-1][0] = last[:-1] + "."                      # a full stop (read as "·") and a space
             space = True
         elif not spread:                                         # ordinary text: a space is a visible gap
@@ -155,6 +208,7 @@ def _join_runs(words: list, step: float, spread: bool = True, char_h: float = 20
             space = gap > LATIN_BREAK
         pieces.append([(" " if space else "") + t, color])
         prev = (t, b)
+        prev_w = w
     for p in pieces:
         p[0] = p[0].replace("“", '"').replace("”", '"')
         p[0] = re.sub(r"(?<=[\uac00-\ud7a3A-Za-z0-9)\]\"'])·(?=\s|$)", ".", p[0])   # a full stop read as "·"
@@ -235,6 +289,9 @@ def find_box_table(img, read_words, dpi: float = 96) -> CapturedTable | None:
     hangul = [w[0].strip() for w in words if _is_hangul(w[0].strip()[:1])]
     spread = bool(hangul) and sum(1 for t in hangul if len(t) == 1) >= SPREAD_SHARE * len(hangul)
     char_h = float(np.median([w[1][3] - w[1][1] for w in words])) * 0.6 if words else 20.0
+    ink_clean = np.abs(cv2.cvtColor(clean, cv2.COLOR_BGR2GRAY).astype(int) - bgv) > INK
+    space_px = None if spread else _space_threshold(ink_clean, [ln for _, _, lines in bands for ln in lines])
+    gap_of = lambda a, b: _ink_gap(ink_clean, a, b)            # noqa: E731
     bar_px = _bar_pixels(ink, int(round(BAR_RUN * dpi / 96)))
     rows: list[list[str]] = []
     run_cells: dict = {}
@@ -248,7 +305,7 @@ def find_box_table(img, read_words, dpi: float = 96) -> CapturedTable | None:
             heights.append(ly1 - ly0)
             left = bar_px[max(0, ly0 - 2):ly1 + 2, max(0, cols[0] - 2):cols[0] + 3].any(axis=1).mean() >= 0.6
             if not left and last is not None:              # wrapped by the terminal: back to its cell
-                cells[last].append(("\n", None))
+                cells[last].append(("\r", None))            # (the window's edge, not the column's, cut it)
                 cells[last].extend(ln)
                 continue
             got = None
@@ -264,20 +321,31 @@ def find_box_table(img, read_words, dpi: float = 96) -> CapturedTable | None:
             last = got if got is not None else last
         row = []
         for c, ws in enumerate(cells):
-            parts, cur = [], []
+            parts, cur, window = [], [], False
             for w in ws + [("\n", None)]:
-                if w[0] == "\n":
+                if w[0] in ("\n", "\r"):
                     if cur:
-                        parts.append(_join_runs(cur, step, spread, char_h))
-                    cur = []
+                        runs_ = _join_runs(cur, step, spread, char_h, gap_of, space_px)
+                        if runs_:
+                            parts.append((runs_, max(x[1][2] for x in cur), window))
+                    cur, window = [], w[0] == "\r"
                 else:
                     cur.append(w)
+            limit = max((r_ for _, r_, _w in parts), default=0)
             flat_runs: list[list] = []
-            for k, part in enumerate(p for p in parts if p):
+            prev_text, prev_right = "", None
+            for k, (part, right, by_window) in enumerate(parts):
+                head = "".join(t_ for t_, _ in part)
+                if k:                                       # a wrapped line: cut mid-word, or at a space?
+                    edge = img.shape[1] if by_window else limit
+                    glued = join_wrapped([(prev_text, prev_right), (head, right)], edge,
+                                         char_h / 0.6)
+                    sep = "" if glued == prev_text.strip() + head.strip() else " "
+                else:
+                    sep = ""
                 for j_, (txt, col) in enumerate(part):
-                    if k and not j_:
-                        txt = " " + txt
-                    flat_runs.append([txt, col])
+                    flat_runs.append([(sep + txt) if not j_ else txt, col])
+                prev_text, prev_right = head, right
             text = _strip_bars("".join(t for t, _ in flat_runs))
             row.append(text)
             run_cells[(len(rows), c)] = flat_runs

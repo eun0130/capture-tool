@@ -96,6 +96,7 @@ def _best_block(rows):
 
 WRAP_TIGHT = 0.6        # a line ending this close (in letters) to its column's edge was cut mid-word
 WORD_END = set("고를을는은에의와과며면도")   # Korean particles / endings: the word is complete there
+STANDALONE = set("안못잘더또수것등및때중후뿐줄곳분번개")   # one-syllable words that stand alone
 
 
 def join_wrapped(parts, limit: float, char_w: float) -> str:
@@ -112,7 +113,9 @@ def join_wrapped(parts, limit: float, char_w: float) -> str:
             out = text
         else:
             cut = limit - prev_right < WRAP_TIGHT * char_w
-            glue = cut and out[-1].isalnum() and text[0].isalnum() and out[-1] not in WORD_END
+            alone = out.rsplit(" ", 1)[-1] if " " in out else ""      # a one-syllable word on its own
+            glue = (cut and out[-1].isalnum() and text[0].isalnum() and out[-1] not in WORD_END
+                    and alone not in STANDALONE)
             out += ("" if glue else " ") + text
         prev_right = right
     return out
@@ -171,6 +174,54 @@ def _merge_by_separators(img, rows, grid, x1, x2, h):
     return new_rows, new_grid
 
 
+def _table_by_separators(img, items, h):
+    """Rows separated by lines drawn across (Kakao, web, documents), cells that wrap: rows are the
+    bands between the lines, columns the x ranges no text crosses; each cell's lines rejoined."""
+    H, W = img.shape[:2]
+    x1 = int(min(i[1] for i in items))
+    x2 = int(max(i[1] + i[3] for i in items))
+    top = int(min(i[2] for i in items))
+    bottom = int(max(i[2] + i[4] for i in items))
+    seps = _separators(img, max(0, top - int(2 * h)), min(H, bottom + int(2 * h)), x1, x2)
+    inner = [y for y in seps if top < y < bottom]
+    if len(inner) < 2:
+        return None
+    edges = [top - 1] + inner + [bottom + 1]
+    bands = []
+    for a, b in zip(edges, edges[1:]):
+        its = [i for i in items if a <= i[2] + i[4] / 2 < b]
+        if its:
+            bands.append(its)
+    if len(bands) < MIN_ROWS - 1 + 1:
+        return None
+    cols = _bands([bands[k] for k in range(len(bands))])
+    if not (MIN_COLS <= len(cols) <= MAX_COLS):
+        return None
+    grid, rows_items = [], []
+    for its in bands:
+        cells = []
+        for c, (ca, cb) in enumerate(cols):
+            mine = sorted((i for i in its if _band_of(i, cols) == c), key=lambda i: (i[2], i[1]))
+            lines, cur, cy = [], [], None
+            for i in mine:                                  # the cell's lines, top to bottom
+                if cy is not None and abs(i[2] - cy) > 0.5 * h:
+                    lines.append(cur)
+                    cur = []
+                cur.append(i)
+                cy = i[2] if cy is None else cy if abs(i[2] - cy) <= 0.5 * h else i[2]
+            if cur:
+                lines.append(cur)
+            parts = [(" ".join(i[0] for i in sorted(ln, key=lambda i: i[1])), max(i[1] + i[3] for i in ln))
+                     for ln in lines]
+            cells.append(join_wrapped(parts, cb, h))
+        grid.append(cells)
+        rows_items.append(its)
+    filled = sum(1 for r in grid for c in r if c)
+    if filled < 0.5 * len(grid) * len(cols):
+        return None
+    return rows_items, grid, cols, edges
+
+
 def _caption(rows, a, b, gap):
     """Single-line rows right above / below the table (its title or note)."""
     out = []
@@ -180,6 +231,56 @@ def _caption(rows, a, b, gap):
     if b < len(rows) and len(rows[b]) == 1 and cy(rows[b]) - cy(rows[b - 1]) <= 2.0 * gap:
         out.append(rows[b][0])
     return [(i[0], tuple(i[1:])) for i in out]
+
+
+PHRASE_GAP = 1.2         # words further apart than this many letter heights belong to different cells
+GUTTER_SHARE = 0.12      # x where at most this share of the busiest column's words reach: a gap between columns
+
+
+def _gutters(words, h: float) -> list[tuple[float, float]]:
+    """x ranges between columns: (almost) no word of the table touches them."""
+    x0 = min(b[0] for _, b in words)
+    x1 = max(b[2] for _, b in words)
+    n = int(x1 - x0) + 1
+    if n <= 2:
+        return []
+    cover = np.zeros(n, int)
+    for _, b in words:
+        cover[int(b[0] - x0):int(b[2] - x0) + 1] += 1
+    low = cover <= max(1, GUTTER_SHARE * cover.max())
+    out, start = [], None
+    for k, v in enumerate(list(low) + [False]):
+        if v and start is None:
+            start = k
+        elif not v and start is not None:
+            if k - start >= 0.5 * h and start > 0 and k < n:
+                out.append((x0 + start, x0 + k))
+            start = None
+    return out
+
+
+def phrases_from_words(words) -> list[tuple[str, tuple, float]]:
+    """Reader words [(text, (x0, y0, x1, y1))] -> table pieces (text, (x, y, w, h), score): the
+    words of one line kept together, split where the gap is far wider than a space or a column
+    gutter lies between - the text finder alone can glue neighbouring columns into one line."""
+    words = [(w[0].strip(), w[1]) for w in words if w[0].strip()]
+    if not words:
+        return []
+    hs = [b[3] - b[1] for _, b in words if b[3] > b[1]]
+    h = float(median(hs)) if hs else 16.0
+    gutters = _gutters(words, h)
+    out = []
+    for t, (x0, y0, x1, y1) in sorted(words, key=lambda w: ((w[1][1] + w[1][3]) / 2, w[1][0])):
+        if out:
+            pt, (px, py, pw, ph), _ = out[-1]
+            same_line = abs((py + ph / 2) - (y0 + y1) / 2) <= 0.5 * h
+            crosses = any(px + pw <= ga + 1 and x0 >= gb - 1 for ga, gb in gutters)
+            if same_line and not crosses and 0 <= x0 - (px + pw) <= PHRASE_GAP * h:
+                nx0, ny0 = min(px, x0), min(py, y0)
+                out[-1] = (pt + " " + t, (nx0, ny0, max(px + pw, x1) - nx0, max(py + ph, y1) - ny0), 1.0)
+                continue
+        out.append((t, (x0, y0, x1 - x0, y1 - y0), 1.0))
+    return [(t, tuple(int(round(v)) for v in b), sc) for t, b, sc in out]
 
 
 def find_table(img, lines, shapes, dpi: float = 96) -> CapturedTable | None:
@@ -214,6 +315,18 @@ def find_table(img, lines, shapes, dpi: float = 96) -> CapturedTable | None:
                 widths = [(xs[-1] - xs[0]) * 72 / dpi / len(grid[0])] * len(grid[0])
             return CapturedTable(grid, (xs[0], ys[0], xs[-1] - xs[0], ys[-1] - ys[0]), outside, style, widths)
 
+    by_lines = _table_by_separators(img, items, h)
+    if by_lines is not None:
+        rows_items, grid, cols, edges = by_lines
+        bx1 = max(0, int(cols[0][0] - h * 0.4))
+        bx2 = min(W, int(cols[-1][1] + h * 0.4))
+        y1, y2 = max(0, edges[0]), min(H, edges[-1])
+        centers = [median(i[2] + i[4] / 2 for i in r) for r in rows_items]
+        gap = float(np.mean(np.diff(centers))) if len(centers) > 1 else h * 2
+        style = _style(img, rows_items, centers, gap, [i for r in rows_items for i in r], bx1, bx2, y1, y2, dpi)
+        lefts = [bx1] + [int(c[0] - h * 0.4) for c in cols[1:]]
+        widths = [max(1.0, r - l) for l, r in zip(lefts, lefts[1:] + [bx2])]
+        return CapturedTable(grid, (bx1, y1, bx2 - bx1, y2 - y1), [], style, [w * 72 / dpi for w in widths])
     all_rows = _rows(items, tol=h * 0.5)
     block = _best_block(all_rows)
     if block is None:

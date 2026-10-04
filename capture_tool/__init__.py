@@ -1,6 +1,6 @@
 import os as _os
 
-__version__ = "0.8.2"
+__version__ = "0.8.3"
 
 # Must run before numpy is imported anywhere: OpenBLAS/OpenMP otherwise start one worker
 # thread per CPU core with ~24 MB committed memory each (≈750 MB, 23 threads on 32 cores).

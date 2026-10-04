@@ -27,7 +27,7 @@ from ..core.session import CaptureSession, State
 from ..core.shapes import detect, recognize_layout, screen_tables, split_doubtful, to_drawing
 from ..core.table import detect_grid, grid_from_cells, table_is_plausible
 from ..core.box_table import find_box_table
-from ..core.table_capture import CapturedTable, find_table
+from ..core.table_capture import CapturedTable, find_table, phrases_from_words
 from ..core.text_table import find_text_table
 from ..platform.powerpoint import (ClipboardShapes, Picture, PowerPointBusy, PowerPointUnavailable, TableItem,
                                    TextItem, clip_text, table_fits)
@@ -1105,11 +1105,15 @@ class Controller(QObject):
         read = getattr(self.ocr, "read_words", None)
         if read is None:
             return t
+        filled = lambda tb: sum(1 for r in tb.rows for c in r if c)       # noqa: E731
         try:
             b = find_box_table(raw, read, dpi)
+            if b is None and scored:                    # columns glued by the text finder: word pieces
+                w = find_table(raw, phrases_from_words(read(raw)), det, dpi)
+                if w is not None and (t is None or filled(w) > filled(t)):
+                    t = w
         except OcrUnavailable:
             b = None
-        filled = lambda tb: sum(1 for r in tb.rows for c in r if c)       # noqa: E731
         best = b if b is not None and (t is None or filled(b) >= filled(t)) else t
         self._table_cut = bool(getattr(best, "cut_edge", False))
         return best
