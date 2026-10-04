@@ -59,4 +59,9 @@ def _never_touch_the_users_office(monkeypatch, request):
 
     def not_open():
         raise excel.ExcelNotOpen("Excel이 열려 있지 않습니다.")
+
+    def never_start():
+        raise AssertionError("a test tried to start Excel")
     monkeypatch.setattr(excel, "_running_app", not_open)
+    monkeypatch.setattr(excel, "_start_app", never_start)
+    monkeypatch.setattr(excel, "installed", lambda: False)

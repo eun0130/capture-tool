@@ -51,10 +51,10 @@ def test_EXCEL_03_table_goes_into_open_excel(make):
     assert HTML in c.clipboard.last and "B3" in c.messages[-1]
 
 
-def test_EXCEL_04_excel_closed_waits_on_the_clipboard(make):
-    c = make()                                    # the test guard says "Excel not open"
+def test_EXCEL_04_without_excel_the_table_waits_on_the_clipboard(make):
+    c = make()                                    # the test guard: not open, not installed
     c._deliver_table([["항목", "값"], ["a", "1"]], None, None, [], target="excel")
-    assert HTML in c.clipboard.last and "Ctrl+V" in c.messages[-1]
+    assert HTML in c.clipboard.last and "Ctrl+V" in c.messages[-1] and "설치" in c.messages[-1]
 
 
 def test_EXCEL_05_messages_stay_long_enough_to_read():
@@ -62,3 +62,35 @@ def test_EXCEL_05_messages_stay_long_enough_to_read():
     assert toast_ms("짧음") == SHOW_MS
     long = "표 5행×3열(흰 바탕·검은 글씨)로 복사했습니다. 엑셀에서 붙일 칸을 누르고 Ctrl+V 하세요."
     assert toast_ms(long) >= 5000 and toast_ms("가" * 500) <= 10000
+
+
+def test_EXCEL_06_closed_excel_is_started_and_gets_the_table():
+    """User (v0.8.6): with Excel closed, 표 → 엑셀 should open Excel and paste right away."""
+    from capture_tool.platform import excel
+    app = FakeExcelApp(workbook=False)
+    started = []
+
+    def start():
+        started.append(True)
+        app.ActiveWorkbook = object()                   # a new workbook, A1 selected
+        return app
+
+    def not_running():
+        raise excel.ExcelNotOpen("x")
+    where = excel.paste_into_excel(running=not_running, start=start, installed=lambda: True)
+    assert started and app.calls == ["paste"] and where == "Sheet1!B3"
+
+
+def test_EXCEL_07_no_excel_installed_stays_on_the_clipboard(make):
+    from capture_tool.platform import excel
+
+    def not_running():
+        raise excel.ExcelNotOpen("x")
+    import pytest
+    with pytest.raises(excel.ExcelMissing):
+        excel.paste_into_excel(running=not_running, start=lambda: None, installed=lambda: False)
+    c = make()
+    c.excel = type("E", (), {"paste": lambda self: (_ for _ in ()).throw(excel.ExcelMissing("없음")),
+                             "busy": False})()
+    c._deliver_table([["a", "b"], ["c", "d"]], None, None, [], target="excel")
+    assert "Ctrl+V" in c.messages[-1] and "설치" in c.messages[-1]

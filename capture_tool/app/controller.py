@@ -1646,14 +1646,17 @@ class Controller(QObject):
             self._send_to_excel(f"{size}({look})", cut)
 
     def _send_to_excel(self, what: str, note: str = "") -> None:
-        """Excel already open: the table goes to its selected cell. Otherwise it waits on the
-        clipboard (Excel is never started just for this)."""
-        from ..platform.excel import ExcelNotOpen, ExcelUnavailable
+        """The table goes into Excel: the selected cell of the open sheet, or a new workbook
+        after starting Excel. Without Excel it waits on the clipboard."""
+        from ..platform.excel import ExcelMissing, ExcelNotOpen, ExcelUnavailable
 
         def work():
             try:
                 where = self.excel.paste()
                 return f"{what}를 Excel의 {where} 칸에 붙였습니다. 다른 곳에도 Ctrl+V 할 수 있습니다." + note
+            except ExcelMissing:
+                return (f"Excel이 설치되어 있지 않아 {what}를 클립보드에 복사했습니다. 붙일 곳에서 Ctrl+V 하세요."
+                        + note)
             except ExcelNotOpen:
                 return f"{what}로 복사했습니다. 엑셀에서 붙일 칸을 누르고 Ctrl+V 하세요. (▾ 메뉴에서 PPT·워드·모양 변경)" + note
             except ExcelUnavailable as e:
