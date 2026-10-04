@@ -36,7 +36,7 @@ class Settings:
     drm_notice_shown: bool = False
     ppt_new_slide: bool = True           # PPT: insert on a new slide after the current one
     guide_shown: bool = False             # the beginner's guide popped up once on first start
-    table_target: str = "excel"           # 표 button: "excel" (clipboard) or "ppt" (insert)
+    table_target: str = "excel"           # 표 button: "excel" (clipboard), "ppt" or "word" (insert)
     table_style: str = "keep"             # "keep" the capture's look or "plain" white/black
     table_quick: bool = False             # skip the 표 options dialog (use the saved choice)
     bar_expanded: bool = False           # action bar shows every button (전체) instead of the basic row
@@ -153,7 +153,7 @@ def _apply(s: Settings, data: dict, warnings: list[str]) -> None:
                     raise TypeError
                 s.ai_target_lang = v
             elif name == "table_target":
-                if v not in ("excel", "ppt"):
+                if v not in ("excel", "ppt", "word"):
                     raise TypeError
                 s.table_target = v
             elif name == "table_style":

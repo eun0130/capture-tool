@@ -9,6 +9,7 @@ import pytest
 
 from capture_tool.core.box_table import _join, find_box_table
 from capture_tool.core.ocr import OcrEngine
+from tests.test_app import make  # noqa: F401 (fixture)
 
 DATA = Path(__file__).parent / "data"
 
@@ -71,6 +72,7 @@ def test_BOX_05_dark_terminal_look_kept(terminal):
     assert st is not None
     lum = lambda h: sum(int(h[i:i + 2], 16) for i in (1, 3, 5)) / 3     # noqa: E731
     assert lum(st.body_fill) < 80 and lum(st.body_text) > 170
+    assert 12 <= st.font_size <= 15, st.font_size                       # the letters are ~17 px tall
     assert len(terminal.col_widths) == 3 and terminal.col_widths[2] > terminal.col_widths[1] > terminal.col_widths[0]
 
 
@@ -87,3 +89,28 @@ def test_BOX_07_spacing_from_syllable_positions():
     assert _join([w("REQ", 0, 35), w("ID", 48, 20), w("체", 87)], 34) == "REQ ID 체"
     assert _join([w("│", 0, 3), w("가", 20)], 34) == "가"
     assert _join([], 34) == ""
+
+
+def test_BOX_08_remaining_details(terminal):
+    """User (v0.8.0): "↔" dropped, a space before the closing quote, white instead of grey rules."""
+    rows = {flat(r[0]): r for r in terminal.rows}
+    assert rows["D2"][1] == "commit ↔ Jira 키 강제 안 됨", rows["D2"]
+    assert rows["D2"][2].startswith('"관행"으로만 존재'), rows["D2"]
+    assert "URL. branch" in rows["D3"][2]
+    lum = sum(int(terminal.style.border[i:i + 2], 16) for i in (1, 3, 5)) / 3
+    assert 90 < lum < 200, terminal.style.border                       # looks grey, as on screen
+
+
+def test_BOX_09_letters_cut_by_the_capture_edge_are_reported(terminal):
+    assert terminal.cut_edge                                            # "불" is cut in half at the left
+
+
+def test_BOX_10_cut_note_reaches_the_person(make):
+    from capture_tool.core.table_capture import CapturedTable
+    c = make()
+    t = CapturedTable([["a", "b"], ["c", "d"]], (0, 0, 10, 10), cut_edge=True)
+    c._finish_table(t, send=False)
+    assert "잘린 글자" in c.messages[-1]
+    t2 = CapturedTable([["a", "b"], ["c", "d"]], (0, 0, 10, 10))
+    c._finish_table(t2, send=False)
+    assert "잘린 글자" not in c.messages[-1]

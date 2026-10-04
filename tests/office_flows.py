@@ -301,6 +301,50 @@ def ppt_box_table(src_png: str, out_png: str, keep: str = "1") -> None:
     print("RESULT done")
 
 
+def word_table(src_png: str, keep: str = "1") -> None:
+    """표 → Word on a table drawn with line characters, in a separate Word instance (never the
+    person's open documents), closed without saving."""
+    import cv2
+    import pythoncom
+    import win32com.client
+    from capture_tool.core.box_table import find_box_table
+    from capture_tool.core.clipboard_payload import table_payload
+    from capture_tool.core.ocr import OcrEngine
+    from capture_tool.core.table_capture import plain_style
+    from capture_tool.platform import win_clipboard
+    from capture_tool.platform.word import insert_clipboard
+    t = find_box_table(cv2.imread(src_png), OcrEngine().read_words, 96)
+    style = t.style if keep == "1" else plain_style(t.style.font_size)
+    win_clipboard.set_formats(table_payload(t.rows, style=style), retries=10, delay=0.05)
+    made = {}
+
+    def factory():
+        made["app"] = app = win32com.client.DispatchEx("Word.Application")   # our own instance
+        made["doc"] = app.Documents.Add()
+        return app
+
+    def hook(app):
+        try:
+            doc = made["doc"]
+            print("TABLES", doc.Tables.Count)
+            tb = doc.Tables(1)
+            print("SIZE", (tb.Rows.Count, tb.Columns.Count))
+            for r in range(1, tb.Rows.Count + 1):
+                print("ROW", [tb.Cell(r, c).Range.Text.rstrip("\r\x07") for c in range(1, tb.Columns.Count + 1)])
+            print("FILL", hex(tb.Cell(2, 2).Shading.BackgroundPatternColor))
+            ps = doc.PageSetup
+            print("PAGE", round(ps.PageWidth - ps.LeftMargin - ps.RightMargin), "COLS", [round(tb.Cell(1, c).Width) for c in range(1, tb.Columns.Count + 1)], "SEL", app.Selection.Start, tb.Range.End, "FONT", tb.Cell(2, 1).Range.Font.Size, "TEXT1", repr(tb.Cell(2,1).Range.Text))
+            doc.Close(False)
+        finally:
+            app.Quit(False)
+    try:
+        insert_clipboard(app_factory=lambda: (__import__("pythoncom").CoInitialize(), factory())[1], timeout=90,
+                         hook=hook, col_widths=t.col_widths)
+    finally:
+        win_clipboard.set_formats({"CF_UNICODETEXT": ""}, retries=10, delay=0.05)
+    print("RESULT done")
+
+
 def ppt_table() -> None:
     from capture_tool.core.text_table import find_text_table
     from capture_tool.platform.powerpoint import TableItem, send

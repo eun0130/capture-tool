@@ -23,6 +23,8 @@ MIN_RULES = 3            # header + one row at least
 GLYPH_GAP = 4            # px; pieces of one letter / one Latin word are closer than this
 LATIN_BREAK = 7          # px; a wider gap after a Latin word is a space
 BARS = "│|┃ㅣ"
+PUNCT = "\"'“”‘’()[]{}·,.:;!?"
+PUNCT_BREAK = 0.75       # next to punctuation: a space only for a gap this share of a syllable pitch
 
 
 def _hex(bgr) -> str:
@@ -109,10 +111,13 @@ def _join(words: list, step: float) -> str:
         pt, pb = words[k - 1]
         if _is_hangul(pt.strip()[-1:]) and _is_hangul(t[:1]):
             space = _pitch(pt, pb, t, b) > HANGUL_BREAK * step
+        elif (pt.strip()[-1:] in PUNCT or t[:1] in PUNCT) and step < 1e8 and (
+                _is_hangul(pt.strip().rstrip(PUNCT)[-1:]) or _is_hangul(t.lstrip(PUNCT)[:1])):
+            space = (b[0] - pb[2]) > PUNCT_BREAK * step          # quotes cling to a word
         else:
             space = (b[0] - pb[2]) > LATIN_BREAK
         out += (" " if space else "") + t
-    return _strip_bars(out)
+    return _strip_bars(out.replace("“", '"').replace("”", '"'))
 
 
 def _strip_bars(text: str) -> str:
@@ -206,10 +211,27 @@ def find_box_table(img, read_words, dpi: float = 96) -> CapturedTable | None:
         fg_mask[max(0, y - 2):y + 3] = False
     fg_mask[_bar_pixels(ink, int(round(BAR_RUN * dpi / 96)))] = False
     text_c = np.median(img[fg_mask], axis=0) if fg_mask.any() else (0, 0, 0)
-    rule_px = img[rules].reshape(-1, 3)
-    on = np.abs(rule_px.mean(axis=1) - bgv) > INK
-    rule_c = np.median(rule_px[on], axis=0) if on.any() else text_c
-    size = max(8.0, min(20.0, round(float(np.median(heights)) * 0.72 * 72 / dpi * 2) / 2)) if heights else 11.0   # word boxes ~1.4x the font
+    # a 1 px bright rule with its blended neighbours looks mid-grey: use what the eye sees
+    band = np.stack([img[max(0, y - 1):y + 2].mean(axis=0) for y in rules])
+    on = np.abs(band.mean(axis=2) - bgv) > INK / 2
+    rule_c = np.median(band[on], axis=0) if on.any() else text_c
+    size = max(8.0, min(20.0, round(float(np.median(heights)) * 0.62 * 72 / dpi * 2) / 2)) if heights else 11.0   # word boxes ~1.6x the font
     style = TableStyle(_hex(bg), _hex(bg), _hex(text_c), _hex(text_c), _hex(rule_c), True, size)
     widths = [(b - a) * 72 / dpi for a, b in zip(cols, cols[1:])]
-    return CapturedTable(rows, (cols[0], rules[0], cols[-1] - cols[0], rules[-1] - rules[0]), [], style, widths)
+    t = CapturedTable(rows, (cols[0], rules[0], cols[-1] - cols[0], rules[-1] - rules[0]), [], style, widths)
+    t.cut_edge = _cut_at_edge(ink, rules)
+    return t
+
+
+def _cut_at_edge(ink: np.ndarray, rules: list[int]) -> bool:
+    """Letters touching the capture's left or right edge between the rules: cut by the capture."""
+    rows = np.ones(ink.shape[0], bool)
+    rows[:rules[0] + 3] = False
+    rows[rules[-1] - 2:] = False
+    for y in rules:
+        rows[max(0, y - 3):y + 4] = False
+    for x in (0, ink.shape[1] - 1):
+        col = ink[rows, x]
+        if col.sum() >= 3 and col.mean() < 0.6:                 # some ink, not a full-height border
+            return True
+    return False

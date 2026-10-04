@@ -102,3 +102,18 @@ def test_OFFICE_07_terminal_table_into_powerpoint(tmp_path):
     assert "SIZE (6, 3)" in out, out
     for want in ("'D1'", "'D2'", "'D3'", "'D4'", "'D5'", "낡음", "승격 안 됨", "아무 모름"):
         assert want in out, (want, out)
+
+
+word = pytest.mark.skipif(not _installed("WINWORD.EXE"), reason="Word not installed")
+
+
+@word
+def test_OFFICE_08_terminal_table_into_word():
+    """User (v0.8.1): 표 → Word like Excel / PowerPoint. A separate Word instance, closed unsaved."""
+    src = str(ROOT / "tests" / "data" / "terminal_box_table.png")
+    out = flow("word_table", src, "1", ok=lambda o: "RESULT done" in o)
+    assert "TABLES 1" in out and "SIZE (6, 3)" in out, out
+    cols = eval(out.split("COLS ")[1].split(" SEL")[0])
+    page = int(out.split("PAGE ")[1].split(" ")[0])
+    assert sum(cols) <= page + 2 and min(cols) >= 39, out
+    assert "아무 모름" in out and "commit ↔ Jira" in out

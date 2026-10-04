@@ -214,3 +214,29 @@ def test_EN_03_english_in_common_fonts(font, size):
         else:
             miss += 1
     assert miss <= len(EN_SAMPLE.split()) / 25, (miss, got)
+
+
+def test_ARROW_01_shapes():
+    from capture_tool.core.ocr import arrow_kind
+    both = np.array([[0, 0, 0, 1, 1, 0, 0, 0, 1, 0, 0, 0, 0], [0, 0, 1, 1, 1, 0, 0, 1, 1, 1, 0, 0, 0],
+                     [0, 1, 1, 1, 0, 0, 0, 0, 1, 1, 1, 0, 0], [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1],
+                     [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1], [0, 1, 1, 1, 0, 0, 0, 0, 1, 1, 1, 0, 0],
+                     [0, 0, 1, 1, 1, 0, 0, 1, 1, 1, 0, 0, 0], [0, 0, 0, 1, 1, 0, 0, 0, 1, 0, 0, 0, 0]], bool)
+    assert arrow_kind(both) == "↔"
+    right = np.zeros((7, 20), bool)
+    right[3, :] = True
+    for k in range(4):
+        right[3 - k:4 + k, 16 - k] = True
+    assert arrow_kind(right) == "→" and arrow_kind(right[:, ::-1]) == "←"
+    dash = np.zeros((3, 12), bool)
+    dash[1] = True
+    assert arrow_kind(dash) is None and arrow_kind(np.ones((10, 10), bool)) is None
+
+
+def test_ARROW_02_dropped_arrow_comes_back():
+    """User (v0.8.0): "commit ↔ Jira" in a terminal table came out "commit Jira"."""
+    import cv2
+    from capture_tool.core.ocr import OcrEngine
+    img = cv2.imread(str(DATA / "terminal_box_table.png"))[176:216, 85:330]
+    words = [t for t, _ in OcrEngine().read_words(img)]
+    assert any("↔" in t for t in words), words

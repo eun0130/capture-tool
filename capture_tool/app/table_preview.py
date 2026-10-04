@@ -65,7 +65,7 @@ class TablePreview(QDialog):
         v.addLayout(edit)
         bottom = QHBoxLayout()
         bottom.addStretch(1)
-        for label, act in [("취소", None), ("PPT 표로 넣기", "ppt"), ("표로 복사 (Enter)", "copy")]:
+        for label, act in [("취소", None), ("워드에 넣기", "word"), ("PPT 표로 넣기", "ppt"), ("표로 복사 (Enter)", "copy")]:
             b = QPushButton(label)
             if act == "copy":
                 b.setDefault(True)
@@ -135,7 +135,7 @@ class TablePreview(QDialog):
 
 
 def ask_table_preview(lines: list[str], parent=None):
-    """-> (action "copy" | "ppt", title, rows) or None when cancelled."""
+    """-> (action "copy" | "ppt" | "word", title, rows) or None when cancelled."""
     d = TablePreview(lines, parent)
     if d.exec() != QDialog.Accepted or d.action is None:
         return None

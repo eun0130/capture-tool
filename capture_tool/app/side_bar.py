@@ -241,7 +241,7 @@ class SideBar(QWidget):
         s = settings or self.settings_provider()
         target = getattr(s, "table_target", "excel")
         style = getattr(s, "table_style", "keep")
-        for options, current, key in (((("excel", "엑셀로 복사"), ("ppt", "PPT에 넣기")), target, "target"),
+        for options, current, key in (((("excel", "엑셀로 복사"), ("ppt", "PPT에 넣기"), ("word", "워드에 넣기")), target, "target"),
                                       ((("keep", "캡처 모양 그대로"), ("plain", "흰 바탕 · 검은 글씨")), style, "style")):
             group = QActionGroup(m)
             for val, label in options:

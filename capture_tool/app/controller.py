@@ -109,6 +109,7 @@ class Controller(QObject):
     _kakao_done = Signal(object)
     _search_done = Signal(object)
     _ppt_done = Signal(object)
+    _word_done = Signal(object)
     _text_ready = Signal(object)
     _ai_done = Signal(object)
     _ai_partial = Signal(str)
@@ -140,6 +141,7 @@ class Controller(QObject):
         self._pending = None
         self._job_done.connect(self._on_job_done)
         self._ppt_done.connect(self._on_ppt_done)
+        self._word_done.connect(lambda r: self.notify(r if isinstance(r, str) else f"Word에 넣지 못했습니다: {r} 클립보드에 있으니 Ctrl+V 하세요."))
         self._text_ready.connect(self._on_text_ready)
         self._ai_done.connect(self._ai_finished)
         self._ai_partial.connect(lambda t: self.ai_window and self.ai_window.set_partial(t))
@@ -192,6 +194,8 @@ class Controller(QObject):
         from ..platform.powerpoint import PowerPointSender
         from ..platform.security_software import detect_drm
         self.powerpoint = PowerPointSender()
+        from ..platform.word import WordSender
+        self.word = WordSender()
         from ..platform.kakao import KakaoSender
         self.kakao = KakaoSender()
         self._kakao_done.connect(self.notify)
@@ -1106,9 +1110,15 @@ class Controller(QObject):
         except OcrUnavailable:
             b = None
         filled = lambda tb: sum(1 for r in tb.rows for c in r if c)       # noqa: E731
-        if b is not None and (t is None or filled(b) >= filled(t)):
-            return b
-        return t
+        best = b if b is not None and (t is None or filled(b) >= filled(t)) else t
+        self._table_cut = bool(getattr(best, "cut_edge", False))
+        return best
+
+    CUT_NOTE = " ※ 캡처 가장자리에 잘린 글자가 있어 일부가 틀릴 수 있습니다. 조금 넓게 캡처하면 정확합니다."
+
+    def _cut_note(self) -> str:
+        note, self._table_cut = (self.CUT_NOTE if getattr(self, "_table_cut", False) else ""), False
+        return note
 
     def _table_rows(self, raw, lines, dpi: float = 96):
         """Rows of a table laid out on screen without ruling lines (dark pages, web tables)."""
@@ -1575,7 +1585,7 @@ class Controller(QObject):
     def _table_option(self, name: str) -> None:
         _, key, val = (name.split(":") + ["", ""])[:3]
         s = self.settings
-        if key == "target" and val in ("excel", "ppt"):
+        if key == "target" and val in ("excel", "ppt", "word"):
             s.table_target = val
         elif key == "style" and val in ("keep", "plain"):
             s.table_style = val
@@ -1609,12 +1619,34 @@ class Controller(QObject):
             return
         size = f"표 {len(rows)}행×{len(rows[0])}열"
         look = "캡처 모양 그대로" if keep else "흰 바탕·검은 글씨"
+        cut = self._cut_note()
         if target == "ppt":
             item = TableItem(rows, style=style, title=title, col_widths=col_widths if keep else [],
                              font_size=size_pt if captured is not None else 14)
+            if cut:
+                self._ppt_note = (cut, cut)
             self._send_item_to_ppt(item, f"{size}({look})를")
+        elif target == "word":
+            self._send_to_word(f"{size}({look})를", cut, col_widths if keep else None)
         else:
-            self.notify(f"{size}({look})로 복사했습니다. 엑셀에서 Ctrl+V 하세요. (▾ 메뉴에서 PPT·모양 변경)")
+            self.notify(f"{size}({look})로 복사했습니다. 엑셀에서 Ctrl+V 하세요. (▾ 메뉴에서 PPT·워드·모양 변경)" + cut)
+
+    def _send_to_word(self, what: str, note: str = "", col_widths=None) -> None:
+        """The clipboard already holds the table: Word pastes it at the cursor (in the background)."""
+        from ..platform.word import WordBusy, WordUnavailable
+
+        def work():
+            try:
+                self.word.insert(col_widths or None)
+                return f"{what} Word 문서(커서 위치)에 넣었습니다." + note
+            except (WordUnavailable, WordBusy) as e:
+                return f"{e} 클립보드에 복사해 두었으니 Word에서 Ctrl+V 하세요." + note
+
+        if self.sync:
+            self.notify(work())
+        else:
+            self.notify("Word에 넣는 중…")
+            QThreadPool.globalInstance().start(_Job(work, self._word_done))
 
     def _finish_table(self, t, send: bool) -> None:
         keep = self.settings.keep_style
@@ -1624,12 +1656,16 @@ class Controller(QObject):
             return
         size = f"표 {len(t.rows)}행×{len(t.rows[0])}열"
         look = "색·글꼴 그대로" if keep else "기본 모양으로"
+        cut = self.CUT_NOTE if getattr(t, "cut_edge", False) else ""
+        self._table_cut = False
         if send:
             item = TableItem(t.rows, style=style, title=title, col_widths=t.col_widths if keep else [],
                              font_size=t.style.font_size if (keep and t.style) else 14)
+            if cut:
+                self._ppt_note = (cut, cut)
             self._send_item_to_ppt(item, f"{size}({look})를")
         else:
-            self.notify(f"{size}({look})로 복사했습니다. PowerPoint·Excel에서 Ctrl+V 하면 칸마다 고칠 수 있는 표가 됩니다.")
+            self.notify(f"{size}({look})로 복사했습니다. PowerPoint·Excel에서 Ctrl+V 하면 칸마다 고칠 수 있는 표가 됩니다." + cut)
 
     def _finish_text(self, lines, err, qr, pos, grid=None) -> None:
         """Direct "text" hotkey: copy everything at once and show the text window."""

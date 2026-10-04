@@ -39,6 +39,7 @@ class CapturedTable:
     outside: list[tuple[str, tuple]] = field(default_factory=list)   # titles / notes around it
     style: TableStyle | None = None
     col_widths: list[float] = field(default_factory=list)            # points
+    cut_edge: bool = False                      # letters cut by the capture's edge: some may be misread
 
 
 def plain_style(font_size: float = 11) -> TableStyle:

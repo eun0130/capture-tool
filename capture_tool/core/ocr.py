@@ -183,6 +183,80 @@ def fix_mixed_line(original: str, latin: str) -> str | None:
     return "".join((next(it) if (k % 2 == 0 and p) else p) for k, p in enumerate(parts_o))
 
 
+def arrow_kind(mask: np.ndarray) -> str | None:
+    """A drawn arrow from its pixels: a thin shaft with a head (much taller than the shaft) at
+    both ends, the right one or the left one."""
+    h, w = mask.shape
+    if h < 3 or w < 6 or w < 1.2 * h:
+        return None
+    counts = mask.sum(axis=0)
+    shaft = int(counts[w // 3:max(w // 3 + 1, 2 * w // 3)].min())
+    side = max(1, int(w * 0.4))
+    lh = counts[:side].max() >= 2 * shaft + 2
+    rh = counts[w - side:].max() >= 2 * shaft + 2
+    if lh and rh:
+        return "↔"
+    if rh:
+        return "→"
+    if lh:
+        return "←"
+    return None
+
+
+ARROWS = ("→", "←", "↔", "->", "<-", "<->")
+
+
+def _arrow_in(img: np.ndarray, box) -> str | None:
+    """The arrow drawn inside box (its biggest piece of ink), by shape."""
+    x0, y0, x1, y1 = (int(round(v)) for v in box)
+    crop = img[max(0, y0 - 1):y1 + 1, max(0, x0 - 1):x1 + 1]
+    if crop.size == 0:
+        return None
+    g = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY).astype(int) if crop.ndim == 3 else crop.astype(int)
+    ink = (np.abs(g - int(np.median(g))) > 60).astype(np.uint8)
+    n, lab, st, _ = cv2.connectedComponentsWithStats(ink, connectivity=8)
+    if n < 2:
+        return None
+    k = 1 + int(np.argmax(st[1:, cv2.CC_STAT_AREA]))
+    x, y, w, h = (int(v) for v in st[k][:4])
+    return arrow_kind(lab[y:y + h, x:x + w] == k)
+
+
+def fill_dropped_arrows(img: np.ndarray, text: str, box) -> str:
+    """The readers don't know "↔" and sometimes drop arrows: one drawn in the word's box but
+    missing from its text is put back - in a double space it left, or at the word's start/end."""
+    x0, y0, x1, y1 = (int(round(v)) for v in box)
+    crop = img[max(0, y0):y1, max(0, x0):x1]
+    if crop.size == 0:
+        return text
+    g = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY).astype(int) if crop.ndim == 3 else crop.astype(int)
+    ink = (np.abs(g - int(np.median(g))) > 60).astype(np.uint8)
+    n, lab, st, _ = cv2.connectedComponentsWithStats(ink, connectivity=8)
+    th = ink.shape[0]
+    arrows, others = [], []
+    for k in range(1, n):
+        x, y, w, h, a = (int(v) for v in st[k])
+        kind = arrow_kind(lab[y:y + h, x:x + w] == k) if (h <= 0.6 * th and w >= 1.2 * h and w >= 6) else None
+        (arrows if kind else others).append((x, x + w, kind))
+    missing = len(arrows) - sum(text.count(a) for a in ("→", "←", "↔"))
+    if missing <= 0 or not others:
+        return text
+    gaps = list(re.finditer(r"  +", text))
+    if len(gaps) == len(arrows):
+        parts = re.split(r"  +", text)
+        out = parts[0]
+        for (_, _, kind), part in zip(sorted(arrows), parts[1:]):
+            out += f" {kind} " + part
+        return out
+    first, last = min(o[0] for o in others), max(o[1] for o in others)
+    for x, x2, kind in sorted(arrows):
+        if x2 <= first and not text.lstrip().startswith(kind):
+            text = f"{kind} {text.lstrip()}"
+        elif x >= last and not text.rstrip().endswith(kind):
+            text = f"{text.rstrip()} {kind}"
+    return text
+
+
 _ODD_LATIN_BY_HANGUL = re.compile(r"[\u00c0-\u024f][\uac00-\ud7a3]|[\uac00-\ud7a3][\u00c0-\u024f]")
 _PRONOUN_L = re.compile(r"(?<![\w.,'’])l(?=(['’](m|ll|ve|d))?(?![\w'’]))")
 _CAPS_WORD = re.compile(r"(?<![\w'’-])[A-Za-z]{2,6}(?![\w'’-])")     # "Al-Rashid" is a name
@@ -443,7 +517,10 @@ class OcrEngine:
                     crop = work[max(0, int(y0 + m) - pad):int(y1 + m) + pad, max(0, int(x0 + m) - pad):int(x1 + m) + pad]
                     line = self._second_reading(crop, OcrLine(text, (pad, pad, int(x1 - x0), int(y1 - y0)),
                                                               float(ws) if ws is not None else float(line_score)))
-                    text = line.text
+                    text = line.text if "  " not in text or "  " in line.text else text
+                    text = fill_dropped_arrows(work, text, (x0 + m, y0 + m, x1 + m, y1 + m))
+                if text.strip() in ARROWS:                        # the reader only knows some arrows
+                    text = _arrow_in(work, (x0 + m, y0 + m, x1 + m, y1 + m)) or text
                 out.append((fix_capital_i(text), (float(x0), float(y0), float(x1), float(y1))))
         return out
 
