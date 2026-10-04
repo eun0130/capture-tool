@@ -235,6 +235,8 @@ def _caption(rows, a, b, gap):
 
 PHRASE_GAP = 1.2         # words further apart than this many letter heights belong to different cells
 GUTTER_SHARE = 0.12      # x where at most this share of the busiest column's words reach: a gap between columns
+START_SHARE = 0.3        # a column's left edge: this share of the lines start a word there ...
+CROSS_SHARE = 0.05       # ... and (almost) no line has a word running across it
 
 
 def _gutters(words, h: float) -> list[tuple[float, float]]:
@@ -259,6 +261,34 @@ def _gutters(words, h: float) -> list[tuple[float, float]]:
     return out
 
 
+def _aligned_starts(words, h: float) -> list[float]:
+    """x where many lines start a word and no word runs across: the left edge of a column, even
+    when the column before it is filled right up to it (no visible gutter)."""
+    lines: list[list] = []
+    for w in sorted(words, key=lambda w: (w[1][1] + w[1][3]) / 2):
+        cy = (w[1][1] + w[1][3]) / 2
+        if lines and abs(cy - lines[-1][0]) <= 0.5 * h:
+            lines[-1][1].append(w)
+        else:
+            lines.append([cy, [w]])
+    n = len(lines)
+    lefts = sorted(w[1][0] for w in words)
+    clusters: list[list[float]] = []
+    for x in lefts:
+        if clusters and x - clusters[-1][-1] <= 0.4 * h:
+            clusters[-1].append(x)
+        else:
+            clusters.append([x])
+    out = []
+    for c in clusters:
+        x = float(median(c))
+        starting = sum(1 for _, ws in lines if any(abs(w[1][0] - x) <= 0.4 * h for w in ws))
+        crossing = sum(1 for _, ws in lines if any(w[1][0] < x - 0.4 * h and w[1][2] > x + 0.4 * h for w in ws))
+        if starting >= max(3, START_SHARE * n) and crossing <= CROSS_SHARE * n and x > lefts[0] + h:
+            out.append(x)
+    return out
+
+
 def phrases_from_words(words) -> list[tuple[str, tuple, float]]:
     """Reader words [(text, (x0, y0, x1, y1))] -> table pieces (text, (x, y, w, h), score): the
     words of one line kept together, split where the gap is far wider than a space or a column
@@ -269,12 +299,14 @@ def phrases_from_words(words) -> list[tuple[str, tuple, float]]:
     hs = [b[3] - b[1] for _, b in words if b[3] > b[1]]
     h = float(median(hs)) if hs else 16.0
     gutters = _gutters(words, h)
+    starts = _aligned_starts(words, h)
     out = []
     for t, (x0, y0, x1, y1) in sorted(words, key=lambda w: ((w[1][1] + w[1][3]) / 2, w[1][0])):
         if out:
             pt, (px, py, pw, ph), _ = out[-1]
             same_line = abs((py + ph / 2) - (y0 + y1) / 2) <= 0.5 * h
-            crosses = any(px + pw <= ga + 1 and x0 >= gb - 1 for ga, gb in gutters)
+            crosses = (any(px + pw <= ga + 1 and x0 >= gb - 1 for ga, gb in gutters)
+                       or any(px < x - 0.4 * h <= x0 for x in starts))     # the next column begins
             if same_line and not crosses and 0 <= x0 - (px + pw) <= PHRASE_GAP * h:
                 nx0, ny0 = min(px, x0), min(py, y0)
                 out[-1] = (pt + " " + t, (nx0, ny0, max(px + pw, x1) - nx0, max(py + ph, y1) - ny0), 1.0)
