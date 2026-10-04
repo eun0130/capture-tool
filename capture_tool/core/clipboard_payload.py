@@ -73,10 +73,19 @@ def text_payload(text: str, table: list[list[str]] | None = None) -> dict:
     return {UNICODE: plain, HTML: cf_html(frag)}
 
 
-def table_payload(rows: list[list[str]], style=None, title: str | None = None) -> dict:
+def table_payload(rows: list[list[str]], style=None, title: str | None = None, runs: dict | None = None) -> dict:
     """A table for Excel / PowerPoint / Word: TSV + HTML; with `style` (TableStyle) the HTML
     carries the captured fills, text colours, bold header and borders."""
-    def td(v: str, r: int) -> str:
+    runs = runs if style is not None else None         # plain look: black text throughout
+
+    def inner(v: str, r: int, c: int) -> str:
+        parts = (runs or {}).get((r, c))
+        if not parts or "".join(t for t, _ in parts).strip() != v.strip():
+            return html.escape(v)
+        return "".join(f"<span style='color:{col}'>{html.escape(t)}</span>" if col else html.escape(t)
+                       for t, col in parts)
+
+    def td(v: str, r: int, c: int = 0) -> str:
         if style is None:
             return _td(v)
         fill = style.header_fill if r == 0 else style.body_fill
@@ -88,8 +97,8 @@ def table_payload(rows: list[list[str]], style=None, title: str | None = None) -
             css += f";border:1px solid {style.border}"
         if _keep_as_text(v):
             css += ';mso-number-format:"\\@"'
-        return f"<td style='{css}'>" + html.escape(v) + "</td>"
-    body = "".join("<tr>" + "".join(td(c, r) for c in row) + "</tr>" for r, row in enumerate(rows))
+        return f"<td style='{css}'>" + inner(v, r, c) + "</td>"
+    body = "".join("<tr>" + "".join(td(v, r, c) for c, v in enumerate(row)) + "</tr>" for r, row in enumerate(rows))
     frag = (f"<p>{html.escape(title)}</p>" if title else "") + \
         ("<table style='border-collapse:collapse'>" if style else "<table>") + body + "</table>"
     plain = "\r\n".join("\t".join(_cell(c) for c in row) for row in rows)

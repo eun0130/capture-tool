@@ -61,6 +61,9 @@ def _columns(ink: np.ndarray, rules: list[int]) -> list[int]:
 
 BAR_RUN = 32             # px at 96 dpi; a vertical stroke this tall is a bar (a letter + a junction stub is less)
 HANGUL_BREAK = 1.25      # syllable pitch this many times the usual pitch = a space between words
+NORMAL_GAP = 0.5         # ordinary (not spread-out) text: a gap this share of the letter height is a space
+SENTENCE_GAP = 0.25      # after "." / "·": a gap this wide ends the sentence (list dots like "엑셀·PPT" are tight)
+SPREAD_SHARE = 0.6       # Korean read mostly syllable by syllable = a terminal font spreading letters apart
 
 
 def _bar_pixels(ink: np.ndarray, min_run: int) -> np.ndarray:
@@ -69,6 +72,27 @@ def _bar_pixels(ink: np.ndarray, min_run: int) -> np.ndarray:
     k = cv2.getStructuringElement(cv2.MORPH_RECT, (1, max(3, min_run)))
     bars = cv2.morphologyEx(ink.astype(np.uint8), cv2.MORPH_OPEN, k)
     return cv2.dilate(bars, np.ones((1, 3), np.uint8)) > 0
+
+
+def _arrows_between(clean: np.ndarray, line: list, bgv: int) -> list:
+    """Arrows the reader skipped entirely: drawn in the gap between two words of a line."""
+    from .ocr import arrow_kind
+    out = []
+    for (t, b, *_), (t2, b2, *_) in zip(line, line[1:]):
+        x0, x1 = int(b[2]) + 1, int(b2[0]) - 1
+        y0, y1 = int(min(b[1], b2[1])), int(max(b[3], b2[3]))
+        if x1 - x0 < 6:
+            continue
+        crop = clean[max(0, y0):y1, x0:x1]
+        g = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY).astype(int)
+        ink = (np.abs(g - bgv) > 60).astype(np.uint8)
+        n, lab, st, _ = cv2.connectedComponentsWithStats(ink, connectivity=8)
+        for k in range(1, n):
+            x, y, w, h, _a = (int(v) for v in st[k])
+            kind = arrow_kind(lab[y:y + h, x:x + w] == k) if w >= 6 and h <= 0.7 * ink.shape[0] else None
+            if kind:
+                out.append((kind, (x0 + x, y0 + y, x0 + x + w, y0 + y + h)))
+    return out
 
 
 def _visual_lines(words: list) -> list[list]:
@@ -94,30 +118,70 @@ def _pitch(pt: str, pb, t: str, b) -> float:
         return b[0] - pb[0]
     if len(t.strip()) == 1:
         return b[2] - pb[2]
-    return (b[0] - pb[2]) * 2.0                     # rare: two long words; gap doubled ~ a pitch
+    return 1e9            # two whole words: the reader split them at a space (normal, not spread-out text)
 
 
-def _join(words: list, step: float) -> str:
-    """Words of one cell, left to right. Between Korean syllables a space only where the gap is
-    clearly wider than between the letters of a word (step: the usual gap)."""
-    out = ""
-    for k, (t, b) in enumerate(words):
-        t = t.strip()
+def _join_runs(words: list, step: float, spread: bool = True, char_h: float = 20.0) -> list[list]:
+    """Words of one cell, left to right -> [[text, colour], ...] (the text starting with its space).
+    Between Korean syllables a space only where the gap is clearly wider than between the letters
+    of a word (step: the usual gap)."""
+    pieces: list[list] = []
+    prev = None
+    for w in words:
+        t, b = w[0].strip(), w[1]
+        color = w[2] if len(w) > 2 else None
         if not t or all(ch in BARS for ch in t):
             continue
-        if not out:
-            out = t
+        if prev is None:
+            pieces.append([t, color])
+            prev = (t, b)
             continue
-        pt, pb = words[k - 1]
-        if _is_hangul(pt.strip()[-1:]) and _is_hangul(t[:1]):
+        pt, pb = prev
+        gap = b[0] - pb[2]
+        last = pieces[-1][0]
+        if last[-1:] in ("·", ".") and gap > SENTENCE_GAP * char_h and t[:1] not in PUNCT:
+            pieces[-1][0] = last[:-1] + "."                      # a full stop (read as "·") and a space
+            space = True
+        elif not spread:                                         # ordinary text: a space is a visible gap
+            space = gap > NORMAL_GAP * char_h
+        elif _is_hangul(pt[-1:]) and _is_hangul(t[:1]):
             space = _pitch(pt, pb, t, b) > HANGUL_BREAK * step
-        elif (pt.strip()[-1:] in PUNCT or t[:1] in PUNCT) and step < 1e8 and (
-                _is_hangul(pt.strip().rstrip(PUNCT)[-1:]) or _is_hangul(t.lstrip(PUNCT)[:1])):
-            space = (b[0] - pb[2]) > PUNCT_BREAK * step          # quotes cling to a word
+        elif len(pt) > 1 and len(t) > 1:
+            space = True                                         # two whole words
+        elif (pt[-1:] in PUNCT or t[:1] in PUNCT) and step < 1e8 and (
+                _is_hangul(pt.rstrip(PUNCT)[-1:]) or _is_hangul(t.lstrip(PUNCT)[:1])):
+            space = gap > PUNCT_BREAK * step                     # quotes cling to a word
         else:
-            space = (b[0] - pb[2]) > LATIN_BREAK
-        out += (" " if space else "") + t
-    return _strip_bars(out.replace("“", '"').replace("”", '"'))
+            space = gap > LATIN_BREAK
+        pieces.append([(" " if space else "") + t, color])
+        prev = (t, b)
+    for p in pieces:
+        p[0] = p[0].replace("“", '"').replace("”", '"')
+        p[0] = re.sub(r"(?<=[\uac00-\ud7a3A-Za-z0-9)\]\"'])·(?=\s|$)", ".", p[0])   # a full stop read as "·"
+    # merge neighbours of the same colour
+    out: list[list] = []
+    for p in pieces:
+        if out and out[-1][1] == p[1]:
+            out[-1][0] += p[0]
+        else:
+            out.append(list(p))
+    if out:
+        out[0][0] = out[0][0].lstrip()
+    return out
+
+
+def _join(words: list, step: float, spread: bool = True, char_h: float = 20.0) -> str:
+    return _strip_bars("".join(p[0] for p in _join_runs(words, step, spread, char_h)))
+
+
+def _word_color(img: np.ndarray, gray: np.ndarray, bgv: int, box):
+    x0, y0, x1, y1 = (int(round(v)) for v in box)
+    x0, y0 = max(0, x0), max(0, y0)
+    d = np.abs(gray[y0:y1, x0:x1] - bgv)
+    if (d > INK).sum() < 4:
+        return None
+    m = d >= np.percentile(d[d > INK], 70)                        # the letters' cores, not their blended edges
+    return tuple(int(v) for v in np.median(img[y0:y1, x0:x1][m], axis=0))
 
 
 def _strip_bars(text: str) -> str:
@@ -140,7 +204,7 @@ def find_box_table(img, read_words, dpi: float = 96) -> CapturedTable | None:
     if len(rules) < MIN_RULES:
         return None
     cols = _columns(ink, rules)
-    if len(cols) < 3 or len(cols) > 16:
+    if len(cols) < 2 or len(cols) > 16:            # one column is a table too (the rest cut off)
         return None
     same = gray == bgv
     bg = tuple(int(v) for v in np.median(img[same], axis=0))
@@ -149,7 +213,7 @@ def find_box_table(img, read_words, dpi: float = 96) -> CapturedTable | None:
     clean[_bar_pixels(ink, int(round(BAR_RUN * dpi / 96)))] = bg      # the │ bars never reach the reader
     for y in rules:
         clean[max(0, y - 3):y + 4] = bg                                  # nor the ─ rules
-    words = read_words(clean)                                           # one pass over the whole table
+    words = [(t, b, _word_color(img, gray, bgv, b)) for t, b in read_words(clean)]   # one pass, whole table
     bands = []
     steps = []
     for top, bot in zip(rules, rules[1:]):
@@ -157,24 +221,30 @@ def find_box_table(img, read_words, dpi: float = 96) -> CapturedTable | None:
         if y1 - y0 < 8:
             continue
         mine = [w for w in words if y0 <= (w[1][1] + w[1][3]) / 2 < y1]
-        lines = _visual_lines(mine)
+        lines = [sorted(ln + _arrows_between(clean, ln, bgv), key=lambda w: w[1][0]) for ln in _visual_lines(mine)]
         for ln in lines:
-            for (t, b), (t2, b2) in zip(ln, ln[1:]):
+            for (t, b, *_), (t2, b2, *_) in zip(ln, ln[1:]):
                 if _is_hangul(t.strip()[-1:]) and _is_hangul(t2.strip()[:1]):
-                    steps.append(_pitch(t, b, t2, b2))
+                    p = _pitch(t, b, t2, b2)
+                    if p < 1e8:
+                        steps.append(p)
         bands.append((y0, y1, lines))
     if not bands:
         return None
     step = float(np.percentile(steps, 25)) if steps else 1e9
+    hangul = [w[0].strip() for w in words if _is_hangul(w[0].strip()[:1])]
+    spread = bool(hangul) and sum(1 for t in hangul if len(t) == 1) >= SPREAD_SHARE * len(hangul)
+    char_h = float(np.median([w[1][3] - w[1][1] for w in words])) * 0.6 if words else 20.0
     bar_px = _bar_pixels(ink, int(round(BAR_RUN * dpi / 96)))
     rows: list[list[str]] = []
+    run_cells: dict = {}
     heights = []
     for y0, y1, lines in bands:
         cells: list[list] = [[] for _ in range(ncol)]
         last = None
         for ln in lines:
-            ly0 = int(min(b[1] for _, b in ln))
-            ly1 = int(max(b[3] for _, b in ln))
+            ly0 = int(min(b[1] for _, b, *_ in ln))
+            ly1 = int(max(b[3] for _, b, *_ in ln))
             heights.append(ly1 - ly0)
             left = bar_px[max(0, ly0 - 2):ly1 + 2, max(0, cols[0] - 2):cols[0] + 3].any(axis=1).mean() >= 0.6
             if not left and last is not None:              # wrapped by the terminal: back to its cell
@@ -193,16 +263,24 @@ def find_box_table(img, read_words, dpi: float = 96) -> CapturedTable | None:
                     got = c
             last = got if got is not None else last
         row = []
-        for ws in cells:
+        for c, ws in enumerate(cells):
             parts, cur = [], []
             for w in ws + [("\n", None)]:
                 if w[0] == "\n":
                     if cur:
-                        parts.append(_join(cur, step))
+                        parts.append(_join_runs(cur, step, spread, char_h))
                     cur = []
                 else:
                     cur.append(w)
-            row.append(" ".join(p for p in parts if p))
+            flat_runs: list[list] = []
+            for k, part in enumerate(p for p in parts if p):
+                for j_, (txt, col) in enumerate(part):
+                    if k and not j_:
+                        txt = " " + txt
+                    flat_runs.append([txt, col])
+            text = _strip_bars("".join(t for t, _ in flat_runs))
+            row.append(text)
+            run_cells[(len(rows), c)] = flat_runs
         rows.append(row)
     if len(rows) < 2 or sum(1 for r in rows for c in r if c) < len(rows):
         return None
@@ -210,7 +288,11 @@ def find_box_table(img, read_words, dpi: float = 96) -> CapturedTable | None:
     for y in rules:
         fg_mask[max(0, y - 2):y + 3] = False
     fg_mask[_bar_pixels(ink, int(round(BAR_RUN * dpi / 96)))] = False
-    text_c = np.median(img[fg_mask], axis=0) if fg_mask.any() else (0, 0, 0)
+    cols_seen = [w[2] for w in words if w[2] is not None]
+    if cols_seen:                                             # the words' own colour (edges blend into the page)
+        text_c = tuple(int(v) for v in np.median(np.array(cols_seen), axis=0))
+    else:
+        text_c = np.median(img[fg_mask], axis=0) if fg_mask.any() else (0, 0, 0)
     # a 1 px bright rule with its blended neighbours looks mid-grey: use what the eye sees
     band = np.stack([img[max(0, y - 1):y + 2].mean(axis=0) for y in rules])
     on = np.abs(band.mean(axis=2) - bgv) > INK / 2
@@ -220,7 +302,29 @@ def find_box_table(img, read_words, dpi: float = 96) -> CapturedTable | None:
     widths = [(b - a) * 72 / dpi for a, b in zip(cols, cols[1:])]
     t = CapturedTable(rows, (cols[0], rules[0], cols[-1] - cols[0], rules[-1] - rules[0]), [], style, widths)
     t.cut_edge = _cut_at_edge(ink, rules)
+    t.runs = _colour_runs(run_cells, text_c)
     return t
+
+
+def _colour_runs(run_cells: dict, main) -> dict:
+    """Cells with words in another colour than the table's text: [(text, "#RRGGBB" | None)]."""
+    out = {}
+    for key, runs in run_cells.items():
+        far = [r for r in runs if r[1] is not None and max(abs(a - b) for a, b in zip(r[1], main)) > 60]
+        if not far:
+            continue
+        merged: list[list] = []                                  # [text, colour or None, raw colour]
+        for txt, col in runs:
+            own = col is not None and max(abs(a - b) for a, b in zip(col, main)) > 60
+            if merged and ((not own and merged[-1][1] is None) or (own and merged[-1][2] is not None and
+                                                                  max(abs(a - b) for a, b in zip(col, merged[-1][2])) <= 40)):
+                merged[-1][0] += txt                             # same colour (or near enough)
+            else:
+                merged.append([txt, _hex(col) if own else None, col if own else None])
+        if merged:
+            merged[0][0] = merged[0][0].lstrip()
+            out[key] = [(t_, c_) for t_, c_, _raw in merged]
+    return out
 
 
 def _cut_at_edge(ink: np.ndarray, rules: list[int]) -> bool:

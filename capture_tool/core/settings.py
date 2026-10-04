@@ -21,7 +21,7 @@ TOOLS = {"select", "rect", "ellipse", "line", "arrow", "curve", "pen", "text", "
 class Settings:
     hotkeys: dict = field(default_factory=lambda: dict(DEFAULT_HOTKEYS))
     save_dir: str = ""
-    filename_pattern: str = "Capture_{date}_{time}"
+    filename_pattern: str = "{yymmdd}_{time}"      # e.g. 261004_143012.png
     image_format: str = "png"
     jpg_quality: int = 90
     auto_save: bool = False
@@ -57,6 +57,9 @@ class Settings:
     share_consent: bool = False          # agreed that internet links upload the picture
     tip_count: int = 0                   # "click a title bar = whole window" tip shown this often
     version: int = SETTINGS_VERSION
+
+
+OLD_PATTERN = "Capture_{date}_{time}"     # default before v0.8.2
 
 
 def _is_int(v) -> bool:
@@ -98,6 +101,8 @@ def _apply(s: Settings, data: dict, warnings: list[str]) -> None:
             elif name in ("save_dir", "filename_pattern", "last_save_dir"):
                 if not isinstance(v, str):
                     raise TypeError
+                if name == "filename_pattern" and v == OLD_PATTERN:
+                    v = Settings().filename_pattern          # the old default: now starts with the date
                 setattr(s, name, v)
             elif name == "image_format":
                 if v not in ("png", "jpg"):

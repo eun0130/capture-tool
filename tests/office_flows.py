@@ -289,15 +289,18 @@ def ppt_box_table(src_png: str, out_png: str, keep: str = "1") -> None:
             out["size"] = (tb.Rows.Count, tb.Columns.Count)
             out["cells"] = [[tb.Cell(r, c).Shape.TextFrame.TextRange.Text for c in range(1, tb.Columns.Count + 1)]
                             for r in range(1, tb.Rows.Count + 1)]
+            out["first_colors"] = [hex(tb.Cell(r, 1).Shape.TextFrame.TextRange.Characters(1, 1).Font.Color.RGB)
+                                   for r in range(1, tb.Rows.Count + 1)]
             slide.Export(out_png, "PNG", 1920, 1080)
         finally:
             pres.Saved = True
             pres.Close()
-    send(TableItem(t.rows, style=style, col_widths=t.col_widths if style else [],
+    send(TableItem(t.rows, style=style, col_widths=t.col_widths if style else [], runs=t.runs if style else {},
                    font_size=t.style.font_size if style else 14), new_presentation=True, hook=hook, timeout=120)
     print("SIZE", out.get("size"))
     for r in out.get("cells", []):
         print("ROW", r)
+    print("COLORS", out.get("first_colors"))
     print("RESULT done")
 
 
@@ -341,6 +344,34 @@ def word_table(src_png: str, keep: str = "1") -> None:
         insert_clipboard(app_factory=lambda: (__import__("pythoncom").CoInitialize(), factory())[1], timeout=90,
                          hook=hook, col_widths=t.col_widths)
     finally:
+        win_clipboard.set_formats({"CF_UNICODETEXT": ""}, retries=10, delay=0.05)
+    print("RESULT done")
+
+
+def excel_box_table(src_png: str) -> None:
+    """표 → Excel on a line-drawn table with a coloured word: a separate Excel, closed unsaved."""
+    import cv2
+    import pythoncom
+    import win32com.client
+    from capture_tool.core.box_table import find_box_table
+    from capture_tool.core.clipboard_payload import table_payload
+    from capture_tool.core.ocr import OcrEngine
+    from capture_tool.platform import win_clipboard
+    t = find_box_table(cv2.imread(src_png), OcrEngine().read_words, 96)
+    win_clipboard.set_formats(table_payload(t.rows, style=t.style, runs=t.runs), retries=10, delay=0.05)
+    pythoncom.CoInitialize()
+    xl = win32com.client.DispatchEx("Excel.Application")
+    try:
+        wb = xl.Workbooks.Add()
+        ws = wb.Worksheets(1)
+        ws.Range("A1").Select()
+        ws.Paste()
+        for r in range(1, len(t.rows) + 1):
+            cell = ws.Cells(r, 1)
+            print("CELL", r, cell.Text, hex(int(cell.GetCharacters(1, 1).Font.Color)), hex(int(cell.Font.Color or 0)))
+        wb.Close(False)
+    finally:
+        xl.Quit()
         win_clipboard.set_formats({"CF_UNICODETEXT": ""}, retries=10, delay=0.05)
     print("RESULT done")
 

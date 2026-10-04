@@ -68,3 +68,36 @@ def test_TNOTE_04_powerpoint_failed_still_complete_on_clipboard(make):
     c._finish_shapes(det, [], img, None, send=True, dpi=96)
     assert "칸 상자" in c.messages[-1], c.messages[-1]
     assert _shapes_on_clipboard(c) >= 10
+
+
+def test_TNOTE_05_table_done_closes_the_capture(make):
+    """User (v0.8.1): after choosing 'PPT에 넣기' nothing seemed to happen - the capture stayed over
+    PowerPoint until Esc. Once the table is delivered the capture closes, like the PPT picture."""
+    from tests.test_app import drag
+    from capture_tool.core.table_capture import CapturedTable
+    for target in ("ppt", "excel", "word"):
+        c = make()
+        c.powerpoint = FakePpt()
+        c.word = type("W", (), {"insert": lambda self, col_widths=None: 1, "busy": False})()
+        c.settings.table_quick, c.settings.table_target = True, target
+        c.start_capture()
+        drag(c.overlays[0], (100, 100), (400, 300))
+        t = CapturedTable([["a", "b"], ["c", "d"]], (0, 0, 10, 10))
+        c._pending = ([], None, None, 96)
+        c._on_job_done(("table", [object()], None, None, t))
+        assert c.overlays == [], target
+        assert c.messages and ("표 2행×2열" in c.messages[-1] or "넣는 중" in c.messages[-1]), c.messages[-1:]
+
+
+def test_TNOTE_06_shapes_ppt_on_a_table_capture_sends_a_table(make):
+    """User (v0.8.1): 도형PPT on a line-drawn table gave scattered white text boxes (hard to see)."""
+    import cv2 as _cv2
+    from pathlib import Path as _P
+    from capture_tool.core.ocr import OcrEngine
+    from capture_tool.platform.powerpoint import TableItem
+    c = make(ocr=OcrEngine())
+    c.powerpoint = FakePpt()
+    img = _cv2.imread(str(_P(__file__).parent / "data" / "terminal_small_table.png"))
+    c._run_recognition_on(img, "ppt", 96)
+    item = c.powerpoint.items[-1]
+    assert isinstance(item, TableItem) and len(item.rows) == 5, item

@@ -21,6 +21,7 @@ class SaveDirError(OSError):
 def render(pattern: str, now: datetime) -> str:
     tokens = {
         "date": now.strftime("%Y%m%d"),
+        "yymmdd": now.strftime("%y%m%d"),
         "time": now.strftime("%H%M%S"),
         "datetime": now.strftime("%Y%m%d_%H%M%S"),
     }

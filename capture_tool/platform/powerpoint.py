@@ -70,6 +70,7 @@ class TableItem:
     style: object = None       # TableStyle: captured fills / text colours / border; None = PowerPoint's own
     title: str | None = None   # a line above the table (the capture's caption)
     col_widths: list = field(default_factory=list)   # points, as on screen
+    runs: dict = field(default_factory=dict)          # (row, col) -> [(text, "#RRGGBB" | None)] words in another colour
 
 
 # every cell is one COM round trip; a slide can't show more anyway
@@ -238,6 +239,16 @@ def _insert(app, item, new_presentation: bool, hook, new_slide: bool = False) ->
                     cell.Shape.Fill.Solid()
                     cell.Shape.Fill.ForeColor.RGB = _bgr_int(st.header_fill if head else st.body_fill)
                     rng.Font.Color.RGB = _bgr_int(st.header_text if head else st.body_text)
+                    parts = item.runs.get((r - 1, c - 1))
+                    if parts and "".join(t for t, _ in parts).strip() == text.strip():
+                        pos = 1
+                        for t, col in parts:
+                            if col and t:
+                                try:
+                                    rng.Characters(pos, len(t)).Font.Color.RGB = _bgr_int(col)
+                                except Exception:  # noqa: BLE001 - fakes / odd text: the cell keeps one colour
+                                    pass
+                            pos += len(t)
                     rng.Font.Bold = bool(head and st.header_bold)
                     if st.border:
                         for side in (1, 2, 3, 4):              # top, left, bottom, right

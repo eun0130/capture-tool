@@ -184,16 +184,20 @@ def fix_mixed_line(original: str, latin: str) -> str | None:
 
 
 def arrow_kind(mask: np.ndarray) -> str | None:
-    """A drawn arrow from its pixels: a thin shaft with a head (much taller than the shaft) at
-    both ends, the right one or the left one."""
+    """A drawn arrow from its pixels: one row of ink runs (nearly) its whole width - the shaft -
+    and there is a head (clearly taller than the shaft) at both ends, the right one or the left one."""
     h, w = mask.shape
-    if h < 3 or w < 6 or w < 1.2 * h:
+    if h < 3 or w < 6 or w < 1.1 * h:
         return None
+    mid = mask.sum(axis=1)[max(0, h // 4):max(1, h - h // 4)]
+    if mid.size == 0 or mid.max() < 0.85 * w:
+        return None                                   # no shaft through the middle: a letter, not an arrow
     counts = mask.sum(axis=0)
     shaft = int(counts[w // 3:max(w // 3 + 1, 2 * w // 3)].min())
     side = max(1, int(w * 0.4))
-    lh = counts[:side].max() >= 2 * shaft + 2
-    rh = counts[w - side:].max() >= 2 * shaft + 2
+    need = max(shaft + 2, 1.6 * shaft)
+    lh = counts[:side].max() >= need
+    rh = counts[w - side:].max() >= need
     if lh and rh:
         return "↔"
     if rh:
@@ -226,6 +230,7 @@ def fill_dropped_arrows(img: np.ndarray, text: str, box) -> str:
     """The readers don't know "↔" and sometimes drop arrows: one drawn in the word's box but
     missing from its text is put back - in a double space it left, or at the word's start/end."""
     x0, y0, x1, y1 = (int(round(v)) for v in box)
+    x0, x1 = x0 - 3, x1 + 3                               # the box can clip an arrow's tip
     crop = img[max(0, y0):y1, max(0, x0):x1]
     if crop.size == 0:
         return text
@@ -236,9 +241,16 @@ def fill_dropped_arrows(img: np.ndarray, text: str, box) -> str:
     arrows, others = [], []
     for k in range(1, n):
         x, y, w, h, a = (int(v) for v in st[k])
-        kind = arrow_kind(lab[y:y + h, x:x + w] == k) if (h <= 0.6 * th and w >= 1.2 * h and w >= 6) else None
+        kind = arrow_kind(lab[y:y + h, x:x + w] == k) if (h <= 0.6 * th and w >= 1.1 * h and w >= 6) else None
         (arrows if kind else others).append((x, x + w, kind))
-    missing = len(arrows) - sum(text.count(a) for a in ("→", "←", "↔"))
+    have = [m for m in re.finditer("[→←↔]", text)]
+    if have and len(have) == len(arrows):                 # the reader knows → and ←, not ↔:
+        out = list(text)                                  # only a double-headed shape changes it
+        for m, (_, _, kind) in zip(have, sorted(arrows)):
+            if kind == "↔":
+                out[m.start()] = kind
+        return "".join(out)
+    missing = len(arrows) - len(have)
     if missing <= 0 or not others:
         return text
     gaps = list(re.finditer(r"  +", text))
@@ -519,8 +531,12 @@ class OcrEngine:
                                                               float(ws) if ws is not None else float(line_score)))
                     text = line.text if "  " not in text or "  " in line.text else text
                     text = fill_dropped_arrows(work, text, (x0 + m, y0 + m, x1 + m, y1 + m))
-                if text.strip() in ARROWS:                        # the reader only knows some arrows
-                    text = _arrow_in(work, (x0 + m, y0 + m, x1 + m, y1 + m)) or text
+                if re.search("[←→↔«»⇔⇆]", text) and text.strip() not in ARROWS:     # "«를", "←가": check the shape
+                    text = fill_dropped_arrows(work, text.replace("«", "←").replace("»", "→"),
+                                               (x0 + m, y0 + m, x1 + m, y1 + m))
+                if text.strip() in ARROWS:                        # the reader only knows → and ←
+                    if _arrow_in(work, (x0 + m - 4, y0 + m, x1 + m + 4, y1 + m)) == "↔":
+                        text = "↔"
                 out.append((fix_capital_i(text), (float(x0), float(y0), float(x1), float(y1))))
         return out
 

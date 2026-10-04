@@ -9,7 +9,7 @@ from statistics import median
 import numpy as np
 
 from .shapes import _dist, _hex, _to_bgr, text_style
-from .table import _bands, _rows, detect_grid, grid_from_cells, to_grid
+from .table import _band_of, _bands, _rows, detect_grid, grid_from_cells, to_grid
 
 MIN_ROWS = 3
 MIN_COLS = 2
@@ -40,6 +40,7 @@ class CapturedTable:
     style: TableStyle | None = None
     col_widths: list[float] = field(default_factory=list)            # points
     cut_edge: bool = False                      # letters cut by the capture's edge: some may be misread
+    runs: dict = field(default_factory=dict)    # (row, col) -> [(text, "#RRGGBB" | None)]: words in another colour
 
 
 def plain_style(font_size: float = 11) -> TableStyle:
@@ -93,6 +94,83 @@ def _best_block(rows):
     return None if best is None else best[1:]
 
 
+WRAP_TIGHT = 0.6        # a line ending this close (in letters) to its column's edge was cut mid-word
+WORD_END = set("고를을는은에의와과며면도")   # Korean particles / endings: the word is complete there
+
+
+def join_wrapped(parts, limit: float, char_w: float) -> str:
+    """Lines of one cell (text, right edge) back into one text. A line that runs to the column's
+    edge was cut by the wrapping, maybe in the middle of a word ("클라이언트" | "처럼"): joined
+    without a space. A line that stops earlier ended at a space."""
+    out = ""
+    prev_right = None
+    for text, right in parts:
+        text = text.strip()
+        if not text:
+            continue
+        if not out:
+            out = text
+        else:
+            cut = limit - prev_right < WRAP_TIGHT * char_w
+            glue = cut and out[-1].isalnum() and text[0].isalnum() and out[-1] not in WORD_END
+            out += ("" if glue else " ") + text
+        prev_right = right
+    return out
+
+
+def _separators(img, y1: int, y2: int, x1: int, x2: int) -> list[int]:
+    """y of the lines drawn across the table between its rows (also lines broken at the column
+    gaps), found against the table's own background."""
+    H, W = img.shape[:2]
+    y1, y2, x1, x2 = max(0, y1), min(H, y2), max(0, x1), min(W, x2)
+    if y2 - y1 < 4 or x2 - x1 < 20:
+        return []
+    area = img[y1:y2, x1:x2].astype(np.int16)
+    bg = np.median(area.reshape(-1, 3), axis=0)
+    diff = np.abs(area - bg).max(axis=2) > 20
+    rows = diff.mean(axis=1) >= 0.6
+    out, start = [], None
+    for i, v in enumerate(list(rows) + [False]):
+        if v and start is None:
+            start = i
+        elif not v and start is not None:
+            if i - start <= 6:                             # a line, not a filled band
+                out.append(y1 + (start + i - 1) // 2)
+            start = None
+    return out
+
+
+def _merge_by_separators(img, rows, grid, x1, x2, h):
+    """Rows between two separator lines are one table row: their lines are rejoined per cell."""
+    centers = [median(i[2] + i[4] / 2 for i in r) for r in rows]
+    top = int(min(i[2] for r in rows for i in r) - h)
+    bottom = int(max(i[2] + i[4] for r in rows for i in r) + h)
+    seps = [y for y in _separators(img, top, bottom, x1, x2) if centers[0] < y < centers[-1]]
+    if not seps:
+        return rows, grid
+    band = [sum(1 for y in seps if y < c) for c in centers]
+    if len(set(band)) == len(rows) or len(set(band)) < 2:
+        return rows, grid
+    bands = _bands(rows)
+    if len(bands) != len(grid[0]):
+        return rows, grid
+    limits = [b[1] for b in bands]
+    new_rows, new_grid = [], []
+    for k in sorted(set(band)):
+        members = [r for r, bk in zip(rows, band) if bk == k]
+        cells = []
+        for c in range(len(bands)):
+            parts = []
+            for r in members:
+                its = sorted((i for i in r if _band_of(i, bands) == c), key=lambda i: i[1])
+                if its:
+                    parts.append((" ".join(i[0] for i in its), max(i[1] + i[3] for i in its)))
+            cells.append(join_wrapped(parts, limits[c], h))
+        new_rows.append([i for r in members for i in r])
+        new_grid.append(cells)
+    return new_rows, new_grid
+
+
 def _caption(rows, a, b, gap):
     """Single-line rows right above / below the table (its title or note)."""
     out = []
@@ -142,6 +220,9 @@ def find_table(img, lines, shapes, dpi: float = 96) -> CapturedTable | None:
         return None
     a, b, grid = block
     rows = all_rows[a:b]
+    x_lo = min(i[1] for r in rows for i in r)
+    x_hi = max(i[1] + i[3] for r in rows for i in r)
+    rows, grid = _merge_by_separators(img, rows, grid, int(x_lo - h), int(x_hi + h), h)
     centers = [median(i[2] + i[4] / 2 for i in r) for r in rows]
     gap = float(np.mean(np.diff(centers)))
     outside = _caption(all_rows, a, b, gap)

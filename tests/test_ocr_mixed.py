@@ -228,6 +228,13 @@ def test_ARROW_01_shapes():
     for k in range(4):
         right[3 - k:4 + k, 16 - k] = True
     assert arrow_kind(right) == "→" and arrow_kind(right[:, ::-1]) == "←"
+    tiny = np.array([[0, 0, 1, 1, 1, 1, 0, 0], [0, 1, 1, 0, 0, 1, 1, 0], [1, 1, 1, 1, 1, 1, 1, 1],
+                     [1, 1, 1, 1, 1, 1, 1, 1], [0, 1, 1, 0, 0, 1, 1, 0], [0, 0, 1, 0, 1, 1, 0, 0]], bool)
+    assert arrow_kind(tiny) == "↔"                                   # a bold 8x6 arrow (v0.8.1 answer table)
+    ring = np.zeros((8, 11), bool)
+    ring[0, 2:9] = ring[-1, 2:9] = True
+    ring[:, 0:2] = ring[:, 9:11] = True
+    assert arrow_kind(ring) is None                                  # an "o"-like shape: no shaft
     dash = np.zeros((3, 12), bool)
     dash[1] = True
     assert arrow_kind(dash) is None and arrow_kind(np.ones((10, 10), bool)) is None

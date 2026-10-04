@@ -215,7 +215,7 @@ def test_APP_10_save_to_folder_with_unique_names(make, tmp_path):
         drag(ov, (10, 10), (110, 60))
         QTest.keyClick(ov, Qt.Key_S, Qt.ControlModifier)
     files = sorted(p.name for p in (tmp_path / "shots").iterdir())
-    assert len(files) == 2 and files[0].startswith("Capture_") and files[1].endswith("_1.png")
+    assert len(files) == 2 and files[0][:6].isdigit() and files[1].endswith("_1.png")
     img = cv2.imread(str(tmp_path / "shots" / files[0]))
     assert img.shape[:2] == (50, 100)
 
@@ -560,7 +560,7 @@ def test_APP_32_save_icon_asks_location(make, tmp_path):
     c.overlays[0].side_bar.trigger("save_as")
     assert target.exists() and cv2.imdecode(np.fromfile(str(target), np.uint8), 1).shape[:2] == (50, 100)
     assert c.settings.last_save_dir == str(target.parent)
-    assert asked[0].name.startswith("Capture_")
+    assert asked[0].name[:6].isdigit() and "Capture" not in asked[0].name
     assert c.overlays == []
 
 

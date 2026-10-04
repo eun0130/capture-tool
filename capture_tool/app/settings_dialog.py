@@ -101,7 +101,7 @@ class SettingsDialog(QDialog):
         row.addWidget(browse)
         sform.addRow("저장 폴더", row)
         self.pattern = QLineEdit(settings.filename_pattern)
-        self.pattern.setToolTip("{date} 날짜, {time} 시간, {datetime} 날짜_시간")
+        self.pattern.setToolTip("{yymmdd} 날짜(261004), {date} 날짜(20261004), {time} 시간, {datetime} 날짜_시간")
         sform.addRow("파일 이름 규칙", self.pattern)
         self.fmt = QComboBox()
         self.fmt.addItems(["png", "jpg"])

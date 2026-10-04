@@ -114,3 +114,44 @@ def test_BOX_10_cut_note_reaches_the_person(make):
     t2 = CapturedTable([["a", "b"], ["c", "d"]], (0, 0, 10, 10))
     c._finish_table(t2, send=False)
     assert "잘린 글자" not in c.messages[-1]
+
+
+@pytest.fixture(scope="module")
+def small(ocr):
+    return find_box_table(cv2.imread(str(DATA / "terminal_small_table.png")), ocr.read_words, 96)
+
+
+@pytest.fixture(scope="module")
+def answer(ocr):
+    return find_box_table(cv2.imread(str(DATA / "terminal_answer_table.png")), ocr.read_words, 96)
+
+
+def test_BOX_11_one_column_left_of_the_cut(small):
+    """User (v0.8.1): the capture held only the first column (the rest cut off): nothing happened."""
+    assert small is not None and len(small.rows) == 5 and all(len(r) == 1 for r in small.rows), small and small.rows
+    assert small.rows[0] == ["오차"] and "↔ Jira" in small.rows[1][0] and small.rows[3] == ["테두리가 원본보다 밝음"]
+
+
+def test_BOX_12_ordinary_spacing_and_full_stops(answer):
+    """User (v0.8.1): pasted into Excel, the words ran together ("인식모델은<를모릅니다")."""
+    assert answer is not None and len(answer.rows) == 5 and all(len(r) == 2 for r in answer.rows)
+    body = " ".join(r[1] for r in answer.rows)
+    for want in ("해결. 인식 모델은 ↔를 모릅니다.", "글자 상자 안에서 화살표 모양", "1픽셀 흰 선이라 화면에서는",
+                 "이제 그 보이는 회색으로 넣습니다.", "따옴표·문장부호 옆은"):
+        assert want in body, (want, body)
+    assert "↔ Jira" in answer.rows[1][0]
+
+
+def test_BOX_13_words_in_another_colour_keep_it(small):
+    """User (v0.8.1): '"관행 "으로만' in lavender came out in the table's single text colour."""
+    from capture_tool.core.clipboard_payload import HTML, table_payload
+    runs = small.runs
+    key = next(k for k, v in runs.items() if any("관행" in t for t, _ in v))
+    coloured = [(t, c) for t, c in runs[key] if c]
+    assert coloured and "관행" in coloured[0][0]
+    r, g, b = (int(coloured[0][1][i:i + 2], 16) for i in (1, 3, 5))
+    assert b > r + 40 and b > g + 30                                   # bluish-violet
+    html = table_payload(small.rows, style=small.style, runs=runs)[HTML].decode("utf-8", "ignore")
+    assert f"color:{coloured[0][1]}" in html
+    plain = table_payload(small.rows, style=None, runs=runs)[HTML].decode("utf-8", "ignore")
+    assert "<span" not in plain                                        # plain look: one colour

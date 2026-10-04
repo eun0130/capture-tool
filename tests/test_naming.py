@@ -96,3 +96,18 @@ def test_NAME_LONG_01_full_path_stays_under_the_windows_limit(tmp_path):
     p.write_bytes(b"x")                                     # really writable
     q = unique_path(deep, "회의록_" * 80, ".png")             # the next one gets _1, still short
     assert q != p and len(str(q)) <= 256
+
+
+def test_NAME_10_default_starts_with_the_date():
+    """User (v0.8.1): drop "Capture_", start with YYMMDD."""
+    from capture_tool.core.settings import Settings
+    assert render(Settings().filename_pattern, NOW) == "260926_143012"
+
+
+def test_NAME_11_old_default_moves_to_the_new_one_custom_kept():
+    from capture_tool.core import settings as S
+    s, warn = S.Settings(), []
+    S._apply(s, {"filename_pattern": "Capture_{date}_{time}"}, warn)
+    assert s.filename_pattern == "{yymmdd}_{time}"
+    S._apply(s, {"filename_pattern": "회의_{date}"}, warn)
+    assert s.filename_pattern == "회의_{date}"

@@ -117,3 +117,19 @@ def test_OFFICE_08_terminal_table_into_word():
     page = int(out.split("PAGE ")[1].split(" ")[0])
     assert sum(cols) <= page + 2 and min(cols) >= 39, out
     assert "아무 모름" in out and "commit ↔ Jira" in out
+
+
+@pytest.mark.skipif(not _installed("EXCEL.EXE"), reason="Excel not installed")
+def test_OFFICE_09_coloured_words_keep_their_colour_in_excel():
+    """User (v0.8.1): '"관행 "으로만' (lavender) came out in the table's one text colour."""
+    src = str(ROOT / "tests" / "data" / "terminal_small_table.png")
+    out = flow("excel_box_table", src, ok=lambda o: "RESULT done" in o)
+    row = [l for l in out.splitlines() if l.startswith("CELL 3")][0]
+    assert "관행" in row and "0xf9b9b1" in row, out
+
+
+@ppt
+def test_OFFICE_10_coloured_words_keep_their_colour_in_powerpoint(tmp_path):
+    src = str(ROOT / "tests" / "data" / "terminal_small_table.png")
+    out = flow("ppt_box_table", src, str(tmp_path / "s.png"), "1", ok=lambda o: "RESULT done" in o)
+    assert "SIZE (5, 1)" in out and "'0xf9b9b1'" in out.split("COLORS")[1], out

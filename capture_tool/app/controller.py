@@ -1555,7 +1555,7 @@ class Controller(QObject):
             elif extra is not None:
                 if self._table_choice():
                     self._deliver_table(extra.rows, "\n".join(t for t, _ in extra.outside) or None, extra.style,
-                                        extra.col_widths)
+                                        extra.col_widths, runs=getattr(extra, "runs", None))
             elif not lines:
                 self.notify("캡처에서 글자를 찾지 못해 표를 만들 수 없습니다. (그림은 클립보드에 있습니다)")
             else:
@@ -1608,21 +1608,22 @@ class Controller(QObject):
         self._persist()
         return True
 
-    def _deliver_table(self, rows, title, captured, col_widths, target: str | None = None) -> None:
+    def _deliver_table(self, rows, title, captured, col_widths, target: str | None = None, runs=None) -> None:
         """Rows -> Excel (clipboard) or PowerPoint, in the capture's look or white/black."""
         from ..core.table_capture import plain_style
         target = target or self.settings.table_target
         keep = self.settings.table_style == "keep"
         size_pt = captured.font_size if captured is not None else 11
         style = captured if keep else plain_style(size_pt)
-        if not self._set_clipboard(table_payload(rows, style=style, title=title)):
+        if not self._set_clipboard(table_payload(rows, style=style, title=title, runs=runs if keep else None)):
             return
         size = f"표 {len(rows)}행×{len(rows[0])}열"
         look = "캡처 모양 그대로" if keep else "흰 바탕·검은 글씨"
         cut = self._cut_note()
+        self._done_with_capture()                    # the destination comes to the front, not behind the capture
         if target == "ppt":
             item = TableItem(rows, style=style, title=title, col_widths=col_widths if keep else [],
-                             font_size=size_pt if captured is not None else 14)
+                             font_size=size_pt if captured is not None else 14, runs=(runs or {}) if keep else {})
             if cut:
                 self._ppt_note = (cut, cut)
             self._send_item_to_ppt(item, f"{size}({look})를")
@@ -1630,6 +1631,13 @@ class Controller(QObject):
             self._send_to_word(f"{size}({look})를", cut, col_widths if keep else None)
         else:
             self.notify(f"{size}({look})로 복사했습니다. 엑셀에서 Ctrl+V 하세요. (▾ 메뉴에서 PPT·워드·모양 변경)" + cut)
+
+    def _done_with_capture(self) -> None:
+        """The table has gone where it should: close the capture (as the PPT picture does), so
+        PowerPoint / Word / Excel is in front - not hidden behind the capture until Esc."""
+        if self.overlays and self.session.state is State.EDITING:
+            self._acted = True
+            self.cancel()
 
     def _send_to_word(self, what: str, note: str = "", col_widths=None) -> None:
         """The clipboard already holds the table: Word pastes it at the cursor (in the background)."""
@@ -1652,15 +1660,16 @@ class Controller(QObject):
         keep = self.settings.keep_style
         style = t.style if keep else None
         title = "\n".join(text for text, _ in t.outside) or None
-        if not self._set_clipboard(table_payload(t.rows, style=style, title=title)):
+        if not self._set_clipboard(table_payload(t.rows, style=style, title=title, runs=t.runs if keep else None)):
             return
         size = f"표 {len(t.rows)}행×{len(t.rows[0])}열"
         look = "색·글꼴 그대로" if keep else "기본 모양으로"
         cut = self.CUT_NOTE if getattr(t, "cut_edge", False) else ""
         self._table_cut = False
+        self._done_with_capture()
         if send:
             item = TableItem(t.rows, style=style, title=title, col_widths=t.col_widths if keep else [],
-                             font_size=t.style.font_size if (keep and t.style) else 14)
+                             font_size=t.style.font_size if (keep and t.style) else 14, runs=t.runs if keep else {})
             if cut:
                 self._ppt_note = (cut, cut)
             self._send_item_to_ppt(item, f"{size}({look})를")
