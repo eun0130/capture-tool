@@ -112,13 +112,14 @@ class TrayApp:
 
     # --- ui ------------------------------------------------------------------------
     def toast(self, msg: str) -> None:
+        from .toast import toast_ms
         # on-screen message (tray balloons are often hidden by Windows); deferred so a copy
         # is never delayed by painting it
         def show():
             if self._toast is None:
                 from .toast import Toast
                 self._toast = Toast()
-            self._toast.show_message(msg)
+            self._toast.show_message(msg, toast_ms(msg))
         QTimer.singleShot(0, show)
 
     def _build_menu(self) -> None:

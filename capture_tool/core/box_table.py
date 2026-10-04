@@ -65,7 +65,7 @@ HANGUL_BREAK = 1.25      # syllable pitch this many times the usual pitch = a sp
 NORMAL_GAP = 0.5         # ordinary (not spread-out) text: a gap this share of the letter height is a space
 SENTENCE_GAP = 0.25      # after "." / "·": a gap this wide ends the sentence (list dots like "엑셀·PPT" are tight)
 SPREAD_SHARE = 0.6       # Korean read mostly syllable by syllable = a terminal font spreading letters apart
-SPACE_RATIO = 1.6        # a space: blank this many times the widest usual gap inside words (90th percentile) ...
+SPACE_RATIO = 1.3        # a space: blank this many times the widest usual gap inside words (90th percentile) ...
 SPACE_EXTRA = 3          # ... and at least this many px more
 
 
@@ -93,7 +93,7 @@ def _arrows_between(clean: np.ndarray, line: list, bgv: int) -> list:
         for k in range(1, n):
             x, y, w, h, _a = (int(v) for v in st[k])
             kind = arrow_kind(lab[y:y + h, x:x + w] == k) if w >= 6 and h <= 0.7 * ink.shape[0] else None
-            if kind:
+            if kind == "↔":                                     # the reader knows → and ←, not ↔
                 out.append((kind, (x0 + x, y0 + y, x0 + x + w, y0 + y + h)))
     return out
 
@@ -151,6 +151,50 @@ def _ink_gap(ink: np.ndarray, a, b) -> int:
     last = len(left) - int(np.argmax(left[::-1])) if left.any() else len(left)
     first = mid + (int(np.argmax(right)) if right.any() else 0)
     return first - last
+
+
+def _cell_width(ch: str) -> int:
+    return 2 if unicodedata.east_asian_width(ch) in ("W", "F") else 1
+
+
+def split_dropped_spaces(ink: np.ndarray, w, space_px: float) -> list:
+    """The reader sometimes drops a space inside what it returns as one word ("/78%" for "/ 78%").
+    A blank wider than a space inside the word's box puts it back; the split point is placed by
+    the characters' widths (Korean two units, others one) and the pieces get their own boxes."""
+    t, b = w[0].strip(), w[1]
+    if len(t) < 2 or " " in t:
+        return [w]
+    x0, y0, x1, y1 = (int(round(v)) for v in b)
+    cols = ink[max(0, y0):y1, max(0, x0):x1].any(axis=0)
+    if not cols.any():
+        return [w]
+    first, last = int(np.argmax(cols)), len(cols) - int(np.argmax(cols[::-1]))
+    cuts, start = [], None
+    for x in range(first, last):
+        if not cols[x] and start is None:
+            start = x
+        elif cols[x] and start is not None:
+            if x - start > space_px:
+                cuts.append(((start + x) / 2, start, x))
+            start = None
+    if not cuts:
+        return [w]
+    units = [_cell_width(ch) for ch in t]
+    total = float(sum(units))
+    span = max(1.0, last - first)
+    pieces, prev_i, prev_x = [], 0, x0 + first
+    for mid, a, b_ in cuts:
+        share = (mid - first) / span * total
+        acc, i = 0.0, 0
+        while i < len(t) and acc + units[i] / 2 < share:
+            acc += units[i]
+            i += 1
+        if prev_i < i < len(t):
+            pieces.append((t[prev_i:i], (prev_x, b[1], x0 + a, b[3]) + tuple(w[2:3]) if False else (prev_x, b[1], x0 + a, b[3])))
+            prev_i, prev_x = i, x0 + b_
+    pieces.append((t[prev_i:], (prev_x, b[1], b[2], b[3])))
+    extra = tuple(w[2:])
+    return [(pt, pb) + extra for pt, pb in pieces if pt]
 
 
 def _space_threshold(ink: np.ndarray, lines: list[list]) -> float | None:
@@ -291,6 +335,9 @@ def find_box_table(img, read_words, dpi: float = 96) -> CapturedTable | None:
     char_h = float(np.median([w[1][3] - w[1][1] for w in words])) * 0.6 if words else 20.0
     ink_clean = np.abs(cv2.cvtColor(clean, cv2.COLOR_BGR2GRAY).astype(int) - bgv) > INK
     space_px = None if spread else _space_threshold(ink_clean, [ln for _, _, lines in bands for ln in lines])
+    if space_px is not None:                                 # spaces the reader dropped inside its words
+        bands = [(y0, y1, [[p for w in ln for p in split_dropped_spaces(ink_clean, w, space_px)] for ln in lines])
+                 for y0, y1, lines in bands]
     gap_of = lambda a, b: _ink_gap(ink_clean, a, b)            # noqa: E731
     bar_px = _bar_pixels(ink, int(round(BAR_RUN * dpi / 96)))
     rows: list[list[str]] = []

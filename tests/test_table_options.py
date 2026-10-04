@@ -85,7 +85,7 @@ def test_TOPT_07_side_bar_menu(qt_app):
     s.table_target, s.table_style = "excel", "keep"
     menu = bar.table_menu(s)
     acts = {a.text(): a for a in menu.actions() if not a.isSeparator()}
-    assert acts["엑셀로 복사"].isChecked() and acts["캡처 모양 그대로"].isChecked()
+    assert acts["엑셀에 넣기"].isChecked() and acts["캡처 모양 그대로"].isChecked()
     acts["PPT에 넣기"].trigger()
     acts["흰 바탕 · 검은 글씨"].trigger()
     acts["미리 보고 고치기…"].trigger()

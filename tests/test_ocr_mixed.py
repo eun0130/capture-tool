@@ -226,7 +226,7 @@ def test_ARROW_01_shapes():
     right = np.zeros((7, 20), bool)
     right[3, :] = True
     for k in range(4):
-        right[3 - k:4 + k, 16 - k] = True
+        right[3 - k:4 + k, 19 - k] = True                             # the head at the end, as fonts draw it
     assert arrow_kind(right) == "→" and arrow_kind(right[:, ::-1]) == "←"
     tiny = np.array([[0, 0, 1, 1, 1, 1, 0, 0], [0, 1, 1, 0, 0, 1, 1, 0], [1, 1, 1, 1, 1, 1, 1, 1],
                      [1, 1, 1, 1, 1, 1, 1, 1], [0, 1, 1, 0, 0, 1, 1, 0], [0, 0, 1, 0, 1, 1, 0, 0]], bool)
@@ -247,3 +247,39 @@ def test_ARROW_02_dropped_arrow_comes_back():
     img = cv2.imread(str(DATA / "terminal_box_table.png"))[176:216, 85:330]
     words = [t for t, _ in OcrEngine().read_words(img)]
     assert any("↔" in t for t in words), words
+
+
+def test_ARROW_03_touching_symbols_are_not_arrows():
+    """User (v0.8.5): "Alt+~" came out "Alt~ ↔" - a touching "+~" was taken for a double arrow."""
+    import cv2
+    from PIL import Image, ImageDraw, ImageFont
+    from capture_tool.core.ocr import arrow_kind
+    fonts = [("C:/Windows/Fonts/consola.ttf", 0), ("C:/Windows/Fonts/malgun.ttf", 0), ("C:/Windows/Fonts/arial.ttf", 0),
+             ("C:/Windows/Fonts/gulim.ttc", 1)]
+    fonts = [f for f in fonts if Path(f[0]).exists()]
+    if not fonts:
+        pytest.skip("Windows fonts")
+    found = []
+    for fp, idx in fonts:
+        for size in range(9, 25):
+            f = ImageFont.truetype(fp, size, index=idx)
+            for text in ("+~", "~+", "-~", "~=", "+-", "t+~", "=>", "<>"):
+                img = Image.new("L", (size * 5, size * 3), 0)
+                ImageDraw.Draw(img).text((size, size // 2), text, font=f, fill=255)
+                for thr in (60, 100):
+                    m = (np.array(img) > thr).astype(np.uint8)
+                    n, lab, st, _ = cv2.connectedComponentsWithStats(m, connectivity=8)
+                    for k in range(1, n):
+                        x, y, w, h, _a = st[k]
+                        if w >= 6 and w >= 1.1 * h and arrow_kind(lab[y:y + h, x:x + w] == k) == "↔":
+                            found.append((fp, size, text, thr))
+    assert not found, found[:5]
+
+
+def test_CAPS_03_small_l_read_as_capital_i_or_bar():
+    """v0.8.5 check: "Alt" read "AIt", "Ctrl" read "Ctr|" / "ctrI"."""
+    from capture_tool.core.ocr import fix_capital_i
+    assert fix_capital_i("(AIt+~ 등)") == "(Alt+~ 등)"
+    assert fix_capital_i("Ctr|+V") == "Ctrl+V" and fix_capital_i("ctrI+C") == "ctrl+C"
+    for keep in ("API", "OpenAI", "It is", "MIT", "AI 매출", "x | y"):
+        assert fix_capital_i(keep) == keep, keep

@@ -96,6 +96,7 @@ class ClipboardShapes:
     origin: tuple | None = None
     dpi: float = 96
     paste: bool = True
+    panel: bool = False                               # the first pasted shape is the page's background panel
 
 
 @dataclass
@@ -273,6 +274,16 @@ def _insert(app, item, new_presentation: bool, hook, new_slide: bool = False) ->
             added += 1
             if new is None:
                 new = shp
+            elif item.paste:                                  # under what was drawn on it, ...
+                try:
+                    shp.ZOrder(1)                             # msoSendToBack
+                except Exception:  # noqa: BLE001
+                    pass
+        if item.panel and item.tables and item.paste:          # ... but over the page's panel
+            try:
+                new.Item(1).ZOrder(1)
+            except Exception:  # noqa: BLE001
+                pass
     else:
         raise TypeError(f"unknown item {item!r}")
     try:

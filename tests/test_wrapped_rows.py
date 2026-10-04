@@ -53,3 +53,17 @@ def test_WRAP_03_join_rule():
     assert join_wrapped([], 300, 16) == ""
     assert join_wrapped([("키 강제 안", 299), ("됨", 30)], 300, 16) == "키 강제 안 됨"   # "안" stands alone
     assert join_wrapped([("최종 제안", 299), ("서", 30)], 300, 16) == "최종 제안서"     # part of a word
+
+
+def test_WRAP_04_app_picks_the_complete_table(qt_app, tmp_path):
+    """v0.8.5 check: through the app the Kakao table came out 5x5 - a wrongly split column had
+    more filled cells. The app now prefers the most completely filled version."""
+    from capture_tool.app.controller import Controller
+    from capture_tool.core.settings import Settings
+    from tests.test_app import FakeClipboard, FakeScreen
+    c = Controller(screen=FakeScreen(), clipboard=FakeClipboard(), ocr=OcrEngine(), settings=Settings(),
+                   settings_path=tmp_path / "s.json", fallback_dir=tmp_path, sync=True)
+    img = cv2.imread(str(DATA / "kakao_rules_table.png"))
+    scored = [(l.text, l.box, l.score) for l in c.ocr.recognize(img)]
+    t = c._best_table(img, scored, [], 96)
+    assert (len(t.rows), len(t.rows[0])) == (5, 4), t.rows

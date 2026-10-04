@@ -9,6 +9,12 @@ from PySide6.QtGui import QCursor, QGuiApplication
 from PySide6.QtWidgets import QHBoxLayout, QLabel, QWidget
 
 SHOW_MS = 3200
+MS_PER_CHAR = 110         # longer messages (what to do next) stay long enough to read
+MAX_MS = 10000
+
+
+def toast_ms(text: str) -> int:
+    return int(min(MAX_MS, max(SHOW_MS, MS_PER_CHAR * len(text or ""))))
 
 
 class Toast(QWidget):

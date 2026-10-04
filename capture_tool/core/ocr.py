@@ -183,28 +183,53 @@ def fix_mixed_line(original: str, latin: str) -> str | None:
     return "".join((next(it) if (k % 2 == 0 and p) else p) for k, p in enumerate(parts_o))
 
 
+def _head(counts, from_left: bool, need: float) -> bool:
+    """An arrowhead at this end: from the tip the ink gets taller right away (a V / triangle) up
+    to a peak clearly taller than the shaft - not a flat bar first and then a tall stroke ("+")."""
+    c = list(counts) if from_left else list(counts[::-1])
+    w = len(c)
+    side = max(2, int(w * 0.45))
+    peak_at = max(range(side), key=lambda k: c[k])
+    if c[peak_at] < need:
+        return False
+    flat = 0
+    for k in range(peak_at):
+        if c[k] <= c[0]:
+            flat += 1
+    return flat <= max(2, int(0.18 * w))              # (a short stub of shaft past the tip is fine)
+
+
 def arrow_kind(mask: np.ndarray) -> str | None:
     """A drawn arrow from its pixels: one row of ink runs (nearly) its whole width - the shaft -
-    and there is a head (clearly taller than the shaft) at both ends, the right one or the left one."""
+    the shape is the same above and below the shaft, and there is a head (widening from its tip
+    to clearly taller than the shaft) at both ends, the right one or the left one."""
     h, w = mask.shape
     if h < 3 or w < 6 or w < 1.1 * h:
         return None
     mid = mask.sum(axis=1)[max(0, h // 4):max(1, h - h // 4)]
     if mid.size == 0 or mid.max() < 0.85 * w:
         return None                                   # no shaft through the middle: a letter, not an arrow
+    flip = mask[::-1]
+    inter, union = np.logical_and(mask, flip).sum(), np.logical_or(mask, flip).sum()
+    if union == 0 or inter / union < SYMMETRY:
+        return None                                   # not mirror-symmetric about the shaft ("~", "+~")
     counts = mask.sum(axis=0)
     shaft = int(counts[w // 3:max(w // 3 + 1, 2 * w // 3)].min())
-    side = max(1, int(w * 0.4))
     need = max(shaft + 2, 1.6 * shaft)
-    lh = counts[:side].max() >= need
-    rh = counts[w - side:].max() >= need
+    lh = _head(counts, True, need)
+    rh = _head(counts, False, need)
     if lh and rh:
-        return "↔"
+        lr = mask[:, ::-1]
+        inter, union = np.logical_and(mask, lr).sum(), np.logical_or(mask, lr).sum()
+        return "↔" if union and inter / union >= SYMMETRY else None     # "↔" is the same both ways
     if rh:
         return "→"
     if lh:
         return "←"
     return None
+
+
+SYMMETRY = 0.6           # an arrow looks the same flipped upside down (share of overlapping ink)
 
 
 ARROWS = ("→", "←", "↔", "->", "<-", "<->")
@@ -242,7 +267,7 @@ def fill_dropped_arrows(img: np.ndarray, text: str, box) -> str:
     for k in range(1, n):
         x, y, w, h, a = (int(v) for v in st[k])
         kind = arrow_kind(lab[y:y + h, x:x + w] == k) if (h <= 0.6 * th and w >= 1.1 * h and w >= 6) else None
-        (arrows if kind else others).append((x, x + w, kind))
+        (arrows if kind == "↔" else others).append((x, x + w, kind))       # the reader knows → and ←
     have = [m for m in re.finditer("[→←↔]", text)]
     if have and len(have) == len(arrows):                 # the reader knows → and ←, not ↔:
         out = list(text)                                  # only a double-headed shape changes it
@@ -270,6 +295,7 @@ def fill_dropped_arrows(img: np.ndarray, text: str, box) -> str:
 
 
 _ODD_LATIN_BY_HANGUL = re.compile(r"[\u00c0-\u024f][\uac00-\ud7a3]|[\uac00-\ud7a3][\u00c0-\u024f]")
+_SMALL_L = re.compile(r"(?<=[A-Za-z])[I|](?=[a-z])|(?<=[a-z]{2})[I|]")   # I or | against a small letter, inside a word
 _PRONOUN_L = re.compile(r"(?<![\w.,'’])l(?=(['’](m|ll|ve|d))?(?![\w'’]))")
 _CAPS_WORD = re.compile(r"(?<![\w'’-])[A-Za-z]{2,6}(?![\w'’-])")     # "Al-Rashid" is a name
 _SHORT_CAPS = {"Al": "AI", "Cl": "CI", "Ul": "UI"}      # "El" (Spanish) and the like stay
@@ -291,6 +317,7 @@ def fix_capital_i(text: str) -> str:
             return w.replace("l", "I")
         return w
     text = _CAPS_WORD.sub(repl, text)
+    text = _SMALL_L.sub("l", text)                         # "AIt" -> "Alt", "Ctr|" -> "Ctrl"
     if re.search(r"[A-Za-z]", text.replace("l", "")) and not _HANGUL.search(text):
         text = _PRONOUN_L.sub("I", text)
     return text

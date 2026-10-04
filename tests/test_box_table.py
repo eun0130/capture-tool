@@ -155,3 +155,10 @@ def test_BOX_13_words_in_another_colour_keep_it(small):
     assert f"color:{coloured[0][1]}" in html
     plain = table_payload(small.rows, style=None, runs=runs)[HTML].decode("utf-8", "ignore")
     assert "<span" not in plain                                        # plain look: one colour
+
+
+def test_BOX_14_spaces_the_reader_dropped_inside_a_word(ocr):
+    """User (v0.8.5): "95% / 78%" pasted as "95%/ 78%" - the reader returned "/78%" as one word."""
+    t = find_box_table(cv2.imread(str(DATA / "terminal_metrics_table.png")), ocr.read_words, 96)
+    assert t.rows[3][1:] == ["95% / 78%", "95% / 93%"], t.rows[3]
+    assert t.rows[1][1:] == ["24/24 / 19/24", "24/24 / 24/24"]

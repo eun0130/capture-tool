@@ -24,7 +24,7 @@ from ..core.naming import SaveDirError, render, resolve_save_dir, unique_path
 from ..core.ocr import OcrUnavailable, full_text, select_text
 from ..core.scroll_session import ScrollCapture, looks_blocked
 from ..core.session import CaptureSession, State
-from ..core.shapes import detect, recognize_layout, screen_tables, split_doubtful, to_drawing
+from ..core.shapes import detect, page_panel, recognize_layout, screen_tables, split_doubtful, to_drawing
 from ..core.table import detect_grid, grid_from_cells, table_is_plausible
 from ..core.box_table import find_box_table
 from ..core.table_capture import CapturedTable, find_table, phrases_from_words
@@ -196,6 +196,8 @@ class Controller(QObject):
         self.powerpoint = PowerPointSender()
         from ..platform.word import WordSender
         self.word = WordSender()
+        from ..platform.excel import ExcelSender
+        self.excel = ExcelSender()
         from ..platform.kakao import KakaoSender
         self.kakao = KakaoSender()
         self._kakao_done.connect(self.notify)
@@ -1105,7 +1107,8 @@ class Controller(QObject):
         read = getattr(self.ocr, "read_words", None)
         if read is None:
             return t
-        filled = lambda tb: sum(1 for r in tb.rows for c in r if c)       # noqa: E731
+        filled = lambda tb: (sum(1 for r in tb.rows for c in r if c) / max(1, len(tb.rows) * len(tb.rows[0])),
+                             sum(1 for r in tb.rows for c in r if c))     # noqa: E731 - complete first, then big
         try:
             b = find_box_table(raw, read, dpi)
             if b is None and scored:                    # columns glued by the text finder: word pieces
@@ -1508,6 +1511,8 @@ class Controller(QObject):
 
     def _run_recognition_on(self, raw, kind: str, dpi: float, final=None, user_shapes=(), pos=None) -> None:
         final = raw if final is None else final
+        if not self.sync and kind in ("table", "ppt"):
+            self.notify("표·도형을 읽는 중입니다… (1~2초)" if kind == "ppt" else "표를 읽는 중입니다… (1~2초)")
         pos = pos if pos is not None else QPoint(0, 0)
         user_shapes = list(user_shapes)
 
@@ -1532,10 +1537,9 @@ class Controller(QObject):
                 return kind, lines, err, qr, self._grid_for(raw, lines) if lines else None
             scored = [(l.text, l.box, l.score) for l in lines]
             det = detect(raw, text_boxes=split_doubtful(scored)[0])
-            if not user_shapes:                # a table on screen -> a real table, not loose text boxes
-                table = self._best_table(raw, scored, det, dpi)
-                if table is not None:
-                    return kind, lines, err, None, table
+            table = self._best_table(raw, scored, det, dpi)  # a table on screen -> a real table
+            if table is not None:                             # (the person's own drawings go on top)
+                return kind, lines, err, None, table
             # shapes and labels in their places; dark text on a saturated fill is read again
             det = recognize_layout(raw, scored, None if err is not None else
                                    (lambda crop: [(l.text, l.box) for l in self.ocr.recognize(crop)]), dpi)
@@ -1566,8 +1570,13 @@ class Controller(QObject):
                 self._table_preview(lines)
         elif kind == "text":
             self._finish_text(lines, err, qr, pos, extra)
+        elif isinstance(extra, CapturedTable) and user_shapes and kind == "ppt":
+            self._finish_table_with_drawings(extra, user_shapes, dpi, final)
         elif isinstance(extra, CapturedTable):
             self._finish_table(extra, send=kind == "ppt")
+            if user_shapes:
+                self.notify("표로 복사했습니다. 그려 넣은 표시(번호·상자 등)는 [도형PPT]로 PowerPoint에 바로 보낼 때 "
+                            "표 위에 함께 들어갑니다.")
         else:
             self._finish_shapes(extra or [], user_shapes, final, err, send=kind == "ppt", dpi=dpi)
 
@@ -1634,7 +1643,26 @@ class Controller(QObject):
         elif target == "word":
             self._send_to_word(f"{size}({look})를", cut, col_widths if keep else None)
         else:
-            self.notify(f"{size}({look})로 복사했습니다. 엑셀에서 Ctrl+V 하세요. (▾ 메뉴에서 PPT·워드·모양 변경)" + cut)
+            self._send_to_excel(f"{size}({look})", cut)
+
+    def _send_to_excel(self, what: str, note: str = "") -> None:
+        """Excel already open: the table goes to its selected cell. Otherwise it waits on the
+        clipboard (Excel is never started just for this)."""
+        from ..platform.excel import ExcelNotOpen, ExcelUnavailable
+
+        def work():
+            try:
+                where = self.excel.paste()
+                return f"{what}를 Excel의 {where} 칸에 붙였습니다. 다른 곳에도 Ctrl+V 할 수 있습니다." + note
+            except ExcelNotOpen:
+                return f"{what}로 복사했습니다. 엑셀에서 붙일 칸을 누르고 Ctrl+V 하세요. (▾ 메뉴에서 PPT·워드·모양 변경)" + note
+            except ExcelUnavailable as e:
+                return f"{e} 클립보드에 복사해 두었으니 엑셀에서 Ctrl+V 하세요." + note
+
+        if self.sync:
+            self.notify(work())
+        else:
+            QThreadPool.globalInstance().start(_Job(work, self._word_done))
 
     def _done_with_capture(self) -> None:
         """The table has gone where it should: close the capture (as the PPT picture does), so
@@ -1680,6 +1708,29 @@ class Controller(QObject):
         else:
             self.notify(f"{size}({look})로 복사했습니다. PowerPoint·Excel에서 Ctrl+V 하면 칸마다 고칠 수 있는 표가 됩니다." + cut)
 
+    def _finish_table_with_drawings(self, t, user_shapes, dpi: float, final=None) -> None:
+        """A table on screen plus the person's drawings: the table as a real PowerPoint table, the
+        drawings (numbers, boxes, highlights) as shapes on top, in the same places."""
+        from ..core.shapes import table_to_screen
+        keep = self.settings.keep_style
+        st = t.style if keep else None
+        screen_table = table_to_screen(t, dpi, keep)
+        us, uc = annotations_to_drawing(user_shapes, scale=dpi / 96)
+        self._set_clipboard(table_payload(t.rows, style=st, runs=t.runs if keep else None))
+        if not us and not uc:
+            self._send_item_to_ppt(ClipboardShapes(tables=[screen_table], dpi=dpi, paste=False),
+                                   f"표 {len(t.rows)}행×{len(t.rows[0])}열을")
+            return
+        ok, png = cv2.imencode(".png", final if final is not None else np.zeros((4, 4, 3), np.uint8))
+        full = shapes_payload(gvml_package(us, uc, dpi), svg(us, uc, dpi), png_with_dpi(png.tobytes(), dpi))
+        if not self._set_clipboard(full):
+            return
+        from ..core.drawingml import _bounds, _resolve
+        minx, miny, _, _ = _bounds(us, _resolve(us, uc))
+        self._ppt_after = lambda: self._set_clipboard(table_payload(t.rows, style=st, runs=t.runs if keep else None))
+        self._send_item_to_ppt(ClipboardShapes(tables=[screen_table], origin=(minx, miny), dpi=dpi),
+                               f"표 {len(t.rows)}행×{len(t.rows[0])}열과 그려 넣은 표시 {len(us) + len(uc)}개를")
+
     def _finish_text(self, lines, err, qr, pos, grid=None) -> None:
         """Direct "text" hotkey: copy everything at once and show the text window."""
         if err:
@@ -1701,6 +1752,9 @@ class Controller(QObject):
         us, uc = annotations_to_drawing(user_shapes, scale=dpi / 96)
         shapes, conns = to_drawing(det, keep_style=keep)            # complete: tables as cell boxes
         shapes, conns = shapes + us, conns + uc
+        panel = page_panel(final, keep) if shapes or conns else None
+        if panel is not None:                    # a dark page: its colour behind, or white text vanishes
+            shapes = [panel] + shapes
         if not shapes and not conns:
             if send:  # nothing to convert: still deliver the picture to PowerPoint
                 payload = self._image_payload(final, dpi)
@@ -1735,6 +1789,8 @@ class Controller(QObject):
         rest = [d for d in det if not any(d is u for u in used)]
         s2, c2 = to_drawing(rest, keep_style=keep)
         s2, c2 = s2 + us, c2 + uc
+        if panel is not None:
+            s2 = [panel] + s2
         self._ppt_after = lambda: self._set_clipboard(full)
         self._ppt_note = (f" 표 {n}개는 고칠 수 있는 PowerPoint 표로 넣었습니다. ※ 클립보드(Ctrl+V)로 붙이면 "
                           f"표가 칸 상자로 들어갑니다.",
@@ -1748,7 +1804,8 @@ class Controller(QObject):
             return
         from ..core.drawingml import _bounds, _resolve
         minx, miny, _, _ = _bounds(s2, _resolve(s2, c2))
-        self._send_item_to_ppt(ClipboardShapes(tables=tables, origin=(minx, miny), dpi=dpi), f"{what}를{note}")
+        self._send_item_to_ppt(ClipboardShapes(tables=tables, origin=(minx, miny), dpi=dpi, panel=panel is not None),
+                               f"{what}를{note}")
 
     # --- translate / summary -----------------------------------------------------------
     @property

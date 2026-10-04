@@ -5,7 +5,7 @@ from __future__ import annotations
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QButtonGroup, QCheckBox, QDialog, QGridLayout, QHBoxLayout, QLabel, QPushButton, QVBoxLayout
 
-TARGETS = [("excel", "엑셀로 복사", "엑셀에서 Ctrl+V · 숫자는 숫자로"), ("ppt", "PPT에 넣기", "새 슬라이드에 고칠 수 있는 표로"),
+TARGETS = [("excel", "엑셀에 넣기", "열린 엑셀의 선택한 칸에 (닫혀 있으면 Ctrl+V)"), ("ppt", "PPT에 넣기", "새 슬라이드에 고칠 수 있는 표로"),
            ("word", "워드에 넣기", "열린 문서의 커서 위치에 표로")]
 STYLES = [("keep", "캡처 모양 그대로", "칸 색·글자색·굵게까지"), ("plain", "흰 바탕 · 검은 글씨", "선만 있는 깔끔한 표 (문서용)")]
 

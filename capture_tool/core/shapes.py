@@ -1070,3 +1070,37 @@ def screen_tables(det: list[Detected]) -> tuple[list[ScreenTable], list[Detected
                                   [b - a for a, b in zip(ys, ys[1:])], cells[0].stroke, sc))
         used += cells + frame + words
     return tables, used
+
+
+PANEL_LUMA = 200         # a page darker than this gets its own background panel in PowerPoint
+
+
+def page_panel(img, keep_style: bool = True):
+    """The capture's page colour as a rectangle behind everything, when the page isn't white:
+    white text from a dark screen would otherwise vanish on a white slide."""
+    if img is None or not keep_style or img.size == 0:
+        return None
+    bg = _background(_to_bgr(img))
+    if _luma(_hex(bg)) >= PANEL_LUMA:
+        return None
+    h, w = img.shape[:2]
+    return DShape("rect", 0, 0, w, h, fill=_hex(bg), stroke=None)
+
+
+def table_to_screen(t, dpi: float, keep_style: bool = True) -> ScreenTable:
+    """A table read from the capture (CapturedTable) -> a ScreenTable placed where it was."""
+    x, y, w, h = (int(v) for v in t.box)
+    n_r, n_c = len(t.rows), len(t.rows[0])
+    widths = [v * dpi / 72 for v in t.col_widths] if len(t.col_widths) == n_c else [w / n_c] * n_c
+    k = w / max(1.0, sum(widths))
+    widths = [v * k for v in widths]
+    heights = [h / n_r] * n_r
+    st = t.style if keep_style else None
+    cells = []
+    for r, row in enumerate(t.rows):
+        for c, text in enumerate(row):
+            fill = (st.header_fill if r == 0 else st.body_fill) if st else None
+            color = (st.header_text if r == 0 else st.body_text) if st else "#000000"
+            cells.append(ScreenCell(r, c, 1, 1, text, fill, color, st.font_size if st else 11,
+                                    bool(st and r == 0 and st.header_bold), "ctr" if r == 0 else "l"))
+    return ScreenTable(x, y, w, h, n_r, n_c, widths, heights, st.border if st else "#000000", cells)

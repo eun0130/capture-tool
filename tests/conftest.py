@@ -47,3 +47,16 @@ def _no_modal_dialogs(monkeypatch, request):
         raise AssertionError(f"modal dialog opened in a test: {type(self).__name__} {self.windowTitle()!r}")
     monkeypatch.setattr(QDialog, "exec", refuse)
     monkeypatch.setattr(QMessageBox, "exec", refuse)
+
+
+@pytest.fixture(autouse=True)
+def _never_touch_the_users_office(monkeypatch, request):
+    """Tests must never paste into the person's open Excel / Word / PowerPoint: the 'running app'
+    lookups say "not open" unless a test is an explicit real-Office one (own instances)."""
+    if "real" in request.node.nodeid or "office" in request.node.nodeid:
+        return
+    from capture_tool.platform import excel
+
+    def not_open():
+        raise excel.ExcelNotOpen("Excel이 열려 있지 않습니다.")
+    monkeypatch.setattr(excel, "_running_app", not_open)

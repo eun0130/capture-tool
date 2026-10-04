@@ -101,3 +101,35 @@ def test_TNOTE_06_shapes_ppt_on_a_table_capture_sends_a_table(make):
     c._run_recognition_on(img, "ppt", 96)
     item = c.powerpoint.items[-1]
     assert isinstance(item, TableItem) and len(item.rows) == 5, item
+
+
+def test_TNOTE_07_table_with_drawings_goes_as_table_plus_marks(make):
+    """User (v0.8.5): 도형PPT on a table with numbered marks drawn on it fell apart into loose,
+    see-through text. Now: the table as a PowerPoint table, the marks as shapes on top."""
+    import cv2 as _cv2
+    from pathlib import Path as _P
+    from capture_tool.core.annotations import Shape
+    from capture_tool.core.ocr import OcrEngine
+    from capture_tool.platform.powerpoint import ClipboardShapes
+    c = make(ocr=OcrEngine())
+    c.powerpoint = FakePpt()
+    img = _cv2.imread(str(_P(__file__).parent / "data" / "terminal_metrics_table.png"))
+    marks = [Shape("step", [(470, 90)], number=1), Shape("rect", [(430, 40), (760, 270)], color="#F76707")]
+    c._pending = ([], img, None, 96)
+    c._run_recognition_on(img, "ppt", 96, final=img, user_shapes=marks)
+    item = c.powerpoint.items[-1]
+    assert isinstance(item, ClipboardShapes) and len(item.tables) == 1, item
+    t = item.tables[0]
+    assert (t.rows, t.cols) == (5, 3) and t.cells[0].fill                     # the dark table, as a table
+    assert "표 5행×3열과 그려 넣은 표시" in c.messages[-1], c.messages[-1]
+
+
+def test_TNOTE_08_dark_page_gets_its_panel_behind_the_shapes():
+    """User (v0.8.5): white text from a dark screen came out on a see-through slide."""
+    import numpy as _np
+    from capture_tool.core.shapes import page_panel
+    dark = _np.full((60, 80, 3), 30, _np.uint8)
+    p = page_panel(dark)
+    assert p is not None and (p.w, p.h) == (80, 60) and p.fill.upper() == "#1E1E1E" and p.stroke is None
+    assert page_panel(_np.full((60, 80, 3), 255, _np.uint8)) is None
+    assert page_panel(dark, keep_style=False) is None

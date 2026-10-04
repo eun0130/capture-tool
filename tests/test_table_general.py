@@ -21,7 +21,11 @@ def ocr():
 
 def best_table(img, ocr):
     """What the app does for the 표 button (controller._best_table)."""
-    filled = lambda tb: sum(1 for r in tb.rows for c in r if c) if tb else -1     # noqa: E731
+    def filled(tb):
+        if tb is None:
+            return (-1, -1)
+        n = sum(1 for r in tb.rows for c in r if c)
+        return (n / max(1, len(tb.rows) * len(tb.rows[0])), n)       # complete first, then big
     t = find_table(img, [(l.text, l.box, l.score) for l in ocr.recognize(img)], [], 96)
     b = find_box_table(img, ocr.read_words, 96)
     if b is None:
