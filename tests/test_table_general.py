@@ -9,7 +9,8 @@ from capture_tool.core.ocr import OcrEngine
 from capture_tool.core.table_capture import find_table, phrases_from_words
 from tests.table_gen import document, score, terminal
 
-pytestmark = pytest.mark.skipif(not Path("C:/Windows/Fonts/gulim.ttc").exists(), reason="Windows fonts")
+pytestmark = pytest.mark.skipif(not (Path("C:/Windows/Fonts/gulim.ttc").exists()
+                                     and Path("C:/Windows/Fonts/malgun.ttf").exists()), reason="Windows fonts")
 N = 10
 
 

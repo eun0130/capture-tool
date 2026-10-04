@@ -2,6 +2,7 @@
 seen during development (not tuned to the users' screenshots): terminal style (line characters,
 monospace Korean, cell wrapping, dark/light, coloured words, arrows) and document style
 (proportional font, full grid or separator lines only, wrapped cells)."""
+import os
 import random
 import unicodedata
 
@@ -107,7 +108,10 @@ def document(seed):
     rng = random.Random(500 + seed)
     ncol = rng.randint(2, 4)
     size = rng.choice([13, 14, 15, 16, 18])
-    font = ImageFont.truetype(rng.choice(["C:/Windows/Fonts/malgun.ttf", "C:/Windows/Fonts/NanumGothic.ttf"]), size)
+    path = rng.choice(["C:/Windows/Fonts/malgun.ttf", "C:/Windows/Fonts/NanumGothic.ttf"])
+    if not os.path.exists(path):                     # Nanum is not on every PC (or the build machine)
+        path = "C:/Windows/Fonts/malgun.ttf"
+    font = ImageFont.truetype(path, size)
     grid = rng.random() < 0.5                       # full grid, or separators only (Kakao-like)
     dark = rng.random() < 0.4
     bg, fg, line = ((30, 31, 31), (235, 235, 235), (110, 110, 110)) if dark else ((255, 255, 255), (25, 25, 25), (170, 170, 170))
