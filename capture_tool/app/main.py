@@ -71,11 +71,33 @@ def setup_logging(directory: Path | None = None, max_bytes: int = 1_000_000, bac
 
 
 INSTANCE_COMMANDS = {b"capture": "capture"}
+OPEN_PREFIX = b"open:"
+MAX_MESSAGE = 2048
+IMAGE_SUFFIXES = (".png", ".jpg", ".jpeg", ".bmp", ".gif", ".webp", ".tif", ".tiff")
+
+
+def open_message(path: str) -> bytes:
+    """What a second launch with a picture (dropped on the shortcut, 보내기) sends."""
+    return OPEN_PREFIX + str(Path(path).resolve()).encode("utf-8")
+
+
+def _openable(path: str) -> bool:
+    p = Path(path)
+    return p.suffix.lower() in IMAGE_SUFFIXES and p.is_file()
 
 
 def handle_instance_message(data: bytes, trigger) -> bool:
-    """Second launch asks the running instance to capture. Accept only the exact command."""
-    action = INSTANCE_COMMANDS.get(bytes(data).strip())
+    """Second launch asks the running instance to capture, or to open a picture file. Accept
+    only the exact command, or an existing image file (nothing else is ever opened or run)."""
+    data = bytes(data).strip()
+    action = INSTANCE_COMMANDS.get(data)
+    if action is None and data.startswith(OPEN_PREFIX) and len(data) <= MAX_MESSAGE:
+        try:
+            path = data[len(OPEN_PREFIX):].decode("utf-8")
+        except UnicodeDecodeError:
+            path = ""
+        if path and _openable(path):
+            action = "open:" + path
     if action is None:
         logging.warning("ignored unexpected single-instance message (%d bytes)", len(data))
         return False
@@ -145,6 +167,9 @@ class TrayApp:
             auto.setChecked(self.controller.settings.auto_save)
             auto.blockSignals(False)
         m.aboutToShow.connect(sync_auto_save)
+        a = QAction("이미지 열기… (캡처처럼 표·텍스트·PPT 사용)", m)
+        a.triggered.connect(self.open_image)
+        m.addAction(a)
         a = QAction("사용 설명서 (따라하기)", m)
         a.triggered.connect(lambda: self.controller.show_guide())
         m.addAction(a)
@@ -167,6 +192,14 @@ class TrayApp:
         self.menu = m
         self.tray.setContextMenu(m)
 
+    def open_image(self) -> None:
+        from PySide6.QtWidgets import QFileDialog
+        start = self.settings.save_dir or str(Path.home() / "Pictures")
+        path, _ = QFileDialog.getOpenFileName(None, "이미지 열기", start,
+                                              "이미지 (*.png *.jpg *.jpeg *.bmp *.gif *.webp *.tif *.tiff)")
+        if path:
+            self.controller.open_image_file(path)
+
     def _set_auto_save(self, on: bool) -> None:
         self.settings.auto_save = on
         try:
@@ -177,6 +210,9 @@ class TrayApp:
                    else "캡처 자동 저장을 껐습니다.")
 
     def on_hotkey(self, action: str) -> None:
+        if action.startswith("open:"):                  # a picture sent from a second launch
+            self.controller.open_image_file(action[len("open:"):])
+            return
         mode = {"capture": "draw", "ocr": "text", "shapes": "shapes", "fullscreen": "fullscreen",
                 "scroll": "scroll"}[action]
         self.controller.start_capture(mode)
@@ -361,13 +397,14 @@ def main(argv=None) -> int:
     app.setWindowIcon(app_icon())
     app.setFont(QFont("Malgun Gothic", 9))
     is_selftest = "--selftest" in argv
+    files = [a for a in argv[1:] if not a.startswith("--") and _openable(a)]   # dropped on the shortcut / 보내기
 
     name = f"{APP}-{os.environ.get('USERNAME', 'user')}"
     if not is_selftest:
         sock = QLocalSocket()
         sock.connectToServer(name)
         if sock.waitForConnected(200):
-            sock.write(b"capture")
+            sock.write(open_message(files[0]) if files else b"capture")
             sock.flush()
             sock.waitForBytesWritten(200)
             return 0  # already running: ask it to capture instead
@@ -387,10 +424,12 @@ def main(argv=None) -> int:
             return
 
         def read():
-            handle_instance_message(s.read(64).data(), tray.on_hotkey)  # read at most 64 bytes
+            handle_instance_message(s.read(MAX_MESSAGE + 1).data(), tray.on_hotkey)  # bounded read
             s.disconnectFromServer()
         s.readyRead.connect(read)
     server.newConnection.connect(on_conn)
+    if files:
+        QTimer.singleShot(800, lambda: tray.controller.open_image_file(files[0]))
     logging.info("started %s", __version__)
     return app.exec()
 

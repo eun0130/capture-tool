@@ -38,6 +38,19 @@ from .text_panel import TextPanel, mask
 
 READ_AHEAD_MAX_PX = 8_000_000     # bigger areas (a whole 4K screen) are read only when asked
 READ_AHEAD_WAIT_S = 30.0
+RECENT_COUNT = 8                     # saved captures shown when a capture starts
+IMAGE_SUFFIXES = (".png", ".jpg", ".jpeg", ".bmp", ".gif", ".webp", ".tif", ".tiff")
+MAX_OPEN_BYTES = 200 * 1024 * 1024
+MAX_OPEN_PIXELS = 60_000_000         # (a 4K screen is 8.3 M; a very long scroll capture fits too)
+
+
+def _looks_like_image(p: Path) -> bool:
+    try:
+        with open(p, "rb") as f:
+            head = f.read(4)
+    except OSError:
+        return False
+    return head.startswith(b"\x89PNG") or head.startswith(b"\xff\xd8")
 
 log = logging.getLogger("capture_tool")
 
@@ -259,6 +272,11 @@ class Controller(QObject):
         self.mode = mode
         self._open_overlay(ordered[0], wins, focus=True)
         log.info("overlay shown in %.0f ms", (time.perf_counter() - t0) * 1000)
+        if mode == "draw" and getattr(self.settings, "show_recent", True):
+            if self.sync:
+                self._show_recent()
+            else:                                  # after the capture screen is up: it never waits
+                QTimer.singleShot(0, self._show_recent)
         rest = ordered[1:]
         if rest:
             if self.sync:
@@ -651,12 +669,13 @@ class Controller(QObject):
         self.open_editor(img, dpi, f"스크롤 캡처 · {what}")
 
     # --- edit window ---------------------------------------------------------------------------------
-    def open_editor(self, img, dpi: float, title: str) -> None:
+    def open_editor(self, img, dpi: float, title: str, save: bool = True) -> None:
         """Show a big capture (scroll, whole window) with every normal capture tool. It is already
-        on the clipboard; with auto-save on it is saved now (and updated if drawn on)."""
+        on the clipboard; with auto-save on it is saved now (and updated if drawn on).
+        save=False: a picture opened again (already a file)."""
         from .editor import EditorWindow
         h, w = img.shape[:2]
-        self._editor_path = self._save(img) if self.settings.auto_save else None
+        self._editor_path = self._save(img) if (save and self.settings.auto_save) else None
         self.session.hotkey(Rect(0, 0, w, h))
         self.session.select(Rect(0, 0, w, h))
         self.mode = "draw"
@@ -671,6 +690,67 @@ class Controller(QObject):
         ed.raise_()
         ed.activateWindow()
         ed.canvas.setFocus()
+
+    # --- reusing pictures: saved captures, any image file ---------------------------------------
+    def _show_recent(self) -> None:
+        if self.session.state is State.IDLE or not self.overlays or self.session.selection is not None:
+            return
+        recent = self.recent_captures()
+        if recent:
+            self.overlays[0].show_recent(recent)
+
+    def recent_captures(self, n: int = RECENT_COUNT) -> list[Path]:
+        """Newest saved captures (pictures in the save folder), newest first."""
+        import os
+        try:
+            folder, _ = resolve_save_dir(self.settings.save_dir, self.fallback_dir)
+            with os.scandir(folder) as it:                   # one pass, stat info comes with it
+                entries = [(e.stat().st_mtime, e.path) for e in it
+                           if e.name.lower().endswith((".png", ".jpg", ".jpeg")) and e.is_file()]
+        except (OSError, SaveDirError):
+            return []
+        entries.sort(reverse=True)
+        out = []
+        for _, path in entries:
+            p = Path(path)
+            if _looks_like_image(p):
+                out.append(p)
+            if len(out) >= n:
+                break
+        return out
+
+    def open_image_file(self, path: str) -> bool:
+        """Open a picture file (a saved capture, a photo, a dropped file) with every capture
+        button - as if it had just been captured. Anything that isn't a readable picture is refused."""
+        p = Path(str(path))
+        name = p.name
+        if p.suffix.lower() not in IMAGE_SUFFIXES or not p.is_file():
+            self.notify(f"'{name}'은(는) 열 수 있는 이미지 파일이 아닙니다.")
+            return False
+        try:
+            if p.stat().st_size > MAX_OPEN_BYTES:
+                self.notify(f"'{name}' 이미지가 너무 커서 열 수 없습니다.")
+                return False
+            data = np.fromfile(str(p), dtype=np.uint8)            # (works with Korean folder names)
+            img = cv2.imdecode(data, cv2.IMREAD_UNCHANGED)
+        except (OSError, cv2.error, ValueError):
+            img = None
+        if img is None or img.size == 0:
+            self.notify(f"'{name}'은(는) 열 수 있는 이미지 파일이 아닙니다.")
+            return False
+        if img.shape[0] * img.shape[1] > MAX_OPEN_PIXELS:
+            self.notify(f"'{name}' 이미지가 너무 커서 열 수 없습니다 ({img.shape[1]}×{img.shape[0]}).")
+            return False
+        if img.ndim == 2:
+            img = cv2.cvtColor(img, cv2.COLOR_GRAY2BGR)
+        elif img.shape[2] == 4:                                   # transparent parts on white
+            a = img[:, :, 3:4].astype(np.float32) / 255
+            img = (img[:, :, :3] * a + 255 * (1 - a)).astype(np.uint8)
+        img = np.ascontiguousarray(img[:, :, :3])
+        if self.session.state is not State.IDLE or self.overlays:   # a capture in progress: this replaces it
+            self.cancel()
+        self.open_editor(img, 96, f"다시 쓰기 · {name}", save=False)
+        return True
 
     def _result_action(self, name: str, img, dpi: float, win, holder: dict) -> None:
         """Buttons of a result window (scroll capture, whole-window capture)."""

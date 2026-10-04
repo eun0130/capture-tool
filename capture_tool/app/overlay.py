@@ -162,11 +162,13 @@ class OverlayWindow(QWidget):
         self._pending_symbol: str | None = None   # picked with no text box open: goes in the next one
         self.hover_window = None
         self.selected: int | None = None     # index of the shape picked with the select tool
+        self.recent = None                   # strip of the newest saved captures (when a capture starts)
         self.ocr_lines = None                # recognized lines (selection coords) while in text mode
         self._ocr_sel = None                 # last dragged text rectangle (selection coords)
 
     def release(self) -> None:
         """Drop the frozen screenshot after a capture ends (a 4K frame is ~33 MB + its pixmap)."""
+        self.hide_recent()
         self.image = np.zeros((8, 8, 3), np.uint8)
         self.pixmap = bgr_to_pixmap(self.image, self.scale)
         self.windows = []
@@ -368,9 +370,24 @@ class OverlayWindow(QWidget):
         sb.raise_()
 
     # --- mouse -----------------------------------------------------------------
+    def show_recent(self, paths) -> None:
+        from .recent_strip import RecentStrip
+        if self.recent is None:
+            self.recent = RecentStrip(self, sync=self.c.sync)
+            self.recent.open_path.connect(self.c.open_image_file)
+        self.recent.set_paths(paths)
+        self.recent.place()
+        self.recent.show()
+        self.recent.raise_()
+
+    def hide_recent(self) -> None:
+        if self.recent is not None:
+            self.recent.hide()
+
     def mousePressEvent(self, e):
         if e.button() != Qt.LeftButton:
             return
+        self.hide_recent()                   # selecting: the strip makes room
         pos = e.position()
         self._press, self._cursor, self._moved = pos, pos, False
         st = self.c.session.state

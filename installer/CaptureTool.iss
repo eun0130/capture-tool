@@ -47,6 +47,8 @@ Source: "..\dist\CaptureTool\*"; DestDir: "{app}"; Flags: ignoreversion recurses
 [Icons]
 Name: "{autoprograms}\{#AppName}"; Filename: "{app}\{#AppExe}"
 Name: "{autodesktop}\{#AppName}"; Filename: "{app}\{#AppExe}"; Tasks: desktopicon
+; right-click a picture > 보내기 > 캡처 도구: opens it with every capture button
+Name: "{usersendto}\{#AppName}"; Filename: "{app}\{#AppExe}"
 
 [Registry]
 Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: string; ValueName: "CaptureTool"; \

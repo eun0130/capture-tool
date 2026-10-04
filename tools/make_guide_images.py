@@ -119,11 +119,29 @@ def capture_shot(expanded: bool):
     return img
 
 
+def recent_shot():
+    """The strip of saved captures at the bottom when a capture starts."""
+    import tempfile
+    folder = Path(tempfile.mkdtemp())
+    screen = fake_screen()
+    for k, (y, x) in enumerate([(96, 60), (300, 200), (150, 500), (420, 80), (60, 700)]):
+        cv2.imwrite(str(folder / f"26100{k}_09{k}000.png"), screen[y:y + 260, x:x + 420])
+    s = Settings()
+    s.save_dir = str(folder)
+    c = controller(s)
+    c.start_capture()
+    app.processEvents()
+    img = grab(c.overlays[0].recent)
+    c.close_all()
+    return img
+
+
 def main() -> None:
     full = capture_shot(False)
     save("capture.png", full[96:560, 60:1060])
     wide = capture_shot(True)
     save("bar_full.png", wide[388:500, 80:900])
+    save("recent.png", recent_shot())
 
     import subprocess
     env = {k: v for k, v in os.environ.items() if k != "QT_QPA_PLATFORM"}     # real windows for these

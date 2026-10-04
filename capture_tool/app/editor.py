@@ -61,11 +61,24 @@ class EditorWindow(QWidget):
         body.addWidget(cv.side_bar, 0, Qt.AlignTop)
         cv.side_bar.set_columns(1)
         self.zoom = 1.0
+        self.setAcceptDrops(True)                    # drop another picture here to open it instead
         g = scr.availableGeometry() if scr else None
         if g is not None:
             self.resize(int(g.width() * 0.85), int(g.height() * 0.9))
             self.move(g.x() + (g.width() - self.width()) // 2, g.y() + (g.height() - self.height()) // 2)
         self._apply_zoom()
+
+    def dragEnterEvent(self, e):
+        from .recent_strip import image_paths
+        if e.mimeData().hasUrls() and image_paths(e.mimeData().urls()):
+            e.acceptProposedAction()
+
+    def dropEvent(self, e):
+        from .recent_strip import image_paths
+        paths = image_paths(e.mimeData().urls())
+        if paths:
+            e.acceptProposedAction()
+            self.c.open_image_file(paths[0])
 
     # --- zoom ------------------------------------------------------------------------------------------
     def _apply_zoom(self) -> None:
