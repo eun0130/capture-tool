@@ -568,21 +568,23 @@ class MailHelper(QWidget):
         self._idle.timeout.connect(self.close)
         self.setMinimumWidth(340)
 
-    def set_data(self, to: list[str], cc: list[str], subject: str, prefilled: bool, capture_payload, save) -> None:
+    def set_data(self, to: list[str], cc: list[str], subject: str, prefilled: bool, capture_payload, save,
+                 what: str = "캡처") -> None:
+        """what: "캡처" (the picture) or "글자" (text mode: the text that was copied)."""
         from ..core.mailcompose import recipients_text
         self._texts = {"to": recipients_text(to), "cc": recipients_text(cc), "subject": subject}
         self._counts = {"to": len(to), "cc": len(cc)}
         self._labels = {"to": f"① 받는 사람 칸에 붙일 주소 복사 ({len(to)}명)",
                         "cc": f"② 참조 칸에 붙일 주소 복사 ({len(cc)}명)",
                         "subject": "③ 제목 칸에 붙일 제목 복사",
-                        "capture": "캡처 복사 → 본문에 Ctrl+V",
+                        "capture": f"{what} 복사 → 본문에 Ctrl+V",
                         "file": "붙여넣기가 막히면: 캡처를 파일로 저장(첨부용)"}
         self._capture, self._save, self._prefilled = capture_payload, save, prefilled
         for k, b in self.buttons.items():
             b.setText(self._labels[k])
         self.buttons["capture"].setVisible(capture_payload is not None)
         if prefilled:
-            self.hint.setText("받는 사람·참조·제목은 메일 화면에 이미 채워져 있습니다. 본문을 누르고 Ctrl+V 하면 캡처가 붙습니다. "
+            self.hint.setText("받는 사람·참조·제목은 메일 화면에 이미 채워져 있습니다. 본문을 누르고 Ctrl+V 하면 " + what + "가 붙습니다. "
                               "[보내기]는 직접 누르세요.")
             self._set_steps_visible(False)
             self.again.setVisible(bool(to or cc))

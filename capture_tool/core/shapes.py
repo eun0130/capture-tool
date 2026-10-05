@@ -61,6 +61,7 @@ class Detected:
     align: str = "ctr"                # "l": the shape's lines start at one left edge (pad_left px in)
     pad_left: float = 0
     dash: bool = False                # dashed outline
+    over_text: bool = False           # an empty frame drawn across text: stays in front of it
 
 
 @dataclass
@@ -685,7 +686,7 @@ def to_drawing(detected: list[Detected], keep_style: bool = True) -> tuple[list[
     shapes, sizes and text, for decks with their own design."""
     closed = [d for d in detected if d.kind not in ("line", "arrow")]
     # back to front: big empty panels, then the boxes on them, then icons and free text on top
-    closed.sort(key=lambda d: (d.kind == "text", d.kind == "picture" or bool(d.text), -d.w * d.h))
+    closed.sort(key=lambda d: (d.over_text, d.kind == "text", d.kind == "picture" or bool(d.text), -d.w * d.h))
 
     def color(d: Detected) -> str:
         if not keep_style:
@@ -936,11 +937,112 @@ def release_labels(detected: list[Detected], lines: list[tuple[str, tuple]]) -> 
         by2 = max(b[1] + b[3] for b in boxes)
         off_x = abs((bx1 + bx2) / 2 - (d.x + d.w / 2)) / max(d.w, 1)
         off_y = abs((by1 + by2) / 2 - (d.y + d.h / 2)) / max(d.h, 1)
+        if any(min(b[0] + b[2], d.x + d.w) - max(b[0], d.x) < 0.9 * b[2] for b in boxes):
+            free.update(js)                            # text runs across the outline: a box drawn over
+            continue                                   # running text, not a box with a label
         if column_of(boxes, d):
             continue                                   # a card: its lines are the shape's own text
         if len(js) > 3 or not _is_block(boxes) or off_x > 0.18 or off_y > 0.25:
             free.update(js)
     return [l for j, l in enumerate(lines) if j in free]
+
+
+OUTLINE_TOL = 44                # px colour distance: the pixels of one drawn outline
+OUTLINE_SIDE = 0.9              # share of each side of the frame that the outline's colour must cover
+OUTLINE_MAX_THICK = 12
+
+
+def _stray_colours(img: np.ndarray, bg, text_boxes, limit: int = 4) -> list[tuple]:
+    """The colours of ink that is not text: what is left outside the lines of text, most first."""
+    left = _dist(img, bg) > FG_THRESHOLD
+    for (x, y, w, h) in text_boxes:
+        x, y, w, h = (int(round(v)) for v in (x, y, w, h))
+        left[max(0, y - 2):y + h + 2, max(0, x - 2):x + w + 2] = False
+    px = img[left]
+    if len(px) < 60:
+        return []
+    q = px.astype(np.int32) >> 4                       # 16 levels a channel: one outline, one bin (or two)
+    keys, counts = np.unique((q[:, 0] << 8) | (q[:, 1] << 4) | q[:, 2], return_counts=True)
+    out = []
+    for k in keys[np.argsort(-counts)][:limit * 2]:
+        sel = ((q[:, 0] << 8) | (q[:, 1] << 4) | q[:, 2]) == k
+        if sel.sum() < 60:
+            break
+        c = tuple(int(v) for v in np.median(px[sel], axis=0))
+        if not any(max(abs(a - b) for a, b in zip(c, o)) <= 30 for o in out):
+            out.append(c)
+    return out[:limit]
+
+
+def find_outline_boxes(img: np.ndarray, det: list[Detected], text_boxes=()) -> list[Detected]:
+    """Boxes drawn over text. Where letters cross the outline the shape search (which leaves the
+    text out) sees only loose strokes, or nothing. The outline's own colour finds all of it: a
+    frame of one colour, unbroken on all four sides and empty inside, is one box."""
+    colours: list[tuple] = []
+    bg = _background(img)
+    found = [_parse(d.stroke) for d in det if d.kind in ("line", "arrow") and d.stroke]
+    for c in found + _stray_colours(img, bg, text_boxes):
+        if c is not None and not any(max(abs(a - b) for a, b in zip(c, k)) <= 30 for k in colours):
+            colours.append(c)
+    out: list[Detected] = []
+    for col in colours[:6]:
+        if max(abs(a - b) for a, b in zip(col, bg)) < FG_THRESHOLD:
+            continue
+        m = (_dist(img, col) <= OUTLINE_TOL).astype(np.uint8)
+        m = cv2.morphologyEx(m, cv2.MORPH_CLOSE, np.ones((3, 3), np.uint8))
+        n, labels, stats, _ = cv2.connectedComponentsWithStats(m, connectivity=8)
+        for j in range(1, n):
+            x, y, w, h, area = (int(v) for v in stats[j])
+            if w < 40 or h < 24:
+                continue
+            thick = area / (2.0 * (w + h))
+            if not 0.8 <= thick <= OUTLINE_MAX_THICK:
+                continue
+            comp = labels[y:y + h, x:x + w] == j
+            b = int(round(thick)) + 2
+            sides = (comp[:b].any(axis=0).mean(), comp[-b:].any(axis=0).mean(),
+                     comp[:, :b].any(axis=1).mean(), comp[:, -b:].any(axis=1).mean())
+            if min(sides) < OUTLINE_SIDE:
+                continue
+            inner = comp[b + 2:h - b - 2, b + 2:w - b - 2]
+            if inner.size == 0 or inner.mean() > 0.1:
+                continue                               # filled or criss-crossed: not an empty frame
+            box = Detected("rect" if comp[:b, :b].any() and comp[-b:, -b:].any() else "roundRect", x, y, w, h,
+                           fill=None, stroke=_hex(col), stroke_width=max(1.0, round(thick)), over_text=True)
+            if any(o.kind not in ("line", "arrow", "text", "picture") and _iou(o, box) > 0.6 for o in det + out):
+                continue                               # the shape search already has it
+            out.append(box)
+    return out
+
+
+def _with_outline_boxes(img, det: list[Detected], text_boxes=()) -> list[Detected]:
+    try:
+        boxes = find_outline_boxes(img, det, text_boxes)
+    except cv2.error:
+        return det
+    if not boxes:
+        return det
+
+    def on_frame(p, b: Detected, band: float) -> bool:
+        x, y = p
+        if not (b.x - band <= x <= b.x + b.w + band and b.y - band <= y <= b.y + b.h + band):
+            return False
+        return min(abs(x - b.x), abs(x - (b.x + b.w)), abs(y - b.y), abs(y - (b.y + b.h))) <= band
+
+    def bit_of(d: Detected) -> bool:
+        """A stroke of the box's colour lying on its frame (both ends on it): a piece of the box."""
+        if d.kind not in ("line", "arrow"):
+            return False
+        c = _parse(d.stroke) if d.stroke else None
+        for b in boxes:
+            if c is not None and max(abs(p - q) for p, q in zip(c, _parse(b.stroke))) > OUTLINE_TOL:
+                continue
+            band = int(b.stroke_width) + 8
+            ends = d.points if len(d.points) == 2 else [(d.x, d.y), (d.x + d.w, d.y + d.h)]
+            if _on_outline(d, b, band) or all(on_frame(p, b, band) for p in ends):
+                return True
+        return False
+    return [d for d in det if not bit_of(d)] + boxes
 
 
 def find_dashed_boxes(img: np.ndarray, det: list[Detected], text_boxes) -> list[Detected]:
@@ -1163,6 +1265,7 @@ def recognize_layout(img: np.ndarray, lines, recognize, dpi: float = 96, find_ag
                     box.fill = _hex(fill)
             det[i] = box or d
     det = [d for d in det if not (d.kind in ("line", "arrow") and max(d.w, d.h) < SHORT_STROKE)]
+    det = _with_outline_boxes(img, det, [b for _, b, _ in kept])
     det = _with_dashed_boxes(img, det, [b for _, b, _ in kept])
     det = _without_outline_bits(det, [b for _, b, _ in kept] + [b for _, b, _ in lines])
     found = drop_doubtful_inside(det, kept)

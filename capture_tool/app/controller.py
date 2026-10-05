@@ -911,16 +911,18 @@ class Controller(QObject):
         from ..core.contacts import BookFull, InvalidEmail
         from ..core.mailcompose import compose as compose_mail
         from ..core.mailcompose import default_subject
+        text_clip = self._text_clip()                  # text mode: the text goes in the mail, not the picture
         ov, sel, doc, raw = self._take()
         final = compose(raw, doc)
-        payload = self._image_payload(final, 96 * ov.scale)
+        payload = text_clip or self._image_payload(final, 96 * ov.scale)
+        what = "글자" if text_clip else "캡처"
         if payload:
             self._set_clipboard(payload)
         book = self.address_book()
         from .mail_ui import ask_mail
         choice = (self.ask_mail or ask_mail)(book, self.settings, None)
         if choice is None:
-            self.notify("메일 보내기를 취소했습니다. 캡처는 복사되어 있습니다.")
+            self.notify(f"메일 보내기를 취소했습니다. {what}는 복사되어 있습니다.")
             return
         for email, name in choice.new.items():
             try:
@@ -937,14 +939,14 @@ class Controller(QObject):
                                 custom=self.settings.mail_custom_url)
         except ValueError:
             self.notify("회사 메일 쓰기 주소가 올바르지 않습니다. 설정 → 메일에서 https:// 로 시작하는 주소를 넣어 주세요. "
-                        "캡처는 복사되어 있습니다.")
+                        f"{what}는 복사되어 있습니다.")
             return
         book.mark_used(to + cc)
         self._save_book()
         if not self.open_url(page.url):
             self.notify("브라우저를 열지 못했습니다. 메일 사이트를 직접 열고 도우미 창으로 붙여 넣으세요.")
         else:
-            self.notify("메일 쓰기 화면을 열었습니다. 도우미 창의 버튼으로 붙여 넣고 [보내기]는 직접 누르세요.")
+            self.notify(f"메일 쓰기 화면을 열었습니다. 도우미 창의 버튼으로 {what}를 붙여 넣고 [보내기]는 직접 누르세요.")
         from .mail_ui import MailHelper
         if self.mail_helper is not None:
             self.mail_helper.close()
@@ -955,7 +957,7 @@ class Controller(QObject):
                 self.reveal_file(path)
                 self.notify(f"첨부용으로 저장했습니다: {path.name}")
         self.mail_helper = MailHelper(self._set_clipboard)
-        self.mail_helper.set_data(to, cc, subject, page.prefilled, payload, save_for_attachment)
+        self.mail_helper.set_data(to, cc, subject, page.prefilled, payload, save_for_attachment, what=what)
         if to and not page.prefilled:              # first step done: Ctrl+V in 받는 사람 right away
             self.mail_helper.press("to")
         self.mail_helper.place()
@@ -972,10 +974,16 @@ class Controller(QObject):
                 return
         if self.session.state is not State.EDITING:
             return
-        self.finish("copy")
+        text_clip = self._text_clip()                  # text mode: the text goes to the chat, not the picture
+        if text_clip:
+            self._take()
+            self._set_clipboard(text_clip)
+        else:
+            self.finish("copy")
+        what = "글자" if text_clip else "캡처"
         kakao = self.kakao
         if not kakao.installed():
-            self.notify("카카오톡이 설치되어 있지 않습니다. 캡처는 복사되어 있으니 보낼 곳에 Ctrl+V 하세요.")
+            self.notify(f"카카오톡이 설치되어 있지 않습니다. {what}는 복사되어 있으니 보낼 곳에 Ctrl+V 하세요.")
             return
 
         def work() -> str:
@@ -985,11 +993,11 @@ class Controller(QObject):
                     kakao.open_main()
                     return "그 채팅방이 닫혀 있어 카카오톡을 열었습니다. 보낼 채팅방을 열고 Ctrl+V → [전송]."
                 if kakao.paste_into(hwnd):
-                    return f"'{title}' 채팅방에 캡처를 붙여 넣었습니다. 카카오톡 창의 [전송]을 누르면 보내집니다."
+                    return f"'{title}' 채팅방에 {what}를 붙여 넣었습니다. 카카오톡 창의 [전송]을 누르면 보내집니다."
                 return f"'{title}' 채팅방을 앞으로 띄우지 못했습니다. 그 채팅방에서 Ctrl+V → [전송] 하세요."
             if kakao.open_main():
-                return "카카오톡을 열었습니다. 보낼 채팅방을 열고 Ctrl+V → [전송] 하세요 (캡처는 복사되어 있습니다)."
-            return "카카오톡을 열지 못했습니다. 캡처는 복사되어 있으니 카카오톡 채팅방에서 Ctrl+V 하세요."
+                return f"카카오톡을 열었습니다. 보낼 채팅방을 열고 Ctrl+V → [전송] 하세요 ({what}는 복사되어 있습니다)."
+            return f"카카오톡을 열지 못했습니다. {what}는 복사되어 있으니 카카오톡 채팅방에서 Ctrl+V 하세요."
 
         if self.sync:
             self.notify(work())
@@ -1226,9 +1234,11 @@ class Controller(QObject):
         grid = grid_from_cells([(l.text, *l.box) for l in lines], *found)
         return grid if table_is_plausible(grid) else None
 
-    def _best_table(self, raw, scored, det, dpi: float = 96):
+    def _best_table(self, raw, scored, det, dpi: float = 96, asked: bool = True):
         """The table in the capture: ruled / laid-out tables, or one drawn with line characters
-        (terminal output) - whichever gives more filled cells."""
+        (terminal output) - whichever gives more filled cells. asked=False (도형PPT: nobody asked
+        for a table): only what the lines and the page layout show - not the loose reading from
+        word pieces, which finds "columns" in any terminal text (its letters line up by themselves)."""
         t = find_table(raw, scored, det, dpi) if scored else None
         read = getattr(self.ocr, "read_words", None)
         if read is None:
@@ -1237,7 +1247,7 @@ class Controller(QObject):
                              sum(1 for r in tb.rows for c in r if c))     # noqa: E731 - complete first, then big
         try:
             b = find_box_table(raw, read, dpi)
-            if b is None and scored:                    # columns glued by the text finder: word pieces
+            if b is None and scored and asked:          # columns glued by the text finder: word pieces
                 w = find_table(raw, phrases_from_words(read(raw)), det, dpi)
                 if w is not None and (t is None or filled(w) > filled(t)):
                     t = w
@@ -1273,14 +1283,7 @@ class Controller(QObject):
         if not text.strip():
             return
         self._text_part = False
-        payload = text_payload(text)
-        look = getattr(self, "_text_styled", None) if (self.settings.styled_text and lines is self._text_lines) else None
-        if look is not None:                           # the same plain text, the HTML with the look
-            try:
-                payload[HTML] = cf_html(styled_html(redact_styled(look) if redact else look))
-            except Exception:  # noqa: BLE001 - the look is an extra: the text is copied anyway
-                log.exception("styled text")
-                look = None
+        payload, look = self._whole_text_payload(lines, text)
         if self._set_clipboard(payload):
             self._last_text, self._last_raw = text, raw_text
             note = " (개인정보 가림)" if text != raw_text else ""
@@ -1288,6 +1291,33 @@ class Controller(QObject):
             styled = (" 서식(색·배경·들여쓰기) 포함 — 엑셀·워드에 붙이면 그대로 나옵니다 (PowerPoint는 PPT 버튼)."
                       if look is not None else "")
             self.notify(f"텍스트 {len(lines)}줄을 복사했습니다{note}.{styled}{hint}")
+
+    def _whole_text_payload(self, lines, text: str) -> tuple[dict, object]:
+        """What copying all the text puts on the clipboard: the plain text, and with 서식 유지 the
+        HTML that carries its look. Returns (payload, the look used or None)."""
+        payload = text_payload(text)
+        look = getattr(self, "_text_styled", None) if (self.settings.styled_text and lines is self._text_lines) else None
+        if look is not None:
+            try:
+                payload[HTML] = cf_html(styled_html(redact_styled(look) if self.settings.redact_pii else look))
+            except Exception:  # noqa: BLE001 - the look is an extra: the text is copied anyway
+                log.exception("styled text")
+                look = None
+        return payload, look
+
+    def _text_clip(self) -> dict | None:
+        """In text mode: the text as it was last copied (all of it, or the dragged part) - what
+        메일 / 카톡 hand over instead of the picture. None outside text mode."""
+        ov = self.active_overlay
+        if ov is None or ov.ocr_lines is None or not self._text_lines:
+            return None
+        if getattr(self, "_text_part", False) and self._last_text:
+            return text_payload(self._last_text)
+        raw_text = full_text(self._text_lines)
+        text = mask(raw_text) if self.settings.redact_pii else raw_text
+        if not text.strip():
+            return None
+        return self._whole_text_payload(self._text_lines, text)[0]
 
     def _styled(self, raw, lines, dpi: float):
         """The look of the text just read (colours, background, indent): None when it can't be read."""
@@ -1699,7 +1729,7 @@ class Controller(QObject):
                 return kind, lines, err, qr, self._grid_for(raw, lines) if lines else None
             scored = [(l.text, l.box, l.score) for l in lines]
             det = detect(raw, text_boxes=split_doubtful(scored)[0])
-            table = self._best_table(raw, scored, det, dpi)  # a table on screen -> a real table
+            table = self._best_table(raw, scored, det, dpi, asked=False)  # a table on screen -> a real table
             if table is not None:                             # (the person's own drawings go on top)
                 return kind, lines, err, None, table
             # shapes and labels in their places; dark text on a saturated fill is read again
