@@ -11,6 +11,9 @@ ACTIONS = [
     ("copy", "copy", "복사", "클립보드에 복사하고 닫기 (Enter · Ctrl+C) — 영역을 고르면 이미 복사되어 있습니다", "basic"),
     ("autosave", "save", "자동저장", "켜 두면 캡처를 끝낼 때마다 저장 폴더에 파일로도 저장 (누를 때마다 켜기/끄기)", "basic"),
     ("text", "ocr", "텍스트", "이미지 속 글자를 인식해 복사", "basic"),
+    ("translate", "translate", "번역", "캡처 속 글자를 바로 번역 — 텍스트를 먼저 누르지 않아도 됩니다 "
+                                       "(텍스트 모드에서 드래그한 부분이 있으면 그 부분만)", "basic"),
+    ("summarize", "summary", "요약", "캡처 속 글자를 바로 요약 — 텍스트를 먼저 누르지 않아도 됩니다", "basic"),
     ("table", "table", "표", "캡처 속 표를 칸 그대로 복사 — 엑셀·PowerPoint에 붙이면 고칠 수 있는 표", "basic"),
     ("ppt", "ppt", "PPT", "캡처한 그대로 PowerPoint에 넣기 — 그림(그린 것 포함), 텍스트 모드에서는 글자", "basic"),
     ("mail", "mail", "메일", "메일로 보내기 — 받는 사람을 고르면 네이버·Gmail 등의 쓰기 화면이 열리고, 도우미 창으로 붙여 넣기 "
@@ -33,11 +36,11 @@ ACTIONS = [
 
 INK = "#E9ECF2"                  # icon and label colour on the dark bar
 # groups shown with a thin divider between them in the one-row bar
-GROUPS = [("copy", "autosave"), ("text", "table", "ppt"), ("mail", "kakao", "search"), ("pin",), ("more",)]
+GROUPS = [("copy", "autosave"), ("text", "translate", "summarize", "table", "ppt"), ("mail", "kakao", "search"), ("pin",), ("more",)]
 
 STYLE = """
 QWidget#sidebar { background: #1B1F2A; border: 1px solid #353C4E; border-radius: 16px; }
-QToolButton { border: none; border-radius: 10px; color: #E9ECF2; font-size: 11px; padding: 4px 1px; }
+QToolButton { border: none; border-radius: 10px; color: #E9ECF2; font-size: 11px; padding: 4px 0px; }
 QToolButton:hover { background: #2D3446; color: #FFFFFF; }
 QToolButton:pressed { background: #384158; }
 QToolButton#primary { background: #3B7CF6; color: #FFFFFF; font-weight: 600; padding: 4px 6px; }
@@ -69,7 +72,7 @@ class SideBar(QWidget):
         self.setAttribute(Qt.WA_StyledBackground, True)
         self.setStyleSheet(STYLE)
         self._grid = QGridLayout(self)
-        self._grid.setContentsMargins(6, 6, 6, 6)
+        self._grid.setContentsMargins(4, 6, 4, 6)
         self._grid.setHorizontalSpacing(2)
         self._grid.setVerticalSpacing(4)
         self._extra = QWidget(self)               # second row: its own spacing, not the first row's columns

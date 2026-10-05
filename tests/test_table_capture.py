@@ -242,7 +242,8 @@ def test_TCAP_17_side_bar_has_a_table_button(make):
     c.start_capture()
     drag(c.overlays[0], (100, 100), (500, 400))
     sb = c.overlays[0].side_bar
-    assert "table" in sb.buttons and list(sb.buttons).index("table") == list(sb.buttons).index("text") + 1
+    order = list(sb.buttons)                               # 텍스트 · 번역 · 요약 · 표: the "read the capture" group
+    assert "table" in sb.buttons and order.index("text") < order.index("table") < order.index("ppt")
 
 
 def test_TCAP_18_table_button_copies_the_table_of_the_capture(make, ocr):

@@ -7,7 +7,7 @@ include = ["capture_tool*"]
 
 [project]
 name = "capture-tool"
-version = "0.8.8"
+version = "0.8.9"
 description = "Windows capture tool: annotate, OCR, and copy shapes to PowerPoint as native shapes"
 requires-python = ">=3.12"
 license = { text = "MIT" }

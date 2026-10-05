@@ -536,6 +536,8 @@ class Controller(QObject):
             getattr(self.session.document, name)()
             if self.active_overlay:
                 self.active_overlay.update()
+        elif name in ("translate", "summarize"):
+            self._ai_from_capture(name)
         elif name == "text" and self.mode != "text":
             self._start_text_mode()
         elif name == "ppt":
@@ -1130,7 +1132,24 @@ class Controller(QObject):
             ov.setCursor(Qt.BusyCursor)
             QThreadPool.globalInstance().start(_Job(work, self._text_ready))
 
+    def _ai_from_capture(self, kind: str) -> None:
+        """번역 / 요약 pressed on the capture's bar: read the capture and show the result -
+        without going through text mode. In text mode: what is selected there."""
+        ov = self.active_overlay
+        if self.session.state is not State.EDITING or ov is None:
+            return
+        if ov.ocr_lines is not None:                  # text mode is open: same as its own buttons
+            self.on_ocr_action(kind)
+            return
+        self._text_then = kind
+        self.notify("글자를 읽는 중입니다…")
+        self._start_text_mode()
+
     def _on_text_ready(self, result) -> None:
+        then, self._text_then = getattr(self, "_text_then", None), None
+        if then is not None:
+            self._ai_after_read(then, result)
+            return
         ov, raw = self._text_ctx
         if self.session.state is not State.EDITING or ov is not self.active_overlay:
             return  # the capture was closed while recognizing
@@ -1151,6 +1170,20 @@ class Controller(QObject):
         self._copy_text(lines, self._text_grid, drag_hint=True)
         ov.enter_ocr_mode(lines, table=bool(self._text_table))
         self._preload_ai(full_text(lines))
+
+    def _ai_after_read(self, kind: str, result) -> None:
+        ov, _ = self._text_ctx
+        if self.session.state is not State.EDITING or ov is not self.active_overlay:
+            return  # the capture was closed while recognizing
+        ov.setCursor(Qt.ArrowCursor if ov.tool == "select" else Qt.CrossCursor)
+        if isinstance(result, Exception):
+            self.notify(f"인식 중 오류가 발생했습니다: {result}")
+            return
+        lines, err = result
+        if err or not lines:
+            self.notify(err or "텍스트를 찾지 못했습니다. 글자가 있는 부분을 골라 주세요.")
+            return
+        self.ai_request(kind, full_text(lines))
 
     def _preload_ai(self, text: str) -> None:
         """Text mode is open: translate / summary are likely next, so load their models now

@@ -8,7 +8,7 @@ import pytest
 from capture_tool.core.geometry import Rect, layout_action_bars
 from tests.test_app import drag, make  # noqa: F401 (fixture)
 
-BASIC = ["copy", "autosave", "text", "table", "ppt", "mail", "kakao", "search", "pin", "more"]
+BASIC = ["copy", "autosave", "text", "translate", "summarize", "table", "ppt", "mail", "kakao", "search", "pin", "more"]
 
 
 def selected(make, a=(100, 100), b=(400, 300), **kw):
@@ -28,7 +28,8 @@ def test_BAR_01_one_row_right_under_the_capture(make):
     sb = ov.side_bar
     g = sb.geometry()
     assert sb.isVisible() and g.width() > g.height() * 3
-    assert g.top() == 300 + 8 and g.left() == 100
+    assert g.top() == 300 + 8
+    assert g.left() == min(100, 800 - g.width()) >= 0      # at the capture's left edge, kept on the screen
     assert visible(sb) == BASIC
     tb = ov.toolbar.geometry()
     assert not tb.intersects(g)

@@ -20,6 +20,9 @@ _P = {
               '<rect x="4" y="4" width="8" height="8" fill="{c}"/><rect x="12" y="12" width="8" height="8" fill="{c}"/>',
     "lasso": '<path d="M7 17C3 14 3 8 8 6s11-1 12 3-4 7-9 7" stroke-dasharray="2.5 2.5"/><path d="M9 16l-3 5 5-2z"/>',
     "fill": '<rect x="5" y="5" width="14" height="14" rx="2"/><rect x="8" y="8" width="8" height="8" fill="{c}"/>',
+    "translate": '<path d="M4 6h8M8 4v2M10.5 6c-.8 3.2-3 5.8-6 7.2M6 9c1 2 2.6 3.4 4.6 4.2"/>'
+                 '<path d="M12.5 20l4-9 4 9M14 17h5"/>',
+    "summary": '<rect x="5" y="3.5" width="14" height="17" rx="2"/><path d="M8.5 8.5h7M8.5 12h7M8.5 15.5h4"/>',
     "ocr": '<path d="M4 8V5h3M17 5h3v3M20 16v3h-3M7 19H4v-3M8 10h8M8 14h5"/>',
     "shapes": '<rect x="3" y="11" width="8" height="8"/><circle cx="16" cy="8" r="4"/>',
     "undo": '<path d="M9 8L5 12l4 4M5 12h10a4 4 0 010 8h-3"/>',
