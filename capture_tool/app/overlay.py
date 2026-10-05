@@ -117,6 +117,38 @@ class OcrBar(QWidget):
         self.action.emit(name)
 
 
+_CAPTURE_CURSOR = None
+
+
+def capture_cursor():
+    """The pointer while choosing what to capture: a crosshair (its centre is the exact spot) with
+    a small dashed selection frame beside it - "drag here to pick an area". Dark lines with a
+    light edge, so it shows on any screen."""
+    global _CAPTURE_CURSOR
+    if _CAPTURE_CURSOR is not None:
+        return _CAPTURE_CURSOR
+    from PySide6.QtGui import QCursor, QPainter, QPen, QPixmap
+    size, c = 32, 11                                 # the crosshair's centre (the hot spot)
+    pm = QPixmap(size, size)
+    pm.fill(Qt.transparent)
+    p = QPainter(pm)
+    for color, width in ((QColor(255, 255, 255), 4), (QColor(20, 24, 32), 2)):      # light edge, then the dark line
+        pen = QPen(color, width)
+        pen.setCapStyle(Qt.FlatCap)
+        p.setPen(pen)
+        for x1, y1, x2, y2 in ((c, 1, c, c - 4), (c, c + 4, c, 2 * c), (1, c, c - 4, c), (c + 4, c, 2 * c, c)):
+            p.drawLine(x1, y1, x2, y2)
+    for color, width, style in ((QColor(255, 255, 255), 4, Qt.SolidLine), (QColor(59, 124, 246), 2, Qt.DashLine)):
+        pen = QPen(color, width, style)
+        if style == Qt.DashLine:
+            pen.setDashPattern([2, 1.5])
+        p.setPen(pen)
+        p.drawRect(c + 6, c + 6, 13, 11)             # the little frame: an area being picked
+    p.end()
+    _CAPTURE_CURSOR = QCursor(pm, c, c)
+    return _CAPTURE_CURSOR
+
+
 class OverlayWindow(QWidget):
     def update(self, *args):
         """Every edit repaints: let the live clipboard copy catch up (it skips when nothing
@@ -140,7 +172,7 @@ class OverlayWindow(QWidget):
         self.pixmap = bgr_to_pixmap(image, self.scale)
         self.setMouseTracking(True)
         self.setFocusPolicy(Qt.StrongFocus)
-        self.setCursor(Qt.CrossCursor)
+        self.setCursor(capture_cursor() if embedded is None else Qt.CrossCursor)
         self.setAttribute(Qt.WA_OpaquePaintEvent, True)
         s = controller.settings
         self.toolbar = Toolbar(self, tool=s.last_tool, color=s.last_color, width=s.last_width, recent=s.recent_colors,
@@ -204,6 +236,7 @@ class OverlayWindow(QWidget):
         self.selected = None
         self._pending_symbol = None
         self.ocr_lines = self._ocr_sel = None
+        self.setCursor(capture_cursor())             # choosing an area again (not the last capture's pointer)
         self.update()
 
     # --- selected shape & style -------------------------------------------------
@@ -356,6 +389,8 @@ class OverlayWindow(QWidget):
             return
         if self.ocr_lines is not None:  # text mode: the text bar takes the toolbar's place
             self.enter_ocr_mode(self.ocr_lines)
+        elif self.cursor().shape() == Qt.BitmapCursor:      # an area is chosen: the tool's own pointer
+            self.setCursor(Qt.ArrowCursor if self.tool == "select" else Qt.CrossCursor)
         tb = self.toolbar
         tb.arrange(self.width() - 16)
         lr = self.local_rect(sel)
