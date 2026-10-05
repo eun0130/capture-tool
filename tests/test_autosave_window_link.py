@@ -100,8 +100,8 @@ def test_AUTO_04_text_mode_then_escape_still_saves_the_capture(make, tmp_path):
     c = make(auto_save=True, ocr=FakeOcr([OcrLine("글자", (10, 10, 60, 20), 0.9)]))
     ov = select(c)
     ov.side_bar.trigger("text")
-    QTest.keyClick(ov, Qt.Key_Escape)                     # leave text mode
-    QTest.keyClick(ov, Qt.Key_Escape)                     # end the capture
+    QTest.keyClick(ov, Qt.Key_Escape)                     # one Esc ends the capture (BUG-098)
+    assert c.overlays == []
     assert len(shots(tmp_path)) == 1
 
 

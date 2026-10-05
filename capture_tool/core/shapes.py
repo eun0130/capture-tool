@@ -58,6 +58,9 @@ class Detected:
     bold: bool = False
     image: bytes | None = None        # kind "picture": PNG of a small piece (icon) copied as is
     table: int | None = None          # cells (and the frame) of one ruled table share this number
+    align: str = "ctr"                # "l": the shape's lines start at one left edge (pad_left px in)
+    pad_left: float = 0
+    dash: bool = False                # dashed outline
 
 
 @dataclass
@@ -531,12 +534,62 @@ def attach_text(shapes: list[Detected], lines: list[tuple[str, tuple]], img=None
         best = min(inside, key=lambda i: shapes[i].w * shapes[i].h)
         buckets.setdefault(best, []).append((y, x, text, (x, y, w, h)))
     for i, items in buckets.items():
-        shapes[i].text = "\n".join(t for _, _, t, _ in sorted(items))
+        items = sorted(items)
+        boxes = [it[3] for it in items]
+        col = column_of(boxes, shapes[i])
+        if col:                                        # a card: its lines as written, gaps and all
+            shapes[i].text = _stacked([(it[2], it[3]) for it in items])
+            shapes[i].align = col
+            shapes[i].pad_left = max(0.0, min(b[0] for b in boxes) - shapes[i].x) if col == "l" else 0
+        else:
+            shapes[i].text = "\n".join(t for _, _, t, _ in items)
         if img is not None:
             big = max((it for it in items), key=lambda it: it[3][3])
             st = text_style(img, big[3], big[2], dpi)
             shapes[i].text_color, shapes[i].font_size, shapes[i].bold = st.color, st.size, st.bold
     return rest
+
+
+COLUMN_TOL = 6          # px; lines of one column start (or centre) this close to each other
+
+
+def column_of(boxes: list[tuple], d: Detected) -> str | None:
+    """Do these lines (x, y, w, h) sit in the shape as one column of text - one line per row,
+    all centred on one axis ("ctr") or all starting at one left edge ("l")? That is a card
+    (a diagram node, a note): its text belongs to the shape. Labels spread across a panel don't."""
+    if len(boxes) < 2 or d.kind in ("line", "arrow", "text", "picture"):
+        return None
+    rows = sorted(boxes, key=lambda b: b[1])
+    for a, b in zip(rows, rows[1:]):
+        if b[1] < a[1] + 0.5 * a[3]:                   # two labels on one row
+            return None
+    y1, y2 = rows[0][1], rows[-1][1] + rows[-1][3]
+    if abs((y1 + y2) / 2 - (d.y + d.h / 2)) > 0.25 * d.h:
+        return None                                    # a block at the top or bottom: keep it where it is
+    centres = [b[0] + b[2] / 2 for b in rows]
+    mid = float(np.median(centres))
+    tol = max(COLUMN_TOL, 0.04 * d.w)
+    if max(abs(c - mid) for c in centres) <= tol and abs(mid - (d.x + d.w / 2)) <= 0.12 * d.w:
+        return "ctr"
+    lefts = [b[0] for b in rows]
+    if max(lefts) - min(lefts) <= COLUMN_TOL and min(lefts) - d.x <= 0.3 * d.w:
+        return "l"
+    return None
+
+
+def _stacked(items: list[tuple[str, tuple]]) -> str:
+    """Lines top to bottom, with an empty line wherever the picture leaves one."""
+    items = sorted(items, key=lambda it: it[1][1])
+    steps = [b[1][1] - a[1][1] for a, b in zip(items, items[1:])]
+    if not steps:
+        return items[0][0]
+    low = min(steps)
+    pitch = float(np.median([s for s in steps if s <= 1.5 * low])) or 1.0
+    out = [items[0][0]]
+    for (text, _), step in zip(items[1:], steps):
+        out += [""] * max(0, min(3, int(round(step / pitch)) - 1))
+        out.append(text)
+    return "\n".join(out)
 
 
 def _luma(h: str) -> float:
@@ -652,11 +705,13 @@ def to_drawing(detected: list[Detected], keep_style: bool = True) -> tuple[list[
             stroke = d.stroke if (d.stroke or d.fill) else "#000000"
             shapes.append(DShape(d.kind, d.x, d.y, d.w, d.h, fill=d.fill, stroke=stroke,
                                  stroke_width=d.stroke_width, text=d.text, text_color=color(d),
-                                 font_size=d.font_size, bold=bold, wrap=False))
+                                 font_size=d.font_size, bold=bold, wrap=False,
+                                 align=d.align, pad_left=d.pad_left, dash=d.dash))
         else:
             shapes.append(DShape(d.kind, d.x, d.y, d.w, d.h, fill="#FFFFFF", stroke="#000000",
                                  stroke_width=d.stroke_width, text=d.text, text_color="#000000",
-                                 font_size=d.font_size, wrap=False))
+                                 font_size=d.font_size, wrap=False,
+                                 align=d.align, pad_left=d.pad_left, dash=d.dash))
     conns = []
     for d in detected:
         if d.kind not in ("line", "arrow"):
@@ -729,6 +784,11 @@ WIDGET_MIN, WIDGET_MAX = 12, 28                # px; radio buttons and check box
 WIDGET_THRESHOLD = 10
 RING_LETTERS = set("ㅇOo○◯0")
 ICON_MIN, ICON_MAX = 6, 64      # px; leftover marks this size go in as small pictures
+CORNER_MAX = 24                 # px; a rounded corner's arc is looked for this far in
+DASH_MAX = 30                   # px; a dash of a dashed outline is at most this long
+DASH_THICK = 6                  # ... and this thick
+DASH_GAP = 14                   # px; blanks this long between dashes still belong to one line
+DASH_SIDE = 0.55                # share of a side that the joined dashes must cover
 ICON_DIFF = 40                  # how far a pixel must be from what the shapes explain
 MAX_ICONS = 60
 
@@ -876,9 +936,145 @@ def release_labels(detected: list[Detected], lines: list[tuple[str, tuple]]) -> 
         by2 = max(b[1] + b[3] for b in boxes)
         off_x = abs((bx1 + bx2) / 2 - (d.x + d.w / 2)) / max(d.w, 1)
         off_y = abs((by1 + by2) / 2 - (d.y + d.h / 2)) / max(d.h, 1)
+        if column_of(boxes, d):
+            continue                                   # a card: its lines are the shape's own text
         if len(js) > 3 or not _is_block(boxes) or off_x > 0.18 or off_y > 0.25:
             free.update(js)
     return [l for j, l in enumerate(lines) if j in free]
+
+
+def find_dashed_boxes(img: np.ndarray, det: list[Detected], text_boxes) -> list[Detected]:
+    """Boxes drawn with a dashed outline. Each dash is a small thin mark of its own; marks in a
+    row with short blanks between them are joined into lines, and four such lines around a
+    blank middle are one dashed box."""
+    bg = _background(img)
+    fg = (_dist(img, bg) > LAYOUT_THRESHOLD).astype(np.uint8)
+    for (x, y, w, h) in text_boxes:
+        x, y, w, h = (int(round(v)) for v in (x, y, w, h))
+        fg[max(0, y):y + h, max(0, x):x + w] = 0
+    for d in det:
+        if d.kind not in ("line", "arrow", "text", "picture"):
+            fg[max(0, d.y - 3):d.y + d.h + 3, max(0, d.x - 3):d.x + d.w + 3] = 0
+    n, labels, stats, _ = cv2.connectedComponentsWithStats(fg, connectivity=8)
+    small = np.zeros(n, bool)
+    for j in range(1, n):
+        w, h = int(stats[j, cv2.CC_STAT_WIDTH]), int(stats[j, cv2.CC_STAT_HEIGHT])
+        small[j] = max(w, h) <= DASH_MAX and (min(w, h) <= DASH_THICK or max(w, h) <= 2 * DASH_THICK + 2)
+    marks = (small[labels]).astype(np.uint8) * 255
+    if not marks.any():
+        return []
+    k = 2 * DASH_GAP + 1
+    rows = cv2.morphologyEx(marks, cv2.MORPH_CLOSE, np.ones((1, k), np.uint8))
+    rows = cv2.morphologyEx(rows, cv2.MORPH_OPEN, np.ones((1, 3 * DASH_MAX), np.uint8))       # long runs only
+    cols = cv2.morphologyEx(marks, cv2.MORPH_CLOSE, np.ones((k, 1), np.uint8))
+    cols = cv2.morphologyEx(cols, cv2.MORPH_OPEN, np.ones((2 * DASH_MAX, 1), np.uint8))
+    def segments(mask, upright):
+        n_, _, st, _ = cv2.connectedComponentsWithStats(mask, connectivity=8)
+        segs = [tuple(int(v) for v in st[q, :4]) for q in range(1, n_)]
+        return [g for g in segs if (g[2] if upright else g[3]) <= 2 * DASH_THICK + 2]      # thin ones
+
+    hs, vs = segments(rows, False), segments(cols, True)
+    reach = DASH_GAP + DASH_THICK                      # a rounded corner leaves this much open
+    frames = []
+    for a in hs:
+        for b in hs:
+            if b[1] - a[1] < 2 * DASH_MAX:
+                continue                               # a is the top, b the bottom
+            x1, x2 = max(a[0], b[0]), min(a[0] + a[2], b[0] + b[2])
+            if x2 - x1 < 0.8 * max(a[2], b[2]):
+                continue
+            top, bottom = a[1], b[1] + b[3]
+
+            def side(at):
+                return any(abs(v[0] + v[2] / 2 - at) <= reach
+                           and min(v[1] + v[3], bottom) - max(v[1], top) >= DASH_SIDE * (bottom - top) for v in vs)
+            left, right = min(a[0], b[0]), max(a[0] + a[2], b[0] + b[2])
+            if side(left) and side(right):
+                xs = [v[0] for v in vs if abs(v[0] + v[2] / 2 - left) <= reach] + [left]
+                xe = [v[0] + v[2] for v in vs if abs(v[0] + v[2] / 2 - right) <= reach] + [right]
+                frames.append((min(xs), top, max(xe) - min(xs), bottom - top))
+    out = []
+    band = DASH_THICK + 2
+    for x, y, w, h in frames:
+        if any(_iou(Detected("rect", x, y, w, h), o) > 0.5 for o in out):
+            continue
+        inner = marks[y + band + 4:y + h - band - 4, x + band + 4:x + w - band - 4]
+        if inner.size and inner.mean() / 255 > 0.02:
+            continue                                   # marks all over: a texture, not a frame
+        edge = np.zeros_like(marks)
+        cv2.rectangle(edge, (x, y), (x + w - 1, y + h - 1), 255, 2 * band)
+        ink = (marks > 0) & (edge > 0)
+        solid = float(ink[y:y + band, x:x + w].any(axis=0).mean())
+        if solid > 0.92:
+            continue                                   # an unbroken outline is not dashed
+        color = _median_color(img, ink.astype(np.uint8))
+        thick = float(np.median([min(int(stats[j, cv2.CC_STAT_WIDTH]), int(stats[j, cv2.CC_STAT_HEIGHT]))
+                                 for j in np.unique(labels[ink]) if j > 0] or [2]))
+        d = Detected("roundRect", x, y, w, h, stroke=_hex(color) if color else "#808080",
+                     stroke_width=max(1.0, min(3.0, thick)), dash=True)
+        middle = img[y + band + 2:y + h - band - 2, x + band + 2:x + w - band - 2]
+        if middle.size:
+            fill = _fill_color(middle, np.full(middle.shape[:2], 255, np.uint8))
+            if fill is not None and max(abs(a_ - b_) for a_, b_ in zip(fill, bg)) > 6:
+                d.fill = _hex(fill)
+        out.append(d)
+    return out
+
+
+def _on_outline(d: Detected, box: Detected, band: int) -> bool:
+    """Is d a bit of the outline of `box` - lying along one of its sides or in a corner?"""
+    cx, cy = d.x + d.w / 2, d.y + d.h / 2
+    if not (box.x - band <= cx <= box.x + box.w + band and box.y - band <= cy <= box.y + box.h + band):
+        return False
+    near_x = min(abs(cx - box.x), abs(cx - (box.x + box.w)))
+    near_y = min(abs(cy - box.y), abs(cy - (box.y + box.h)))
+    r = min(CORNER_MAX, min(box.w, box.h) // 5) + band
+    if near_x <= r and near_y <= r:
+        return True                                    # a corner arc
+    if d.kind in ("line", "arrow"):
+        upright = d.h >= d.w
+        return near_x <= band if upright else near_y <= band      # runs along that side
+    return min(near_x, near_y) <= band
+
+
+def _with_dashed_boxes(img, det: list[Detected], text_boxes) -> list[Detected]:
+    boxes = find_dashed_boxes(img, det, text_boxes)
+    if not boxes:
+        return det
+    band = DASH_THICK + 4
+    keep = [d for d in det if not any(
+        (d.kind in ("line", "arrow", "picture") or max(d.w, d.h) <= DASH_MAX) and _on_outline(d, b, band)
+        or _iou(d, b) > 0.7 for b in boxes)]
+    return keep + boxes
+
+
+def _without_outline_bits(det: list[Detected], text_boxes) -> list[Detected]:
+    """A hand-drawn or shadowed outline leaves strokes beside the shape it belongs to, and a
+    stroke found across a line of text is the text itself: neither is a line of the drawing."""
+    closed = [d for d in det if d.kind not in ("line", "arrow", "text", "picture") and min(d.w, d.h) > WIDGET_MAX + 4]
+    out = []
+    for d in det:
+        if d.kind in ("line", "arrow"):
+            if any(o is not d and max(d.w, d.h) <= max(o.w, o.h) and _on_outline(d, o, int(o.stroke_width) + 8)
+                   for o in closed):
+                continue
+            area = max(1, d.w * d.h)
+            if any(max(0, min(d.x + d.w, x + w) - max(d.x, x)) * max(0, min(d.y + d.h, y + h) - max(d.y, y))
+                   >= 0.6 * area for (x, y, w, h) in text_boxes):
+                continue
+        out.append(d)
+    return out
+
+
+def _last_stroke(d: Detected, lines) -> bool:
+    """A thin upright mark right after a line that ends in a Korean letter is that letter's last
+    stroke (the "ㅣ" of "비") left outside a tight text box - not an icon."""
+    if d.w > 8 or d.h < d.w:
+        return False
+    for text, (x, y, w, h), _ in lines:
+        if text and "가" <= text.strip()[-1:] <= "힣" and y - 3 <= d.y and d.y + d.h <= y + h + 3                 and -2 <= d.x - (x + w) <= 0.5 * h:
+            return True
+    return False
 
 
 def find_icons(img: np.ndarray, det: list[Detected], text_boxes) -> list[Detected]:
@@ -895,6 +1091,10 @@ def find_icons(img: np.ndarray, det: list[Detected], text_boxes) -> list[Detecte
             expect[d.y:d.y + d.h, d.x:d.x + d.w] = _parse(d.fill)
         band = int(d.stroke_width) + 3                 # the outline (and rounded corners) with a margin
         cv2.rectangle(covered, (d.x, d.y), (d.x + d.w - 1, d.y + d.h - 1), 255, 2 * band)
+        if d.kind == "roundRect":                      # the corner arcs run inside the straight band
+            r = max(band, min(CORNER_MAX, min(d.w, d.h) // 5))
+            for cx, cy in ((d.x, d.y), (d.x + d.w - r, d.y), (d.x, d.y + d.h - r), (d.x + d.w - r, d.y + d.h - r)):
+                covered[max(0, cy - band):cy + r + band, max(0, cx - band):cx + r + band] = 255
         if (d.text and d.fill) or (d.w <= WIDGET_MAX + 4 and d.h <= WIDGET_MAX + 4):   # a button with words, a radio
             covered[max(0, d.y - 2):d.y + d.h + 2, max(0, d.x - 2):d.x + d.w + 2] = 255
     for d in det:
@@ -916,6 +1116,9 @@ def find_icons(img: np.ndarray, det: list[Detected], text_boxes) -> list[Detecte
             continue
         if left[y:y + h, x:x + w].sum() < 8:
             continue
+        if min(w, h) <= 10 and max(w, h) >= 3 * min(w, h) and any(
+                _on_outline(Detected("picture", x, y, w, h), o, 16) for o in closed if min(o.w, o.h) > WIDGET_MAX + 4):
+            continue                                   # a thin stroke hugging a shape's side: more of its outline
         x0, y0 = max(0, x - 1), max(0, y - 1)
         x1, y1 = min(img.shape[1], x + w + 1), min(img.shape[0], y + h + 1)
         ok, png = cv2.imencode(".png", img[y0:y1, x0:x1])
@@ -939,9 +1142,9 @@ def recognize_layout(img: np.ndarray, lines, recognize, dpi: float = 96, find_ag
         if len(t) == 1 and box[2] <= 30 and box[3] <= 30 and (
                 t in SYMBOLS or box[3] <= 12 or any(_overlap(box, w) > 0.5 for w in widgets)):
             continue                                   # a radio ring, dropdown or scroll arrow, icon: not a word
-        if len(t) > 1 and t[0] in RING_LETTERS and "가" <= t[1] <= "힣" and any(
+        if len(t) > 1 and t[0] in RING_LETTERS and "가" <= t[1:].lstrip()[:1] <= "힣" and any(
                 _overlap((box[0], box[1], box[3], box[3]), w) > 0.5 for w in widgets):
-            t = t[1:]                                  # a bullet ring read as a letter
+            t = t[1:].lstrip()                         # a bullet ring read as a letter
         box = _ink_box(img, _without_widgets(box, widgets))
         kept.append((t, box, sc))
     det = detect(img, text_boxes=split_doubtful(kept)[0], threshold=LAYOUT_THRESHOLD, cells=True)
@@ -960,6 +1163,8 @@ def recognize_layout(img: np.ndarray, lines, recognize, dpi: float = 96, find_ag
                     box.fill = _hex(fill)
             det[i] = box or d
     det = [d for d in det if not (d.kind in ("line", "arrow") and max(d.w, d.h) < SHORT_STROKE)]
+    det = _with_dashed_boxes(img, det, [b for _, b, _ in kept])
+    det = _without_outline_bits(det, [b for _, b, _ in kept] + [b for _, b, _ in lines])
     found = drop_doubtful_inside(det, kept)
     free = release_labels(det, found)
     taken = [l for l in found if l not in free]
@@ -969,7 +1174,7 @@ def recognize_layout(img: np.ndarray, lines, recognize, dpi: float = 96, find_ag
         rest = attach_found_text(img, det, taken, recognize, dpi, skip=holders)
     else:
         rest = attach_text(det, taken, img=img, dpi=dpi)
-    det += find_icons(img, det, [b for _, b, _ in kept])
+    det += [d for d in find_icons(img, det, [b for _, b, _ in kept]) if not _last_stroke(d, kept)]
     for t in text_boxes_for(rest + free, img, dpi):
         cx, cy = t.x + t.w / 2, t.y + t.h / 2
         if t.fill and any(d.fill and d.kind not in ("line", "arrow", "text")

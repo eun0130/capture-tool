@@ -351,6 +351,171 @@ def _char_weight(ch: str) -> float:
     return 0.4
 
 
+SPACE_SHARE = 0.8          # a blank at least this share of the line's known spaces is a space too
+SPACE_FLOOR_EM = 0.2       # ... but never a blank narrower than this share of the letter height
+SPACE_ALONE_EM = 0.45      # no known space anywhere to compare with: only a clearly wide blank counts
+SPREAD_SHARE = 0.6         # nearly every letter followed by a wide blank: a spread-out font, not spaces
+_NO_SPACE_AFTER = set("([{<\u201c\u2018")
+_NO_SPACE_BEFORE = set(")]}>,.:;!?%\u201d\u2019")
+_AFTER_PUNCT = set(",.:;!?")
+
+
+def _blank_spans(cols: np.ndarray) -> tuple[int, int, list[tuple[int, int]]]:
+    """(first ink column, one past the last, blank stretches between them)."""
+    first, last = int(np.argmax(cols)), len(cols) - int(np.argmax(cols[::-1]))
+    runs, start = [], None
+    for x in range(first, last):
+        if not cols[x] and start is None:
+            start = x
+        elif cols[x] and start is not None:
+            runs.append((start, x))
+            start = None
+    return first, last, runs
+
+
+def _may_split(prev: str, nxt: str) -> bool:
+    """May a space stand between these two letters? Never inside brackets, before punctuation
+    or inside English words and numbers (their spacing is the reader's)."""
+    if prev in _NO_SPACE_AFTER or nxt in _NO_SPACE_BEFORE:
+        return False
+    if _HANGUL.search(prev) or _HANGUL.search(nxt):
+        return True
+    return prev in _AFTER_PUNCT and not nxt.isdigit()
+
+
+class _LineGaps:
+    """The wider blanks of one Korean line, each with the letter boundaries it may lie at."""
+
+    def __init__(self, img: np.ndarray, text: str, box, words=()):
+        self.ok = False
+        self.text = text
+        self.chars = chars = [c for c in text if c != " "]
+        n = len(chars)
+        if n < 2 or not _HANGUL.search(text) or img is None or img.size == 0:
+            return
+        x, y, w, h = (int(round(v)) for v in box)
+        x0, y0 = max(0, x), max(0, y)
+        crop = img[y0:max(y0, y + h), x0:max(x0, x + w)]
+        if crop.size == 0 or crop.shape[0] < 4 or crop.shape[1] < 8:
+            return
+        gray = (cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY) if crop.ndim == 3 else crop).astype(np.int16)
+        frame = np.concatenate([gray[0], gray[-1], gray[:, 0], gray[:, -1]])      # the paper around the letters
+        diff = np.abs(gray - int(np.median(frame)))
+        top = int(diff.max())
+        if top < 30:
+            return
+        ink = diff > max(30, 0.35 * top)
+        rows = np.flatnonzero(ink.any(axis=1))
+        cols = ink.any(axis=0)
+        if len(rows) == 0 or not cols.any():
+            return
+        self.em = em = float(rows[-1] - rows[0] + 1)
+        first, last, runs = _blank_spans(cols)
+        if not runs:
+            return
+        floor = max(3.0, SPACE_FLOOR_EM * em)
+        wide = [(a, b) for a, b in runs if b - a >= floor]
+        if not wide:
+            return
+        self.have, i = set(), 0                      # letters before each space the reader found
+        for ch in text:
+            if ch == " ":
+                self.have.add(i)
+            else:
+                i += 1
+        spans = []                                   # (index of first letter, letters, left, right)
+        if words and "".join(str(wd[0]).replace(" ", "") for wd in words) == "".join(chars):
+            i = 0
+            for wd in words:
+                k = len(str(wd[0]).replace(" ", ""))
+                q = np.asarray(wd[2], float)
+                if k:
+                    spans.append((i, k, float(q[:, 0].min()) - x0, float(q[:, 0].max()) - x0))
+                i += k
+        if not spans:
+            spans = [(0, n, float(first), float(last))]
+        slack = 0.3 * em
+
+        def places(left: float, c: float) -> list[int]:
+            """Letter boundaries the blank (starting at `left`, centred at c) may be, the likeliest first."""
+            for k, (i, cnt, a, b) in enumerate(spans):
+                if c < a + slack:
+                    return [i] if i > 0 else []                     # between two word boxes
+                if c <= b - slack:
+                    if cnt == 1:
+                        return [i] if c - a < b - c else [i + 1]
+                    inner = [(p, q) for p, q in wide if a <= (p + q) / 2 <= b]      # letters fill the rest
+                    gone = sum(q - p for p, q in inner if (p + q) / 2 < c)
+                    room = max(1.0, (b - a) - sum(q - p for p, q in inner))
+                    share = (left - a - gone) / room          # letters before it / letters of the span
+                    weights = [_char_weight(ch) for ch in chars[i:i + cnt]]
+                    total, acc, near = sum(weights), 0.0, []
+                    for j in range(1, cnt):
+                        acc += weights[j - 1]
+                        near.append((abs(acc / total - share), i + j))
+                    near.sort()
+                    reach = 1.2 * max(weights) / total              # at most about one letter off
+                    return [j for d, j in near[:3] if d <= reach]
+            end = spans[-1][0] + spans[-1][1]
+            return [end] if end < n else []
+
+        self.gaps = []                               # (width, boundary candidates)
+        for a, b in wide:
+            cand = [j for j in places(a, (a + b) / 2) if 0 < j < n]
+            if cand:
+                self.gaps.append((b - a, cand))
+        self.n = n
+        self.ok = bool(self.gaps)
+
+    def known(self) -> list[float]:
+        """Widths (share of the letter height) of the blanks where the reader did find a space."""
+        return [w / self.em for w, cand in self.gaps if cand[0] in self.have] if self.ok else []
+
+    def fixed(self, page_ratio: float | None = None) -> str:
+        if not self.ok:
+            return self.text
+        own = self.known()
+        ref = float(np.median(own)) if own else page_ratio
+        need = SPACE_SHARE * ref * self.em if ref else SPACE_ALONE_EM * self.em
+        spaces = [(w, cand) for w, cand in self.gaps if w >= need]
+        if self.n > 4 and len(spaces) > SPREAD_SHARE * (self.n - 1):
+            return self.text                         # every letter stands apart: a spread-out font
+        taken = {cand[0] for _, cand in spaces if cand[0] in self.have}
+        add = set()
+        for _, cand in spaces:
+            if cand[0] in self.have:
+                continue
+            mine = next((j for j in cand[1:] if j in self.have and j not in taken), None)
+            if mine is not None:
+                taken.add(mine)
+                continue                             # the reader's own space, estimated one letter off
+            if self.chars[cand[0] - 1] in _NO_SPACE_AFTER or self.chars[cand[0]] in _NO_SPACE_BEFORE:
+                continue                             # the blank a bracket or a comma brings along
+            j = next((j for j in cand if j not in self.have and j not in add
+                      and _may_split(self.chars[j - 1], self.chars[j])), None)
+            if j is not None:
+                add.add(j)
+        if not add:
+            return self.text
+        out, i = [], 0
+        for ch in self.text:
+            if ch != " ":
+                if i in add and out and out[-1] != " ":
+                    out.append(" ")
+                i += 1
+            out.append(ch)
+        return "".join(out)
+
+
+def restore_spaces(img: np.ndarray, text: str, box, words=(), page_ratio: float | None = None) -> str:
+    """Put back the spaces the reader dropped in a Korean line ("질문은한번에" for "질문은 한 번에").
+    The picture decides: a blank between letters about as wide as the spaces the reader did find
+    (in this line, else on the page: `page_ratio`, a share of the letter height) is a space. It
+    goes between the two letters it lies between - letters are laid out by their widths inside the
+    reader's word boxes. Spaces the reader found stay; nothing is ever removed."""
+    return _LineGaps(img, text, box, words).fixed(page_ratio)
+
+
 class OcrEngine:
     def __init__(self, factory: Callable | None = None, secondary_factory: Callable | None = None,
                  secondary_call: Callable | None = None, margin: int | None = None):
@@ -471,13 +636,18 @@ class OcrEngine:
             x, y = q[:, 0].min(), q[:, 1].min()
             box = (int(round(x)), int(round(y)), int(round(q[:, 0].max() - x)), int(round(q[:, 1].max() - y)))
             pieces.append([str(text), box, float(score), words_all[k] if k < len(words_all) else ()])
-        out = []
+        read = []
         for text, box, score, words in self._join_pieces(engine, img, pieces):
             if _HANGUL.search(text) and _LATIN_LETTER.search(text) and words:
                 text = self._fix_latin_words(img, text, words or ())
             line = self._second_reading(img, OcrLine(text, box, float(score)))
+            read.append((line, _LineGaps(img, line.text, line.box, words or ())))
+        known = [r for _, g in read for r in g.known()]      # how wide a space is on this page: its
+        page_ratio = float(np.percentile(known, 25)) if known else None     # narrower font (code is wider)
+        out = []
+        for line, gaps in read:
             bx, by, bw, bh = line.box
-            out.append(OcrLine(line.text, (bx + x0, by + y0, bw, bh), line.score))
+            out.append(OcrLine(gaps.fixed(page_ratio), (bx + x0, by + y0, bw, bh), line.score))
         return out
 
     def _latin(self, img, box, text: str):

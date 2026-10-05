@@ -98,7 +98,7 @@ class OcrBar(QWidget):
         lay.addWidget(QLabel("드래그한 부분의 글자를 바로 복사합니다"))
         self.buttons = {}
         for name, label in [("all", "전체 복사 (Enter)"), ("table", "표로 복사"), ("translate", "번역"), ("summarize", "요약"),
-                            ("window", "창으로 보기"), ("back", "그리기로 돌아가기 (Esc)")]:
+                            ("window", "창으로 보기"), ("back", "그리기로 돌아가기")]:
             b = QPushButton(label, self)
             b.setFocusPolicy(Qt.NoFocus)
             b.clicked.connect(lambda _=False, n=name: self.action.emit(n))
@@ -540,11 +540,8 @@ class OverlayWindow(QWidget):
         k, mods = e.key(), e.modifiers()
         ctrl, shift = bool(mods & Qt.ControlModifier), bool(mods & Qt.ShiftModifier)
         st = self.c.session.state
-        if k == Qt.Key_Escape:
-            if self.ocr_lines is not None:
-                self.exit_ocr_mode()      # leave text mode, keep the capture
-            else:
-                self.c.cancel()
+        if k == Qt.Key_Escape:            # one Esc always ends the capture - in text mode too (BUG-098)
+            self.c.cancel()
             return
         if st is State.SELECTING:
             if k == Qt.Key_C:
@@ -774,7 +771,7 @@ class OverlayWindow(QWidget):
         if st is State.SELECTING:
             text = "드래그로 영역 선택 · 창(제목줄)을 클릭하면 그 창 전체 · C 색상 복사 · Esc 취소"
         elif self.active and self.ocr_lines is not None:
-            text = "글자 위를 드래그하면 그 부분만 복사 · Enter 전체 복사 · Esc 그리기로 돌아가기"
+            text = "글자 위를 드래그하면 그 부분만 복사 · Enter 전체 복사 · Esc 닫기"
         elif self.active and self.tool == "lasso":
             text = "남길 부분의 테두리를 따라 그리세요 · 다시 그리면 새 모양 · Ctrl+Z 되돌리기 · Enter 복사"
         elif self.active:

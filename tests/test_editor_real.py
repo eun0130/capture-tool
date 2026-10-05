@@ -61,7 +61,7 @@ text = raw.decode("utf-16-le", "ignore").split(chr(0))[0] if isinstance(raw, byt
 found = [w for w in want if w.replace(" ", "") in text.replace(" ", "")]
 print("ocr_found", len(found), "of", len(want), "last", repr(want[-1]) if want[-1] in text or want[-1].replace(" ", "") in text.replace(" ", "") else "missing")
 QTest = __import__("PySide6.QtTest", fromlist=["QTest"]).QTest
-QTest.keyClick(cv, Qt.Key_Escape); pump(0.3)                  # back to drawing
+cv.ocr_bar.trigger("back"); pump(0.3)                         # back to drawing
 cv.set_tool("rect"); cv.set_color("#E03131")
 ed.area.verticalScrollBar().setValue(ed.area.verticalScrollBar().maximum()); pump(0.3)
 y_local = cv.height() - 120

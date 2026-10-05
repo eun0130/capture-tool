@@ -256,6 +256,8 @@ def ppt_form_send(src_png: str, out_png: str) -> None:
                               s.Table.Cell(1, 1).Shape.TextFrame.TextRange.Text) for s in slide.Shapes if s.HasTable]
             dx = 10 - min(float(s.Left) for s in slide.Shapes)      # into view for the picture only
             for s in slide.Shapes:
+                if s.Connector and s.ConnectorFormat.BeginConnected:
+                    continue                                        # follows the shapes it joins
                 s.Left = float(s.Left) + dx
             slide.Export(out_png, "PNG", int(pres.PageSetup.SlideWidth * 2), int(pres.PageSetup.SlideHeight * 2))
         finally:

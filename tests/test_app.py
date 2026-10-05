@@ -927,9 +927,10 @@ def test_APP_50_drag_over_text_copies_just_that_part(make):
     drag(ov, (100 + 140, 100 + 5), (100 + 200, 100 + 35))
     assert c.clipboard.last[UNICODE] == "234"
     assert any("3자" in m for m in c.messages)
-    QTest.keyClick(ov, Qt.Key_Escape)                           # leave text mode, keep the capture
+    ov.ocr_bar.trigger("back")                                  # the button leaves text mode, keeps the capture
     assert ov.ocr_lines is None and c.overlays == [ov]
-    QTest.keyClick(ov, Qt.Key_Escape)
+    ov.side_bar.trigger("text")
+    QTest.keyClick(ov, Qt.Key_Escape)                           # BUG-098: one Esc ends the capture, in text mode too
     assert c.overlays == []
 
 

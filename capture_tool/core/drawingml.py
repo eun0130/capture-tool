@@ -54,6 +54,8 @@ class DShape:
     wrap: bool = True                # False: a free text box sized to its text (no re-wrapping)
     align: str = "ctr"               # "ctr" inside shapes, "l" for free text
     image: bytes | None = None       # PNG: a small picture (an icon) instead of a drawn shape
+    pad_left: float = 0              # px from the shape's left edge to its left-aligned text
+    dash: bool = False               # dashed outline
 
     def __post_init__(self):
         if self.kind not in KINDS:
@@ -160,14 +162,15 @@ def _fill(color):
     return f'<a:solidFill><a:srgbClr val="{color[1:]}"/></a:solidFill>' if color else "<a:noFill/>"
 
 
-def _ln(color, width_px, arrow=False, dpi: float = 96):
+def _ln(color, width_px, arrow=False, dpi: float = 96, dash: bool = False):
     if not color:
         return "<a:ln><a:noFill/></a:ln>"
     tail = '<a:tailEnd type="triangle"/>' if arrow else ""
-    return f'<a:ln w="{px_to_emu(width_px, dpi)}">{_fill(color)}{tail}</a:ln>'
+    dashed = '<a:prstDash val="dash"/>' if dash else ""
+    return f'<a:ln w="{px_to_emu(width_px, dpi)}">{_fill(color)}{dashed}{tail}</a:ln>'
 
 
-def _txbody(s: DShape) -> str:
+def _txbody(s: DShape, dpi: float = 96) -> str:
     if not s.text:
         return ""
     paras = []
@@ -183,7 +186,8 @@ def _txbody(s: DShape) -> str:
             f'{_fill(s.text_color)}{face}</a:rPr><a:t>{escape(line)}</a:t></a:r></a:p>'
         )
     wrap = "square" if s.wrap else "none"
-    return (f'<a:txSp><a:txBody><a:bodyPr anchor="ctr" wrap="{wrap}"/><a:lstStyle/>{"".join(paras)}'
+    inset = f' lIns="{px_to_emu(s.pad_left, dpi)}"' if s.pad_left > 0 and s.align == "l" else ""
+    return (f'<a:txSp><a:txBody><a:bodyPr anchor="ctr" wrap="{wrap}"{inset}/><a:lstStyle/>{"".join(paras)}'
             f"</a:txBody><a:useSpRect/></a:txSp>")
 
 
@@ -213,8 +217,8 @@ def drawing_xml(shapes: list[DShape], connectors: list[DConnector], dpi: float =
             f'<a:sp><a:nvSpPr><a:cNvPr id="{ids[i]}" name="{s.kind} {i + 1}"/><a:cNvSpPr/></a:nvSpPr>'
             f'<a:spPr><a:xfrm><a:off x="{e(s.x, minx)}" y="{e(s.y, miny)}"/>'
             f'<a:ext cx="{emu(s.w)}" cy="{emu(s.h)}"/></a:xfrm>'
-            f'<a:prstGeom prst="{s.kind}"><a:avLst/></a:prstGeom>{_fill(s.fill)}{_ln(s.stroke, s.stroke_width, dpi=dpi)}</a:spPr>'
-            f"{_txbody(s)}</a:sp>"
+            f'<a:prstGeom prst="{s.kind}"><a:avLst/></a:prstGeom>{_fill(s.fill)}{_ln(s.stroke, s.stroke_width, dpi=dpi, dash=s.dash)}</a:spPr>'
+            f"{_txbody(s, dpi)}</a:sp>"
         )
     next_id = len(shapes) + 2
     for j, l in enumerate(lines):
@@ -299,6 +303,8 @@ def svg(shapes: list[DShape], connectors: list[DConnector], dpi: float = 96) -> 
                        f'href="data:image/png;base64,{base64.b64encode(s.image).decode()}"/>')
             continue
         style = f'fill="{s.fill or "none"}" stroke="{s.stroke or "none"}" stroke-width="{f(s.stroke_width)}"'
+        if s.dash:
+            style += ' stroke-dasharray="6 4"'
         if s.kind in ("rect", "roundRect"):
             rx = f' rx="{f(min(s.w, s.h) * 0.16)}"' if s.kind == "roundRect" else ""
             out.append(f'<rect x="{f(x)}" y="{f(y)}" width="{f(s.w)}" height="{f(s.h)}"{rx} {style}/>')

@@ -95,6 +95,14 @@ def test_OFFICE_06_screen_tables_go_in_as_real_tables(tmp_path):
 
 
 @ppt
+def test_OFFICE_11_diagram_cards_are_few_shapes_in_powerpoint(tmp_path):
+    """BUG-099: a card is one shape holding its text, the dashed box one shape - not 120 pieces."""
+    src = str(ROOT / "tests" / "data" / "diagram_cards.png")
+    out = flow("ppt_form_send", src, str(tmp_path / "slide.png"), ok=lambda o: "RESULT done" in o)
+    assert 10 <= int(out.split("SHAPES ")[1].split()[0]) <= 60, out
+
+
+@ppt
 def test_OFFICE_07_terminal_table_into_powerpoint(tmp_path):
     """Bug (v0.7.9): a table drawn with line characters lost D1-D3 and its wrapped lines."""
     src = str(ROOT / "tests" / "data" / "terminal_box_table.png")
