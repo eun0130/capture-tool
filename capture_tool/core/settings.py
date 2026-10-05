@@ -40,6 +40,7 @@ class Settings:
     table_style: str = "keep"             # "keep" the capture's look or "plain" white/black
     table_quick: bool = False             # skip the 표 options dialog (use the saved choice)
     bar_expanded: bool = False           # action bar shows every button (전체) instead of the basic row
+    styled_text: bool = True             # text mode copies the text with its look (colours, background, indent)
     read_ahead: bool = True              # read the text of a chosen area in the background (instant 텍스트/표)
     show_recent: bool = True             # newest saved captures at the bottom when a capture starts
     auto_copy: bool = True               # choosing an area copies it at once (Ctrl+V without Ctrl+C)
@@ -113,7 +114,7 @@ def _apply(s: Settings, data: dict, warnings: list[str]) -> None:
                 if not _is_int(v):
                     raise TypeError
                 s.jpg_quality = min(100, max(1, v))
-            elif name in ("auto_save", "launch_at_startup", "redact_pii", "drm_notice_shown", "ppt_new_slide", "auto_copy", "show_recent", "read_ahead", "keep_style", "bar_expanded", "table_quick", "guide_shown",
+            elif name in ("auto_save", "launch_at_startup", "redact_pii", "drm_notice_shown", "ppt_new_slide", "auto_copy", "show_recent", "styled_text", "read_ahead", "keep_style", "bar_expanded", "table_quick", "guide_shown",
                           "ai_cloud_translate", "ai_cloud_consent", "share_consent"):
                 if not isinstance(v, bool):
                     raise TypeError

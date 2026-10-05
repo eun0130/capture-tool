@@ -43,6 +43,10 @@ class TextItem:
     text: str
     font_family: str = "Malgun Gothic"
     font_size: float = 18      # points
+    styled: object = None      # core.styled_text.StyledText: the text with its look (colours, page colour, font)
+
+
+MAX_STYLED_RUNS = 600          # every coloured stretch is one COM round trip
 
 
 # PowerPoint lays out a text box synchronously; tens of thousands of characters (a huge
@@ -59,6 +63,64 @@ def clip_text(text: str, limit: int = MAX_TEXT_CHARS) -> tuple[str, bool]:
     if nl > 0:
         head = head[:nl]
     return head.rstrip() + "\n…", True
+
+
+def _add_styled_text(slide, st, sw: float, sh: float):
+    """A text box that looks like the captured text: filled with the page colour, every stretch
+    of letters in its colour (bold where it was), monospace when the capture was."""
+    lines, total = [], 0
+    for line in st.lines:
+        text = "".join(r.text for r in line).rstrip()
+        if total + len(text) + 1 > MAX_TEXT_CHARS:
+            break
+        lines.append((text, line))
+        total += len(text) + 1
+    size = float(st.size)
+    longest = max((len(t) for t, _ in lines), default=1)
+    tw = min(sw * FIT, max(120.0, longest * size * (0.62 if st.mono else 0.95) + 24))
+    th = min(sh * FIT, len(lines) * size * 1.35 + 16)
+    left, top, tw, th = place(tw, th, sw, sh)
+    box = slide.Shapes.AddTextbox(MSO_TEXT_HORIZONTAL, left, top, tw, th)
+    box.TextFrame.WordWrap = False
+    rng = box.TextFrame.TextRange
+    rng.Text = "\r".join(t for t, _ in lines)
+    name = "Consolas" if st.mono else "Malgun Gothic"
+    rng.Font.Name = name
+    rng.Font.NameFarEast = "Malgun Gothic"
+    rng.Font.Size = size
+    rng.Font.Bold = False
+    rng.Font.Color.RGB = _bgr_int(st.fg)
+    rng.ParagraphFormat.Alignment = 1
+    box.Fill.Visible = True
+    box.Fill.Solid()
+    box.Fill.ForeColor.RGB = _bgr_int(st.bg)
+    box.Line.Visible = False
+    pos, done = 1, 0
+    for text, line in lines:
+        at = pos
+        for r in line:
+            n = min(len(r.text), max(0, len(text) - (at - pos)))
+            if n > 0 and r.text.strip() and done < MAX_STYLED_RUNS:
+                if (r.color and r.color != st.fg) or r.bold:
+                    chars = rng.Characters(at, n)
+                    if r.color and r.color != st.fg:
+                        chars.Font.Color.RGB = _bgr_int(r.color)
+                    if r.bold:
+                        chars.Font.Bold = True
+                    done += 1
+            at += len(r.text)
+        pos += len(text) + 1
+    for _ in range(3):                                 # wider than the slide: smaller letters, never wrapped
+        if box.Width <= sw * FIT and box.Height <= sh * FIT:
+            break
+        k = max(0.5, min(sw * FIT / max(box.Width, 1.0), sh * FIT / max(box.Height, 1.0)))
+        new_size = max(6.0, int(rng.Font.Size * k * 2) / 2)
+        if new_size >= rng.Font.Size:
+            break
+        rng.Font.Size = new_size
+    box.Left = max(0.0, (sw - box.Width) / 2)
+    box.Top = max(0.0, (sh - box.Height) / 2)
+    return box
 
 
 @dataclass
@@ -178,6 +240,9 @@ def _insert(app, item, new_presentation: bool, hook, new_slide: bool = False) ->
                 os.remove(path)  # our own temporary file
             except OSError:
                 pass
+        added = 1
+    elif isinstance(item, TextItem) and item.styled is not None:
+        new = _add_styled_text(slide, item.styled, sw, sh)
         added = 1
     elif isinstance(item, TextItem):
         text, _ = clip_text(item.text.replace("\r\n", "\n"))

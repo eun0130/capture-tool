@@ -91,19 +91,26 @@ class OcrBar(QWidget):
                            "QLabel { color: #343A40; padding: 0 6px; }"
                            "QPushButton { min-height: 34px; padding: 0 12px; border: none; border-radius: 8px;"
                            " background: #F1F3F5; color: #343A40; }"
+                           "QPushButton:checked { background: #1F5FD1; color: #FFFFFF; }"
                            "QPushButton:hover { background: #E6EEFB; color: #1F5FD1; }")
         lay = QHBoxLayout(self)
         lay.setContentsMargins(8, 6, 8, 6)
         lay.setSpacing(6)
         lay.addWidget(QLabel("드래그한 부분의 글자를 바로 복사합니다"))
         self.buttons = {}
-        for name, label in [("all", "전체 복사 (Enter)"), ("table", "표로 복사"), ("translate", "번역"), ("summarize", "요약"),
+        for name, label in [("all", "전체 복사 (Enter)"), ("styled", "서식 유지"), ("table", "표로 복사"),
+                            ("translate", "번역"), ("summarize", "요약"),
                             ("window", "창으로 보기"), ("back", "그리기로 돌아가기")]:
             b = QPushButton(label, self)
             b.setFocusPolicy(Qt.NoFocus)
             b.clicked.connect(lambda _=False, n=name: self.action.emit(n))
             lay.addWidget(b)
             self.buttons[name] = b
+        st = self.buttons["styled"]
+        st.setCheckable(True)
+        st.setChecked(True)
+        st.setToolTip("켜면 글자색·배경색·굵기·들여쓰기까지 함께 복사합니다 (엑셀·PPT·워드·웹 편집기에 붙이면 그대로). "
+                      "메모장 같은 곳에는 글자만 붙습니다.")
         self.adjustSize()
 
     def trigger(self, name: str) -> None:
@@ -250,6 +257,7 @@ class OverlayWindow(QWidget):
     # --- text mode (drag to copy part of the recognized text) ----------------------
     def enter_ocr_mode(self, lines, table: bool = False) -> None:
         self.ocr_bar.buttons["table"].setVisible(table)     # only when the text is laid out as a table
+        self.ocr_bar.buttons["styled"].setChecked(bool(getattr(self.c.settings, "styled_text", True)))
         self.ocr_lines = list(lines)
         self._ocr_sel = None
         self.toolbar.hide()

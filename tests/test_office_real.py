@@ -141,3 +141,46 @@ def test_OFFICE_10_coloured_words_keep_their_colour_in_powerpoint(tmp_path):
     src = str(ROOT / "tests" / "data" / "terminal_small_table.png")
     out = flow("ppt_box_table", src, str(tmp_path / "s.png"), "1", ok=lambda o: "RESULT done" in o)
     assert "SIZE (5, 1)" in out and "'0xf9b9b1'" in out.split("COLORS")[1], out
+
+
+# --- text with its look (v0.8.11) -------------------------------------------------------------------
+
+STYLED = str(ROOT / "tests" / "data" / "styled_code_dark.png")
+
+
+def _near(hex_, want, tol=60):
+    return max(abs(int(hex_[i:i + 2], 16) - w) for i, w in zip((1, 3, 5), want)) <= tol
+
+
+@pytest.mark.skipif(not _installed("EXCEL.EXE"), reason="Excel not installed")
+def test_OFFICE_12_styled_text_into_excel_one_line_per_row():
+    out = flow("styled_excel", STYLED, ok=lambda o: "RESULT done" in o)
+    used = out.split("USED ")[1].split()
+    rows = [l for l in out.splitlines() if l.startswith("ROW ")]
+    assert used[0] == used[3] and used[1] == "1" and len(rows) == int(used[0]), out      # a row per line, one column
+    assert all("FILL #1F1F1E" in r and "FORMULA False" in r for r in rows), out          # the page colour; nothing runs
+    assert all("FONT Consolas" in r for r in rows), out
+    kw = [r.split("FROM ")[1].split()[0] for r in rows if "from pathlib" in r or "from PIL" in r]
+    assert len(kw) == 2 and all(_near(k, (249, 38, 114)) for k in kw), out
+
+
+@word
+def test_OFFICE_13_styled_text_into_word_keeps_colours_and_page_colour():
+    out = flow("styled_word", STYLED, ok=lambda o: "RESULT done" in o)
+    assert "TABLES 1" in out and "FILL #1F1F1E" in out, out
+    words = eval(out.split("WORDS ")[1].splitlines()[0])
+    assert _near(words["from"][0], (249, 38, 114)) and _near(words["import"][0], (249, 38, 114)), words
+    assert _near(words["pathlib"][0], (248, 248, 242)) and _near(words["outlines"][0], (230, 219, 116)), words
+    assert all(v[1] == "Consolas" for v in words.values()), words
+
+
+@ppt
+def test_OFFICE_14_styled_text_into_powerpoint_is_one_filled_text_box(tmp_path):
+    out = flow("styled_ppt", STYLED, str(tmp_path / "slide.png"), ok=lambda o: "RESULT done" in o)
+    box = eval(out.split("BOX ")[1].splitlines()[0])
+    lines = int(out.split("LINES ")[1].split()[0])
+    assert box[0] == "#1F1F1E" and box[1] is True and box[2] == lines and box[3] == "Consolas", out
+    assert box[4] <= box[6], out                                                          # inside the slide
+    words = eval(out.split("WORDS ")[1].splitlines()[0])
+    assert _near(words["from"], (249, 38, 114)) and _near(words["pathlib"], (248, 248, 242)), words
+    assert _near(words["outlines"], (230, 219, 116)), words

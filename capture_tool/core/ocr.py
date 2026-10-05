@@ -25,6 +25,7 @@ class OcrLine:
     text: str
     box: tuple  # (x, y, w, h)
     score: float
+    words: tuple = ()  # the reader's word boxes: ((text, (x0, y0, x1, y1)), ...) in the same coordinates
 
 
 # Model files that must ship with the app. RapidOCR silently downloads any that are missing
@@ -516,6 +517,21 @@ def restore_spaces(img: np.ndarray, text: str, box, words=(), page_ratio: float 
     return _LineGaps(img, text, box, words).fixed(page_ratio)
 
 
+def _word_boxes(words, dx: float = 0, dy: float = 0) -> tuple:
+    """The reader's words of one line as ((text, (x0, y0, x1, y1)), ...), moved by (dx, dy)."""
+    out = []
+    for w in words or ():
+        try:
+            q = np.asarray(w[2], float)
+            text = str(w[0])
+            if text.strip() and q.ndim == 2:
+                out.append((text, (float(q[:, 0].min()) + dx, float(q[:, 1].min()) + dy,
+                                   float(q[:, 0].max()) + dx, float(q[:, 1].max()) + dy)))
+        except (TypeError, ValueError, IndexError):
+            continue
+    return tuple(out)
+
+
 class OcrEngine:
     def __init__(self, factory: Callable | None = None, secondary_factory: Callable | None = None,
                  secondary_call: Callable | None = None, margin: int | None = None):
@@ -597,7 +613,7 @@ class OcrEngine:
                 cx, cy = bx + bw / 2, by + bh / 2
                 if own[0] <= cx < own[2] and own[1] <= cy < own[3]:
                     lines.append(line)
-        lines = [OcrLine(fix_capital_i(l.text), l.box, l.score) for l in lines]
+        lines = [OcrLine(fix_capital_i(l.text), l.box, l.score, l.words) for l in lines]
         return reading_order(lines)
 
     def _run_margined(self, engine, piece: np.ndarray, x0: int, y0: int, w: int, h: int) -> list[OcrLine]:
@@ -613,7 +629,7 @@ class OcrEngine:
             nx, ny = max(0, bx), max(0, by)
             nw, nh = min(w, bx + bw) - nx, min(h, by + bh) - ny
             if nw > 0 and nh > 0:
-                out.append(OcrLine(line.text, (nx, ny, nw, nh), line.score))
+                out.append(OcrLine(line.text, (nx, ny, nw, nh), line.score, line.words))
         return out
 
     def _run_tile(self, engine, img: np.ndarray, x0: int, y0: int) -> list[OcrLine]:
@@ -641,13 +657,13 @@ class OcrEngine:
             if _HANGUL.search(text) and _LATIN_LETTER.search(text) and words:
                 text = self._fix_latin_words(img, text, words or ())
             line = self._second_reading(img, OcrLine(text, box, float(score)))
-            read.append((line, _LineGaps(img, line.text, line.box, words or ())))
-        known = [r for _, g in read for r in g.known()]      # how wide a space is on this page: its
+            read.append((line, _LineGaps(img, line.text, line.box, words or ()), _word_boxes(words, x0, y0)))
+        known = [r for _, g, _ in read for r in g.known()]      # how wide a space is on this page: its
         page_ratio = float(np.percentile(known, 25)) if known else None     # narrower font (code is wider)
         out = []
-        for line, gaps in read:
+        for line, gaps, wboxes in read:
             bx, by, bw, bh = line.box
-            out.append(OcrLine(gaps.fixed(page_ratio), (bx + x0, by + y0, bw, bh), line.score))
+            out.append(OcrLine(gaps.fixed(page_ratio), (bx + x0, by + y0, bw, bh), line.score, wboxes))
         return out
 
     def _latin(self, img, box, text: str):

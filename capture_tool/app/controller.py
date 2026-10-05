@@ -22,6 +22,7 @@ from ..core.drawingml import gvml_package, svg
 from ..core.geometry import Rect, clamp_rect, nudge, order_cursor_first, virtual_bounds
 from ..core.naming import SaveDirError, render, resolve_save_dir, unique_path
 from ..core.ocr import OcrUnavailable, full_text, select_text
+from ..core.styled_text import read_styled, redact as redact_styled, styled_html
 from ..core.scroll_session import ScrollCapture, looks_blocked
 from ..core.session import CaptureSession, State
 from ..core.shapes import detect, page_panel, recognize_layout, screen_tables, split_doubtful, to_drawing
@@ -1098,7 +1099,12 @@ class Controller(QObject):
             if cut:
                 self.notify(f"글자가 너무 많아 앞부분 {len(text) - 1}자만 PowerPoint에 넣습니다. "
                             "전체는 Ctrl+V로 붙여넣으세요.")
-            self._send_item_to_ppt(TextItem(text, font_family="Malgun Gothic", font_size=18), "글자를")
+            look = None                                # the whole text with its look (not a dragged part)
+            if self.settings.styled_text and not getattr(self, "_text_part", False) and not cut:
+                look = getattr(self, "_text_styled", None)
+                if look is not None and self.settings.redact_pii:
+                    look = redact_styled(look)
+            self._send_item_to_ppt(TextItem(text, font_family="Malgun Gothic", font_size=18, styled=look), "글자를")
             return
         ov, sel, doc, raw = self._take(close=False)
         final = compose(raw, doc)
@@ -1119,11 +1125,17 @@ class Controller(QObject):
         doc = self.session.document
         raw = mask_outside(ov.crop(sel), doc.clip if doc else None)
 
+        dpi = 96 * ov.scale
+
         def work():
+            self._styled_job = None
             try:
-                return self._read(raw), None
+                lines = self._read(raw)
             except OcrUnavailable as e:
                 return [], str(e)
+            if self.settings.styled_text:
+                self._styled_job = self._styled(raw, lines, dpi)
+            return lines, None
 
         self._text_ctx = (ov, raw)
         if self.sync:
@@ -1164,6 +1176,7 @@ class Controller(QObject):
             self.notify("텍스트를 찾지 못했습니다.")
             ov.unsetCursor()
             return
+        self._text_styled, self._styled_job = getattr(self, "_styled_job", None), None
         self._text_lines, self._text_grid = lines, self._grid_for(raw, lines)
         self._text_table = self._text_grid or self._table_rows(raw, lines, 96 * ov.scale)
         self._last_text = self._last_raw = ""
@@ -1257,11 +1270,44 @@ class Controller(QObject):
             return
         raw_text = full_text(lines)
         text = mask(raw_text) if redact else raw_text
-        if text.strip() and self._set_clipboard(text_payload(text)):
+        if not text.strip():
+            return
+        self._text_part = False
+        payload = text_payload(text)
+        look = getattr(self, "_text_styled", None) if (self.settings.styled_text and lines is self._text_lines) else None
+        if look is not None:                           # the same plain text, the HTML with the look
+            try:
+                payload[HTML] = cf_html(styled_html(redact_styled(look) if redact else look))
+            except Exception:  # noqa: BLE001 - the look is an extra: the text is copied anyway
+                log.exception("styled text")
+                look = None
+        if self._set_clipboard(payload):
             self._last_text, self._last_raw = text, raw_text
             note = " (개인정보 가림)" if text != raw_text else ""
             hint = " 글자 위를 드래그하면 그 부분만 복사합니다." if drag_hint else ""
-            self.notify(f"텍스트 {len(lines)}줄을 복사했습니다{note}.{hint}")
+            styled = (" 서식(색·배경·들여쓰기) 포함 — 엑셀·워드에 붙이면 그대로 나옵니다 (PowerPoint는 PPT 버튼)."
+                      if look is not None else "")
+            self.notify(f"텍스트 {len(lines)}줄을 복사했습니다{note}.{styled}{hint}")
+
+    def _styled(self, raw, lines, dpi: float):
+        """The look of the text just read (colours, background, indent): None when it can't be read."""
+        try:
+            return read_styled(raw, lambda _img: lines, None, dpi)
+        except Exception:  # noqa: BLE001
+            log.exception("styled text")
+            return None
+
+    def _toggle_styled(self) -> None:
+        s = self.settings
+        s.styled_text = not s.styled_text
+        self._persist()
+        ctx = self._text_ctx
+        if s.styled_text and getattr(self, "_text_styled", None) is None and ctx and self._text_lines:
+            self._text_styled = self._styled(ctx[1], self._text_lines, 96 * ctx[0].scale)
+        if self.active_overlay is not None:
+            self.active_overlay.ocr_bar.buttons["styled"].setChecked(s.styled_text)
+        if self._text_lines:
+            self._copy_text(self._text_lines, self._text_grid)
 
     def copy_ocr_selection(self, rect) -> None:
         text = select_text(self._text_lines, rect)
@@ -1269,6 +1315,7 @@ class Controller(QObject):
             self.notify("드래그한 곳에 인식된 글자가 없습니다.")
             return
         self._last_raw = text
+        self._text_part = True                         # what was copied last is a part, as plain text
         if self.settings.redact_pii:
             text = mask(text)
         if self._set_clipboard(text_payload(text)):
@@ -1280,6 +1327,8 @@ class Controller(QObject):
         ov = self.active_overlay
         if name == "all":
             self._copy_text(self._text_lines, self._text_grid)
+        elif name == "styled":
+            self._toggle_styled()
         elif name == "table":
             rows = getattr(self, "_text_table", None)
             if not rows:

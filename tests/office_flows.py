@@ -432,6 +432,121 @@ def ppt_dark_table(keep: str) -> None:
     print("RESULT width", out.get("width"))
 
 
+def _styled_on_clipboard(src_png: str):
+    """The capture's text with its look on the clipboard, as text mode puts it there."""
+    import cv2
+    from capture_tool.core.ocr import OcrEngine
+    from capture_tool.core.styled_text import read_styled, styled_payload
+    from capture_tool.platform import win_clipboard
+    img = cv2.imread(src_png)
+    eng = OcrEngine()
+    lines = eng.recognize(img)
+    st = read_styled(img, lambda _im: lines, None, 96)
+    win_clipboard.set_formats(styled_payload(st), retries=10, delay=0.05)
+    return st
+
+
+def styled_excel(src_png: str) -> None:
+    """Styled text pasted into a separate Excel (closed unsaved): one line per row, the page
+    colour as the cells' fill, keyword colours kept, nothing runs as a formula."""
+    import pythoncom
+    import win32com.client
+    from capture_tool.platform import win_clipboard
+    st = _styled_on_clipboard(src_png)
+    pythoncom.CoInitialize()
+    xl = win32com.client.DispatchEx("Excel.Application")
+    try:
+        wb = xl.Workbooks.Add()
+        ws = wb.Worksheets(1)
+        ws.Range("A1").Select()
+        ws.Paste()
+        used = ws.UsedRange
+        print("USED", used.Rows.Count, used.Columns.Count, "LINES", len(st.lines))
+        for r in range(1, used.Rows.Count + 1):
+            cell = ws.Cells(r, 1)
+            text = str(cell.Text)
+            fill = _hex(cell.Interior.Color)
+            k = text.find("from")
+            kw = _hex(cell.GetCharacters(k + 1, 1).Font.Color) if k >= 0 else None
+            first = _hex(cell.GetCharacters(max(1, len(text) - len(text.lstrip()) + 1), 1).Font.Color) if text.strip() else None
+            print("ROW", r, repr(text), "FILL", fill, "FIRST", first, "FROM", kw, "FORMULA", bool(cell.HasFormula),
+                  "FONT", cell.Font.Name)
+        wb.Close(False)
+    finally:
+        xl.Quit()
+        win_clipboard.set_formats({"CF_UNICODETEXT": ""}, retries=10, delay=0.05)
+    print("RESULT done")
+
+
+def styled_word(src_png: str) -> None:
+    """Styled text pasted into a separate Word (closed unsaved)."""
+    import pythoncom
+    import win32com.client
+    from capture_tool.platform import win_clipboard
+    st = _styled_on_clipboard(src_png)
+    pythoncom.CoInitialize()
+    app = win32com.client.DispatchEx("Word.Application")
+    try:
+        doc = app.Documents.Add()
+        app.Selection.Paste()
+        print("TABLES", doc.Tables.Count, "LINES", len(st.lines))
+        rng = doc.Tables(1).Cell(1, 1).Range if doc.Tables.Count else doc.Content
+        text = rng.Text
+        print("TEXT", repr(text[:400]))
+        print("PARAS", rng.Paragraphs.Count, "BREAKS", text.count("\x0b") + text.count("\r"))
+        if doc.Tables.Count:
+            print("FILL", _hex(doc.Tables(1).Cell(1, 1).Shading.BackgroundPatternColor))
+        seen = {}
+        for w in rng.Words:
+            t = w.Text.strip()
+            if t in ("from", "import", "pathlib", "outlines", "Write") and t not in seen:
+                seen[t] = (_hex(w.Font.Color), w.Font.Name)
+        print("WORDS", seen)
+        doc.Close(False)
+    finally:
+        app.Quit(False)
+        win_clipboard.set_formats({"CF_UNICODETEXT": ""}, retries=10, delay=0.05)
+    print("RESULT done")
+
+
+def styled_ppt(src_png: str, out_png: str = "") -> None:
+    """The text mode's PPT button: a text box with the capture's look in a new presentation
+    (closed unsaved)."""
+    import cv2
+    from capture_tool.core.ocr import OcrEngine
+    from capture_tool.core.styled_text import read_styled, styled_plain
+    from capture_tool.platform.powerpoint import TextItem, send
+    img = cv2.imread(src_png)
+    lines = OcrEngine().recognize(img)
+    st = read_styled(img, lambda _im: lines, None, 96)
+    out = {}
+
+    def hook(pres, slide, added):
+        try:
+            sh = [s_ for s_ in slide.Shapes if s_.HasTextFrame and s_.TextFrame.HasText][-1]
+            tr = sh.TextFrame.TextRange
+            out["box"] = (_hex(sh.Fill.ForeColor.RGB), bool(sh.Fill.Visible), tr.Paragraphs().Count, tr.Font.Name,
+                          round(sh.Width), round(sh.Height), round(pres.PageSetup.SlideWidth))
+            out["text"] = tr.Text[:200]
+            words = {}
+            for word in ("from", "import", "pathlib", "outlines"):
+                f = tr.Find(word)
+                if f is not None:
+                    words[word] = _hex(f.Font.Color.RGB)
+            out["words"] = words
+            if out_png:
+                slide.Export(out_png, "PNG", 1920, 1080)
+        finally:
+            pres.Saved = True
+            pres.Close()
+    send(TextItem(styled_plain(st), styled=st), new_presentation=True, hook=hook, timeout=120)
+    print("BOX", out.get("box"))
+    print("TEXT", repr(out.get("text")))
+    print("WORDS", out.get("words"))
+    print("LINES", len(st.lines))
+    print("RESULT done")
+
+
 if __name__ == "__main__":
     sys.stdout.reconfigure(encoding="utf-8")
     globals()[sys.argv[1]](*sys.argv[2:])
