@@ -649,6 +649,56 @@ def _settle(p: _Piece, snap, bsnap, page) -> list[tuple]:
     return out
 
 
+# --- web editors (Confluence) keep only their own palette colours ---------------------------------------
+# Atlassian's editor (@atlaskit/adf-schema 57.7.1) drops a pasted text colour or highlight unless it is
+# exactly one of these. Each run is written as <span palette><span exact>: Office applies the inner,
+# exact colour; Confluence ignores the inner one and keeps the nearest palette colour of the outer.
+CONFLUENCE_TEXT = ["#FFFFFF", "#97A0AF", "#EAE6FF", "#6554C0", "#403294", "#B3F5FF", "#00B8D9", "#008DA6",
+                   "#ABF5D1", "#36B37E", "#006644", "#FFBDAD", "#FF5630", "#BF2600", "#FFF0B3", "#FFC400",
+                   "#FF991F", "#B3D4FF", "#4C9AFF", "#0747A6"]
+CONFLUENCE_DEFAULT = "#172B4D"           # its default text colour (no colour written)
+CONFLUENCE_HIGHLIGHT = ["#DCDFE4", "#DFD8FD", "#FDD0EC", "#FEDEC8", "#F8E6A0", "#D3F1A7", "#C6EDFB"]
+READABLE = 70                            # luma difference from the page a palette colour must keep
+
+
+def _luma(h: str) -> float:
+    r, g, b = _rgb(h)
+    return 0.299 * r + 0.587 * g + 0.114 * b
+
+
+def _lab(h: str) -> np.ndarray:
+    r, g, b = _rgb(h)
+    return cv2.cvtColor(np.uint8([[[b, g, r]]]), cv2.COLOR_BGR2LAB)[0, 0].astype(float)
+
+
+def nearest_palette(color: str, page: str, choices=None) -> str | None:
+    """The palette colour that looks most like `color` and still reads on the page;
+    None when the editor's own default text colour is the closest (nothing to write)."""
+    choices = choices or CONFLUENCE_TEXT
+    page_l = _luma(page)
+    want = _lab(color)
+    cands = [c for c in choices if abs(_luma(c) - page_l) >= READABLE]
+    if page_l >= 128:
+        cands.append(CONFLUENCE_DEFAULT)                 # on a light page the default dark text is an option
+    if not cands:
+        cands = list(choices)
+    best = min(cands, key=lambda c: _distance(_lab(c), want))
+    return None if best == CONFLUENCE_DEFAULT else best
+
+
+def _distance(a: np.ndarray, b: np.ndarray) -> float:
+    """Colour difference that also keeps grey grey (a near-white must not turn lavender)."""
+    ca, cb = float(np.hypot(a[1] - 128, a[2] - 128)), float(np.hypot(b[1] - 128, b[2] - 128))
+    dh = abs(np.arctan2(a[2] - 128, a[1] - 128) - np.arctan2(b[2] - 128, b[1] - 128))
+    dh = min(dh, 2 * np.pi - dh)                       # a red stays red, a yellow stays yellow
+    return float(np.linalg.norm(a - b)) + 1.5 * abs(ca - cb) + 1.2 * min(ca, cb) * dh
+
+
+def nearest_highlight(color: str) -> str:
+    want = _lab(color)
+    return min(CONFLUENCE_HIGHLIGHT, key=lambda c: _distance(_lab(c), want))
+
+
 # --- out: plain text, HTML, clipboard --------------------------------------------------------------------
 
 def styled_plain(st: StyledText) -> str:
@@ -673,14 +723,21 @@ def styled_html(st: StyledText, keep_bg: bool = True) -> str:
     for line in st.lines[:MAX_LINES]:
         parts = []
         for k, r in enumerate(line):
-            css = []
-            if r.color and r.color != st.fg:
-                css.append(f"color:{r.color}")
-            if r.bg:
-                css.append(f"background-color:{r.bg}")
             t = _esc(r.text, at_start=k == 0)
-            if css:
-                t = f"<span style='{';'.join(css)}'>{t}</span>"
+            if not r.text.strip():
+                parts.append(t)
+                continue
+            color = r.color or st.fg
+            inner = [f"color:{color}"] + ([f"background-color:{r.bg}"] if r.bg else [])
+            t = f"<span style='{';'.join(inner)}'>{t}</span>"            # Office: the exact look
+            outer = []                                                  # Confluence: its nearest palette look
+            pal = nearest_palette(color, st.bg if keep_bg else "#FFFFFF")
+            if pal:
+                outer.append(f"color:{pal}")
+            if r.bg:
+                outer.append(f"background-color:{nearest_highlight(r.bg)}")
+            if outer:
+                t = f"<span style='{';'.join(outer)}'>{t}</span>"
             if r.bold:
                 t = f"<b>{t}</b>"
             parts.append(t)

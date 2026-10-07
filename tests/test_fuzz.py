@@ -285,3 +285,10 @@ def test_FUZZ_15_powerpoint_shapes_with_any_text_are_valid_xml():
             for name in z.namelist():
                 if name.endswith(".xml") or name.endswith(".rels"):
                     minidom.parseString(z.read(name))          # well-formed XML whatever the text
+
+
+def test_FUZZ_12b_circled_numbers_in_the_first_column_are_text():
+    """BUG-104: "①".isdigit() is True but int("①") fails - a table starting with ① ② ③ crashed."""
+    from capture_tool.core.table import drop_sheet_headers
+    g = [["①", "가"], ["②", "나"], ["③", "다"]]
+    assert drop_sheet_headers(g) == g

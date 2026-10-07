@@ -18,6 +18,7 @@ _P = {
     "highlight": '<path d="M9 14l-4 5h5l2-2M9 14l7-9 3 3-7 9z"/>',
     "mosaic": '<rect x="4" y="4" width="16" height="16"/><path d="M4 12h16M12 4v16"/>'
               '<rect x="4" y="4" width="8" height="8" fill="{c}"/><rect x="12" y="12" width="8" height="8" fill="{c}"/>',
+    "crop": '<path d="M6 2v16h16"/><path d="M2 6h16v16"/>',
     "lasso": '<path d="M7 17C3 14 3 8 8 6s11-1 12 3-4 7-9 7" stroke-dasharray="2.5 2.5"/><path d="M9 16l-3 5 5-2z"/>',
     "fill": '<rect x="5" y="5" width="14" height="14" rx="2"/><rect x="8" y="8" width="8" height="8" fill="{c}"/>',
     "translate": '<path d="M4 6h8M8 4v2M10.5 6c-.8 3.2-3 5.8-6 7.2M6 9c1 2 2.6 3.4 4.6 4.2"/>'

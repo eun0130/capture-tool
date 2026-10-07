@@ -322,3 +322,89 @@ def test_ST_23_two_columns_side_by_side_keep_their_gap(engine):
                               [("부서", BLACK), ("                    영업팀", BLACK)]], LIGHT, f))
     lines = text_lines(st)
     assert all(len(t.split()) == 2 and "   " in t for t in lines), lines
+
+
+# --- Confluence (web editor): only its own palette colours survive a paste -------------------------
+# Rules read from Atlassian's editor (@atlaskit/adf-schema 57.7.1): a span's text colour / highlight is
+# kept only when it is exactly one of the palette colours; table cell backgrounds are kept as they are.
+
+from html.parser import HTMLParser  # noqa: E402
+
+CONFLUENCE_TEXT = {"#ffffff", "#97a0af", "#eae6ff", "#6554c0", "#403294", "#b3f5ff", "#00b8d9", "#008da6", "#abf5d1",
+                   "#36b37e", "#006644", "#ffbdad", "#ff5630", "#bf2600", "#fff0b3", "#ffc400", "#ff991f", "#b3d4ff",
+                   "#4c9aff", "#0747a6"}
+
+
+class _Paste(HTMLParser):
+    """Each piece of text with the colour Office shows (innermost colour) and the colour Confluence
+    keeps (innermost colour that is in its palette)."""
+
+    def __init__(self):
+        super().__init__()
+        self.stack, self.out, self.cell_bg = [], [], None
+
+    def handle_starttag(self, tag, attrs):
+        a = dict(attrs)
+        style = a.get("style") or ""
+        col = next((p.split(":", 1)[1].strip().lower() for p in style.split(";") if p.strip().startswith("color:")), None)
+        self.stack.append((tag, col))
+        if tag == "td":
+            self.cell_bg = next((p.split(":", 1)[1].strip().lower() for p in style.split(";")
+                                 if p.strip().startswith("background-color:")), None)
+
+    def handle_endtag(self, tag):
+        while self.stack:
+            t, _ = self.stack.pop()
+            if t == tag:
+                break
+
+    def handle_data(self, data):
+        if data.strip():
+            cols = [c for _, c in self.stack if c]
+            office = cols[-1] if cols else None
+            confluence = next((c for c in reversed(cols) if c in CONFLUENCE_TEXT), None)
+            self.out.append((data, office, confluence))
+
+
+def pasted(st):
+    p = _Paste()
+    p.feed(styled_html(st))
+    return p
+
+
+def test_ST_24_confluence_keeps_a_palette_colour_office_the_exact_one():
+    p = pasted(sample())
+    kw = [x for x in p.out if x[0].startswith("def")][0]
+    assert kw[1] == "#f92672"                                   # Excel / Word / PowerPoint: the exact colour
+    assert kw[2] in ("#ff5630", "#bf2600"), kw                  # Confluence: the nearest red of its palette
+    body = [x for x in p.out if "f(a" in x[0]][0]
+    assert body[1] == "#eeeeee" and body[2] == "#ffffff", body  # light text on the dark page stays light
+    assert p.cell_bg == "#1e1e1e"                               # the page colour: a table cell keeps any colour
+
+
+def test_ST_25_black_text_on_white_stays_confluence_default():
+    st = StyledText(lines=[[Run("보통 글자 ", "#111111"), Run("빨간 글자", "#E03131"), Run(" 파란 글자", "#1C7ED6")]],
+                    bg="#FFFFFF", fg="#111111", mono=False, size=11)
+    p = pasted(st)
+    got = {t.strip(): (o, c) for t, o, c in p.out}
+    assert got["보통 글자"][1] is None                           # no grey or other palette colour forced on it
+    assert got["빨간 글자"][1] in ("#ff5630", "#bf2600")
+    assert got["파란 글자"][1] in ("#4c9aff", "#0747a6", "#00b8d9", "#008da6")
+    assert got["빨간 글자"][0] == "#e03131"
+
+
+def test_ST_26_every_text_colour_on_a_dark_page_is_readable_in_confluence():
+    st = StyledText(lines=[[Run("a", "#F8F8F2"), Run("b", "#E6DB74"), Run("c", "#999999"), Run("d", "#38A660"),
+                            Run("e", "#F92672"), Run("f", "#66D9EF")]], bg="#1F1F1E", fg="#F8F8F2", mono=True, size=12)
+    p = pasted(st)
+    for t, office, conf in p.out:
+        assert conf is not None, (t, office)                    # never the default dark text on a dark page
+        r, g, b = (int(conf[i:i + 2], 16) for i in (1, 3, 5))
+        assert 0.299 * r + 0.587 * g + 0.114 * b > 90, (t, conf)
+
+
+def test_ST_27_highlight_gets_a_confluence_highlight_too():
+    st = StyledText(lines=[[Run("중요", "#000000", bg="#FFEB3B")]], bg="#FFFFFF", fg="#000000", mono=False, size=11)
+    h = styled_html(st).lower()
+    assert "background-color:#ffeb3b" in h                      # exact, for Office
+    assert "background-color:#f8e6a0" in h                      # Confluence's yellow highlight

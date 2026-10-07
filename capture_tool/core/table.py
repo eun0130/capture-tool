@@ -120,7 +120,7 @@ def _trim_empty_edges(grid: list[list[str]]) -> list[list[str]]:
 
 def _int(s: str) -> int | None:
     s = s.strip()
-    return int(s) if s.isdigit() else None
+    return int(s) if s.isascii() and s.isdigit() else None     # ("①".isdigit() is True, int("①") fails)
 
 
 def drop_sheet_headers(grid: list[list[str]]) -> list[list[str]]:

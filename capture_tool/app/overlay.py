@@ -23,7 +23,8 @@ DIM = QColor(15, 18, 24, 140)
 ACCENT = QColor("#4C8DFF")
 TOOL_KEYS = {Qt.Key_V: "select", Qt.Key_R: "rect", Qt.Key_O: "ellipse", Qt.Key_L: "line", Qt.Key_A: "arrow",
              Qt.Key_C: "curve", Qt.Key_P: "pen", Qt.Key_T: "text", Qt.Key_N: "step", Qt.Key_H: "highlight",
-             Qt.Key_M: "mosaic", Qt.Key_K: "lasso"}
+             Qt.Key_M: "mosaic", Qt.Key_K: "lasso", Qt.Key_X: "crop"}
+CROP_MIN = 8                     # px; a smaller box is a slip of the mouse
 BOX_TOOLS = {"rect", "ellipse", "highlight", "mosaic", "line", "arrow"}
 TEXT_STYLE_KEYS = {Qt.Key_B: "bold", Qt.Key_I: "italic", Qt.Key_U: "underline", Qt.Key_5: "strike"}
 
@@ -474,6 +475,8 @@ class OverlayWindow(QWidget):
             self._select(self._move_index)
         elif self.tool == "lasso":
             self._current = Shape(kind="clip", points=[d])
+        elif self.tool == "crop":                       # a box to keep: becomes a four-corner crop outline
+            self._current = Shape(kind="crop", points=[d, d])
         else:
             color = tb.highlight_color if self.tool == "highlight" else tb.color
             self._current = Shape(kind=self.tool, points=[d, d], color=color, width=tb.line_width,
@@ -523,7 +526,16 @@ class OverlayWindow(QWidget):
                     else self._current.points[-1]
                 sel = self.c.session.selection
                 self._current.points = [(min(max(x, 0), sel.w), min(max(y, 0), sel.h)) for x, y in self._current.points]
-                if self._current.kind == "clip" and polygon(self._current.points, sel.w, sel.h) is None:
+                if self._current.kind == "crop":
+                    (x1, y1), (x2, y2) = self._current.points
+                    x1, x2 = sorted((round(x1), round(x2)))
+                    y1, y2 = sorted((round(y1), round(y2)))
+                    if x2 - x1 < CROP_MIN or y2 - y1 < CROP_MIN:
+                        self.c.notify("자를 네모가 너무 작습니다. 남길 부분을 크게 끌어 주세요.")
+                    else:                                       # corners as pixel edges: exactly that box
+                        doc.add(Shape(kind="clip", points=[(x1, y1), (x2 - 1, y1), (x2 - 1, y2 - 1), (x1, y2 - 1)]))
+                        self.c.notify(f"{x2 - x1} × {y2 - y1} 크기로 잘랐습니다. Ctrl+Z 로 되돌립니다.")
+                elif self._current.kind == "clip" and polygon(self._current.points, sel.w, sel.h) is None:
                     self.c.notify("자를 모양이 너무 작습니다. 남길 부분을 크게 따라 그려 주세요.")
                 else:
                     doc.add(self._current)
@@ -665,7 +677,7 @@ class OverlayWindow(QWidget):
 
     def _paint_annotations(self, p: QPainter, sel: Rect):
         doc = self.c.session.document
-        shapes = list(doc.shapes) + ([self._current] if self._current else [])
+        shapes = list(doc.shapes) + ([self._current] if self._current and self._current.kind != "crop" else [])
         lr = self.local_rect(sel)
         ox, oy = sel.x - self.monitor.rect.x, sel.y - self.monitor.rect.y
         for s in shapes:                          # only the mosaic areas, never the whole image
@@ -718,6 +730,16 @@ class OverlayWindow(QWidget):
             p.setPen(QPen(ACCENT, 2 * self.scale, Qt.DashLine))
             p.setBrush(Qt.NoBrush)
             p.drawPath(outline)
+        if current is not None and current.kind == "crop":
+            (x1, y1), (x2, y2) = current.points
+            box = QPainterPath()
+            box.addRect(QRectF(min(x1, x2), min(y1, y2), abs(x2 - x1), abs(y2 - y1)))
+            outside = QPainterPath()
+            outside.addRect(QRectF(0, 0, sel.w, sel.h))
+            p.fillPath(outside.subtracted(box), QColor(15, 18, 24, 150))
+            p.setPen(QPen(ACCENT, 2 * self.scale, Qt.DashLine))
+            p.setBrush(Qt.NoBrush)
+            p.drawPath(box)
         if current is not None and current.kind == "clip" and len(current.points) > 1:
             p.setPen(QPen(ACCENT, 2 * self.scale, Qt.DashLine))
             p.setBrush(Qt.NoBrush)
@@ -815,6 +837,8 @@ class OverlayWindow(QWidget):
             text = "드래그로 영역 선택 · 창(제목줄)을 클릭하면 그 창 전체 · C 색상 복사 · Esc 취소"
         elif self.active and self.ocr_lines is not None:
             text = "글자 위를 드래그하면 그 부분만 복사 · Enter 전체 복사 · Esc 닫기"
+        elif self.active and self.tool == "crop":
+            text = "남길 부분을 네모로 끄세요 · 다시 끌면 새 네모 · Ctrl+Z 되돌리기 · Enter 복사"
         elif self.active and self.tool == "lasso":
             text = "남길 부분의 테두리를 따라 그리세요 · 다시 그리면 새 모양 · Ctrl+Z 되돌리기 · Enter 복사"
         elif self.active:
