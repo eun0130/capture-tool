@@ -124,9 +124,11 @@ class SettingsDialog(QDialog):
         self.auto_copy.setChecked(settings.auto_copy)
         self.show_recent = QCheckBox("캡처를 시작하면 최근 캡처(저장한 것)를 아래에 보여 주기 — 눌러서 다시 쓰기")
         self.show_recent.setChecked(getattr(settings, "show_recent", True))
+        self.pdf_one_page = QCheckBox("PDF로 저장할 때 긴 캡처도 한 쪽에 맞추기 (끄면 여러 쪽으로 나눔)")
+        self.pdf_one_page.setChecked(getattr(settings, "pdf_one_page", False))
         self.keep_style = QCheckBox("PPT·도형·표로 보낼 때 색·글꼴 모양 그대로 (끄면 기본 모양: 흰 바탕·검은 글자)")
         self.keep_style.setChecked(settings.keep_style)
-        for w in (self.auto_save, self.auto_copy, self.show_recent, self.redact, self.startup, self.ppt_new_slide, self.keep_style):
+        for w in (self.auto_save, self.auto_copy, self.show_recent, self.redact, self.startup, self.ppt_new_slide, self.pdf_one_page, self.keep_style):
             v.addWidget(w)
         # --- mail ------------------------------------------------------------------------------
         from ..core.mailcompose import PROVIDERS
@@ -213,6 +215,7 @@ class SettingsDialog(QDialog):
         self.ppt_new_slide.setChecked(d.ppt_new_slide)
         self.auto_copy.setChecked(d.auto_copy)
         self.show_recent.setChecked(d.show_recent)
+        self.pdf_one_page.setChecked(d.pdf_one_page)
         self.keep_style.setChecked(d.keep_style)
 
     def validate(self) -> list[str]:
@@ -272,6 +275,7 @@ class SettingsDialog(QDialog):
         s.ppt_new_slide = self.ppt_new_slide.isChecked()
         s.auto_copy = self.auto_copy.isChecked()
         s.show_recent = self.show_recent.isChecked()
+        s.pdf_one_page = self.pdf_one_page.isChecked()
         s.keep_style = self.keep_style.isChecked()
         s.ai_summary_engine = "cloud" if self.ai_cloud.isChecked() else "local"
         s.mail_provider = self.mail_provider.currentData() or ""

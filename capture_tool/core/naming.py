@@ -41,7 +41,7 @@ def normalize_ext(ext: str) -> str:
     e = ext.lower().lstrip(".")
     if e == "jpeg":
         e = "jpg"
-    if e not in ("png", "jpg"):
+    if e not in ("png", "jpg", "pdf"):
         raise ValueError(f"unsupported image format: {ext!r}")
     return "." + e
 

@@ -25,6 +25,7 @@ from ..core.ocr import OcrUnavailable, full_text, select_text
 from ..core.styled_text import read_styled, redact as redact_styled, styled_html
 from ..core.scroll_session import ScrollCapture, looks_blocked
 from ..core.session import CaptureSession, State
+from ..platform.printing import print_image as _print_image
 from ..core.shapes import (detect, merge_free_text, page_panel, recognize_layout, screen_tables,
                             split_doubtful, to_drawing)
 from ..core.table import detect_grid, grid_from_cells, table_is_plausible
@@ -201,6 +202,8 @@ class Controller(QObject):
         self.open_url = _open_url
         self.reveal_file = _reveal_file
         self.open_folder = _open_folder
+        self.ask_resize = self._resize_dialog   # tests replace it
+        self.print_image = _print_image         # tests replace it
         self.ask_mail = None                # tests replace the picker
         self.ask_table_preview = None       # tests replace the preview dialog
         self.ask_table_options = None       # tests replace the 표 options dialog
@@ -548,6 +551,12 @@ class Controller(QObject):
             self._start_scroll()
         elif name == "ppt_shapes":
             self._run_recognition("ppt")
+        elif name == "resize":
+            self._do_resize()
+        elif name == "pdf":
+            self._do_pdf()
+        elif name == "print":
+            self._do_print()
         elif name == "ppt_merge":
             self._run_recognition("ppt", merge_text=True)
         elif name in ("text", "shapes", "table", "table_preview"):
@@ -1503,9 +1512,85 @@ class Controller(QObject):
         if payload and self._set_clipboard(payload):
             self.notify("이미지를 클립보드에 복사했습니다. 원하는 곳에 Ctrl+V")
 
-    def _save(self, img, ask: bool = False) -> Path | None:
+    def _do_resize(self) -> None:
+        if self.session.state is not State.EDITING:
+            return
+        ov, sel, doc, raw = self._take(close=False, autosave=False)
+        final = compose(raw, doc)
+        dpi = 96 * ov.scale
+        result = self.ask_resize(final, self.settings)
+        self.close_overlays()
+        if result is None:                              # cancelled: keep the capture as it is
+            p = self._image_payload(final, dpi)
+            if p:
+                self._set_clipboard(p)
+            self.notify("크기 줄이기를 취소했습니다. 원본이 복사되어 있습니다.")
+            if self.settings.auto_save:
+                self._save(final)
+            return
+        small, fmt = result
+        p = self._image_payload(small, dpi)
+        if p:
+            self._set_clipboard(p)
+        h, w = small.shape[:2]
+        saved = self._save(small, ext_override=fmt) if self.settings.auto_save else None
+        where = f" 저장: {saved.name}" if saved else ""
+        self.notify(f"{w} × {h}px 로 줄여 복사했습니다.{where} 원하는 곳에 Ctrl+V")
+
+    def _do_pdf(self) -> None:
+        if self.session.state is not State.EDITING:
+            return
+        from ..core.export import image_to_pdf
+        ov, sel, doc, raw = self._take(close=False, autosave=False)
+        final = compose(raw, doc)
+        self.close_overlays()
+        p = self._image_payload(final, 96 * ov.scale)
+        if p:
+            self._set_clipboard(p)                      # Ctrl+V still works as a picture
+        try:
+            data = image_to_pdf(final, dpi=96 * ov.scale, fit_one_page=self.settings.pdf_one_page)
+        except Exception as e:  # noqa: BLE001
+            self.notify(f"PDF를 만들지 못했습니다 ({e}). 그림은 복사되어 있습니다.")
+            return
+        try:
+            folder, _ = resolve_save_dir(self.settings.save_dir, self.fallback_dir)
+        except SaveDirError as e:
+            self.notify(f"{e} PDF를 저장할 수 없습니다. 그림은 복사되어 있습니다.")
+            return
+        path = unique_path(folder, render(self.settings.filename_pattern, self.now()), ".pdf")
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(data)
+        except OSError as e:
+            self.notify(f"PDF를 저장하지 못했습니다 ({e}).")
+            return
+        self.reveal_file(path)
+        self.notify(f"PDF로 저장했습니다: {path.name}")
+
+    def _do_print(self) -> None:
+        if self.session.state is not State.EDITING:
+            return
+        ov, sel, doc, raw = self._take(close=False, autosave=False)
+        final = compose(raw, doc)
+        dpi = 96 * ov.scale
+        p = self._image_payload(final, dpi)
+        if p:
+            self._set_clipboard(p)
+        self.close_overlays()
+        try:
+            ok = self.print_image(final, dpi)
+        except Exception as e:  # noqa: BLE001
+            self.notify(f"인쇄하지 못했습니다 ({e}). 그림은 복사되어 있습니다.")
+            return
+        self.notify("인쇄를 보냈습니다." if ok else "인쇄를 취소했습니다. 그림은 복사되어 있습니다.")
+
+    def _resize_dialog(self, img, settings):
+        from .resize_dialog import ask_resize
+        return ask_resize(img, settings, self.active_overlay)
+
+    def _save(self, img, ask: bool = False, ext_override: str | None = None) -> Path | None:
         s = self.settings
-        ext = ".jpg" if s.image_format == "jpg" else ".png"
+        ext = ("." + ext_override) if ext_override else (".jpg" if s.image_format == "jpg" else ".png")
         try:
             folder, used_fallback = resolve_save_dir(s.save_dir, self.fallback_dir)
         except SaveDirError as e:

@@ -46,6 +46,9 @@ _P = {
     "capture": '<path d="M4 8V4h4M16 4h4v4M20 16v4h-4M8 20H4v-4"/>',
     "ppt": '<rect x="3" y="4" width="18" height="12" rx="1.5"/><path d="M12 16v4M8 20h8M7 12l3-3 3 2 4-4"/>',
     "save_as": '<path d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2z"/><path d="M12 10v6M9 13l3 3 3-3"/>',
+    "resize": '<path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/><path d="M9 12h6"/>',
+    "pdf": '<path d="M6 2h8l4 4v16H6z"/><path d="M14 2v4h4"/><path d="M8.5 13h2a1.5 1.5 0 010 3h-2v-3zM8.5 16v2.5"/>',
+    "print": '<path d="M6 9V3h12v6M6 18H4v-6h16v6h-2M8 14h8v6H8z"/>',
 }
 
 
