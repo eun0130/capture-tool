@@ -1231,6 +1231,39 @@ def find_icons(img: np.ndarray, det: list[Detected], text_boxes) -> list[Detecte
     return out
 
 
+def merge_free_text(det: list[Detected]) -> list[Detected]:
+    """도형PPT option: put every loose text box (labels / paragraph lines on the page, not inside a
+    shape) into ONE text box - line order, left alignment, blank rows between blocks and the shared
+    colour kept. Shapes, tables, pictures and their own text are left as they are."""
+    free = [d for d in det if d.kind == "text"]
+    if len(free) < 2:
+        return det
+    rows: list[list[Detected]] = []
+    for d in sorted(free, key=lambda d: (d.y + d.h / 2, d.x)):
+        cy = d.y + d.h / 2
+        if rows and abs(cy - (rows[-1][0].y + rows[-1][0].h / 2)) <= 0.6 * max(d.h, rows[-1][0].h):
+            rows[-1].append(d)
+        else:
+            rows.append([d])
+    centres = [float(np.median([d.y + d.h / 2 for d in r])) for r in rows]
+    steps = [b - a for a, b in zip(centres, centres[1:])]
+    pitch = float(np.median([x for x in steps if x <= 1.5 * min(steps)])) if steps else 0.0
+    out_lines = []
+    for k, r in enumerate(rows):
+        if k and pitch > 0:
+            out_lines += [""] * max(0, min(3, int(steps[k - 1] / pitch) - 1))
+        out_lines.append(" ".join(d.text for d in sorted(r, key=lambda d: d.x) if d.text))
+    x1 = min(d.x for d in free); y1 = min(d.y for d in free)
+    x2 = max(d.x + d.w for d in free); y2 = max(d.y + d.h for d in free)
+    colors = [d.text_color for d in free if d.text_color]
+    color = colors[0] if colors and all(_near_color(c, colors[0]) for c in colors) else None
+    sizes = [d.font_size for d in free if d.font_size]
+    merged = Detected("text", x1, y1, x2 - x1, y2 - y1, text=chr(10).join(out_lines).strip(chr(10)),
+                      text_color=color, font_size=float(np.median(sizes)) if sizes else 14,
+                      align="l", pad_left=0, bold=sum(d.bold for d in free) > len(free) / 2)
+    return [d for d in det if d.kind != "text"] + [merged]
+
+
 def recognize_layout(img: np.ndarray, lines, recognize, dpi: float = 96, find_again: bool = True) -> list[Detected]:
     """Screen capture -> shapes and text boxes in their places. lines: (text, box, score) from OCR;
     recognize(crop) -> [(text, box)] reads one coloured shape again (None: don't)."""

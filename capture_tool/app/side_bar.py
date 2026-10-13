@@ -107,6 +107,14 @@ class SideBar(QWidget):
                 menu.aboutToShow.connect(lambda m=menu: self._fill_table_menu(m))
                 b.setMenu(menu)
                 b.clicked.connect(lambda _=False: self.action.emit("table"))
+            elif name == "ppt_shapes":
+                from PySide6.QtWidgets import QMenu, QToolButton as _TB
+                b.setPopupMode(_TB.MenuButtonPopup)
+                b.setObjectName("tablebtn")
+                menu = QMenu(b)
+                menu.aboutToShow.connect(lambda m=menu: self._fill_shapes_menu(m))
+                b.setMenu(menu)
+                b.clicked.connect(lambda _=False: self.action.emit("ppt_shapes"))
             elif name == "pin":
                 b.clicked.connect(lambda _=False, btn=b: self.pin_menu().exec(btn.mapToGlobal(btn.rect().bottomLeft())))
             elif name == "search":
@@ -237,6 +245,17 @@ class SideBar(QWidget):
         return m
 
     settings_provider = staticmethod(lambda: None)    # -> Settings (set by the overlay)
+
+    def _fill_shapes_menu(self, m) -> None:
+        m.clear()
+        a = m.addAction("도형 + 글자 그대로 (기본)")
+        a.triggered.connect(lambda: self.action.emit("ppt_shapes"))
+        b = m.addAction("글자를 하나의 상자로 합쳐서")
+        b.setToolTip("흩어진 글자를 한 개의 텍스트 상자로 합쳐 PowerPoint에 넣습니다 (배너·문단에 좋음)")
+        b.triggered.connect(lambda: self.action.emit("ppt_merge"))
+
+    def shapes_menu_actions(self) -> list:
+        return ["ppt_shapes", "ppt_merge"]
 
     def _fill_table_menu(self, m, settings=None) -> None:
         from PySide6.QtGui import QActionGroup

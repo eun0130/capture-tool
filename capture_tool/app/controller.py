@@ -25,7 +25,8 @@ from ..core.ocr import OcrUnavailable, full_text, select_text
 from ..core.styled_text import read_styled, redact as redact_styled, styled_html
 from ..core.scroll_session import ScrollCapture, looks_blocked
 from ..core.session import CaptureSession, State
-from ..core.shapes import detect, page_panel, recognize_layout, screen_tables, split_doubtful, to_drawing
+from ..core.shapes import (detect, merge_free_text, page_panel, recognize_layout, screen_tables,
+                            split_doubtful, to_drawing)
 from ..core.table import detect_grid, grid_from_cells, table_is_plausible
 from ..core.box_table import find_box_table
 from ..core.table_capture import CapturedTable, find_table, phrases_from_words
@@ -547,6 +548,8 @@ class Controller(QObject):
             self._start_scroll()
         elif name == "ppt_shapes":
             self._run_recognition("ppt")
+        elif name == "ppt_merge":
+            self._run_recognition("ppt", merge_text=True)
         elif name in ("text", "shapes", "table", "table_preview"):
             self._run_recognition(name)
         elif name.startswith("tableopt:"):
@@ -1327,6 +1330,17 @@ class Controller(QObject):
             log.exception("styled text")
             return None
 
+    def _copy_oneline(self) -> None:
+        """Copy all the recognized text as one paragraph - line breaks removed, spaces kept."""
+        raw = full_text(self._text_lines)
+        text = " ".join(raw.split())
+        if self.settings.redact_pii:
+            text = mask(text)
+        if text.strip() and self._set_clipboard(text_payload(text)):
+            self._last_text, self._last_raw = text, raw
+            note = " (개인정보 가림)" if self.settings.redact_pii and mask(raw) != raw else ""
+            self.notify(f"줄바꿈 없이 한 줄로 복사했습니다{note}.")
+
     def _toggle_styled(self) -> None:
         s = self.settings
         s.styled_text = not s.styled_text
@@ -1357,6 +1371,8 @@ class Controller(QObject):
         ov = self.active_overlay
         if name == "all":
             self._copy_text(self._text_lines, self._text_grid)
+        elif name == "oneline":
+            self._copy_oneline()
         elif name == "styled":
             self._toggle_styled()
         elif name == "table":
@@ -1692,16 +1708,17 @@ class Controller(QObject):
         self.pins = []
 
     # --- text & shapes -----------------------------------------------------------------
-    def _run_recognition(self, kind: str) -> None:
+    def _run_recognition(self, kind: str, merge_text: bool = False) -> None:
         if self.session.state is not State.EDITING:
             return
         ov, sel, doc, raw = self._take()
         user_shapes = list(doc.shapes) if doc else []
         final = compose(raw, doc)
         raw = mask_outside(raw, doc.clip if doc else None)   # recognize only what is kept
-        self._run_recognition_on(raw, kind, 96 * ov.scale, final, user_shapes, self._below(ov, sel))
+        self._run_recognition_on(raw, kind, 96 * ov.scale, final, user_shapes, self._below(ov, sel), merge_text)
 
-    def _run_recognition_on(self, raw, kind: str, dpi: float, final=None, user_shapes=(), pos=None) -> None:
+    def _run_recognition_on(self, raw, kind: str, dpi: float, final=None, user_shapes=(), pos=None,
+                            merge_text: bool = False) -> None:
         final = raw if final is None else final
         if not self.sync and kind in ("table", "ppt"):
             self.notify("표·도형을 읽는 중입니다… (1~2초)" if kind == "ppt" else "표를 읽는 중입니다… (1~2초)")
@@ -1735,6 +1752,8 @@ class Controller(QObject):
             # shapes and labels in their places; dark text on a saturated fill is read again
             det = recognize_layout(raw, scored, None if err is not None else
                                    (lambda crop: [(l.text, l.box) for l in self.ocr.recognize(crop)]), dpi)
+            if merge_text:
+                det = merge_free_text(det)
             return kind, lines, err, None, det
 
         self._pending = (user_shapes, final, pos, dpi)

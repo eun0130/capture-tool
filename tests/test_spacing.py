@@ -171,3 +171,52 @@ def test_SPACE_07_a_blank_is_judged_against_the_spaces_already_found():
     img2, box2 = _line([2, 2, 3], gap=6)
     assert restore_spaces(img2, "가나 다라마바사", box2) == "가나 다라 마바사"
     assert restore_spaces(img2, "가나다라마바사", box2, page_ratio=6 / 20) == "가나 다라 마바사"
+
+
+def test_SPACE_08_plain_copy_spacing_over_many_fonts(engine):
+    """BUG check: 텍스트 복사 띄어쓰기. Many sentences in several fonts/sizes, light and dark - the
+    spaces the reader found plus the ones restored from pixel gaps must match the original almost
+    always, with hardly any extra spaces wrongly inserted."""
+    import random as _r
+    from capture_tool.core.ocr import full_text
+    fams = [("malgun.ttf", 0), ("malgunbd.ttf", 0), ("gulim.ttc", 0), ("gulim.ttc", 1), ("batang.ttc", 0)]
+    sents = ["회의는 다음 주 수요일 오후 세 시입니다", "견적서를 금요일까지 보내 주세요", "담당자는 김대리 로 합니다",
+             "AI를 무제한으로 쓸 수 있습니다", "총 합계 금액은 42,000원 입니다", "이 값은 두 번 더한 뒤 반으로 나눈 것",
+             "떠오른 아이디어를 바로 적어 두세요", "제품 기획 과 콘텐츠 기획", "서울시 강남구 테헤란로 123",
+             "비밀번호는 최소 8자 이상", "다음 단계로 넘어가도 될까요", "오늘 안에 꼭 끝내야 합니다"]
+
+    def marks(s):
+        out, i = set(), 0
+        for ch in s:
+            if ch == " ":
+                out.add(i)
+            else:
+                i += 1
+        return out, i
+    rng = _r.Random(7)
+    kept = wanted = wrong = comp = 0
+    for _ in range(90):
+        name, idx = rng.choice(fams)
+        p = FONTS / name
+        if not p.exists():
+            continue
+        f = ImageFont.truetype(str(p), rng.choice([15, 18, 22, 28]), index=idx)
+        dark = rng.random() < 0.4
+        bg, fg = ((25, 25, 30), (235, 235, 235)) if dark else ((255, 255, 255), (20, 20, 20))
+        picks = rng.sample(sents, k=rng.randint(2, 4))
+        img = _render(picks, f, fg, bg)
+        got = full_text(engine.recognize(img)).split("\n")
+        if len(got) != len(picks):
+            continue
+        for g, s in zip(got, picks):
+            gm, gn = marks(g)
+            wm, wn = marks(s)
+            if gn != wn:
+                continue
+            comp += 1
+            kept += len(gm & wm)
+            wanted += len(wm)
+            wrong += len(gm - wm)
+    assert comp >= 150, comp
+    assert kept >= 0.96 * wanted, (kept, wanted)
+    assert wrong <= 0.03 * wanted, (wrong, wanted)
