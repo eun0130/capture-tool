@@ -126,3 +126,25 @@ def test_RPX_09_print_helper_cancel_and_accept(qt_app):
     assert print_image(img, dialog_factory=lambda p: FakeDlg(True), printer_factory=printer) is True
     import os
     assert os.path.exists(out) and os.path.getsize(out) > 500
+
+
+def test_RPX_10_pdf_and_resize_work_in_the_edit_window(make, tmp_path):
+    """Blindspot: a long opened/scroll capture in the edit window. PDF splits into pages, resize
+    and print use the shared path."""
+    c = make()
+    big = np.full((3000, 500, 3), 200, np.uint8)
+    p = tmp_path / "big.png"
+    cv2.imwrite(str(p), big)
+    assert c.open_image_file(str(p))
+    c.on_toolbar_action("pdf")
+    pdfs = list(tmp_path.rglob("*.pdf"))
+    assert pdfs and pdfs[0].read_bytes().count(b"/MediaBox") >= 3      # a tall capture → several pages
+    assert c.open_image_file(str(p))
+    c.ask_resize = lambda img, s: (cv2.resize(img, (250, 1500)), "png")
+    c.on_toolbar_action("resize")
+    assert _png(c).shape[1] == 250
+    assert c.open_image_file(str(p))
+    printed = []
+    c.print_image = lambda img, dpi=96: (printed.append(1), True)[1]
+    c.on_toolbar_action("print")
+    assert printed == [1]
