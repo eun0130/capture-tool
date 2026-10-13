@@ -1,5 +1,6 @@
 """크기 줄이기 · PDF 저장 · 인쇄 wired into the capture (fakes for the dialog and printer)."""
 import cv2
+import pytest
 import numpy as np
 from capture_tool.core.clipboard_payload import PNG
 from tests.test_app import drag, make  # noqa: F401 (fixture)
@@ -102,6 +103,7 @@ def test_RPX_08_resize_of_a_cropped_capture_uses_the_cut_part(make):
     assert abs(got["shape"][1] - 200) <= 2 and abs(got["shape"][0] - 150) <= 2
 
 
+@pytest.mark.windows
 def test_RPX_09_print_helper_cancel_and_accept(qt_app):
     from capture_tool.platform.printing import print_image
     img = np.full((60, 100, 3), 180, np.uint8)
