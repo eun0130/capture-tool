@@ -1212,11 +1212,25 @@ def find_icons(img: np.ndarray, det: list[Detected], text_boxes) -> list[Detecte
     n, labels, stats, _ = cv2.connectedComponentsWithStats(m)
     out: list[Detected] = []
     order = sorted(range(1, n), key=lambda j: -stats[j, cv2.CC_STAT_AREA])
+    tboxes = [tuple(int(round(v)) for v in b) for b in text_boxes]
+
+    def hugs_text(px, py, pw, ph) -> bool:
+        """A small piece whose centre sits ON a text box (a letter/digit curve that overshot its
+        box), not an icon beside the text (a dropdown arrow sits to the right, outside the span)."""
+        cx, cy = px + pw / 2, py + ph / 2
+        for (tx, ty, tw, th) in tboxes:
+            if (tx - 0.1 * tw <= cx <= tx + tw + 0.1 * tw and ty - 0.5 * th <= cy <= ty + th + 0.5 * th
+                    and max(pw, ph) <= 1.6 * th):
+                return True
+        return False
+
     for j in order:
         x, y, w, h, area = (int(v) for v in stats[j])
         if area < 12 or max(w, h) < ICON_MIN or max(w, h) > ICON_MAX:
             continue
         if left[y:y + h, x:x + w].sum() < 8:
+            continue
+        if hugs_text(x, y, w, h):                  # a leftover stroke of a letter/digit, not an icon
             continue
         if min(w, h) <= 10 and max(w, h) >= 3 * min(w, h) and any(
                 _on_outline(Detected("picture", x, y, w, h), o, 16) for o in closed if min(o.w, o.h) > WIDGET_MAX + 4):
