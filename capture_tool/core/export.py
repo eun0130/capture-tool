@@ -82,6 +82,44 @@ def resize_to_bytes(img: np.ndarray, budget: int, fmt: str = "jpg", quality: int
     return best, best.shape[1], best.shape[0]
 
 
+def _to_bgr_tuple(color) -> tuple[int, int, int]:
+    """Accept a (B, G, R) tuple/list or a '#RRGGBB' hex string; return a BGR int tuple."""
+    if isinstance(color, str):
+        s = color.lstrip("#")
+        r, g, b = int(s[0:2], 16), int(s[2:4], 16), int(s[4:6], 16)
+        return (b, g, r)
+    return tuple(int(c) for c in color[:3])
+
+
+def add_border(img: np.ndarray, thickness: int = 0, color=(0, 0, 0), shadow: bool = False,
+               shadow_blur: int = 16, shadow_offset: tuple[int, int] = (8, 8),
+               shadow_opacity: float = 0.35, bg=(255, 255, 255)) -> np.ndarray:
+    """Put a solid border of `thickness` px (colour in BGR or '#RRGGBB') around the picture, and
+    optionally a soft drop shadow. Returns an opaque BGR image on a `bg` background (so it pastes
+    cleanly into docs); the picture itself is never enlarged or altered."""
+    src = _bgr(img)
+    t = max(0, int(thickness))
+    col = _to_bgr_tuple(color)
+    bordered = cv2.copyMakeBorder(src, t, t, t, t, cv2.BORDER_CONSTANT, value=col) if t else src
+    if not shadow:
+        return np.ascontiguousarray(bordered)
+    bh, bw = bordered.shape[:2]
+    ox, oy = int(shadow_offset[0]), int(shadow_offset[1])
+    blur = max(1, int(shadow_blur))
+    margin = blur * 2 + max(abs(ox), abs(oy)) + 2
+    cw, ch = bw + 2 * margin, bh + 2 * margin
+    bg_tuple = _to_bgr_tuple(bg)
+    canvas = np.full((ch, cw, 3), bg_tuple, np.uint8).astype(np.float32)
+    x0, y0 = margin, margin
+    mask = np.zeros((ch, cw), np.float32)
+    mask[y0 + oy:y0 + oy + bh, x0 + ox:x0 + ox + bw] = 1.0
+    mask = cv2.GaussianBlur(mask, (0, 0), blur) * float(max(0.0, min(1.0, shadow_opacity)))
+    canvas *= (1.0 - mask[:, :, None])                       # multiply towards black = the shadow
+    out = canvas.round().astype(np.uint8)
+    out[y0:y0 + bh, x0:x0 + bw] = bordered                   # the picture sits on top, crisp
+    return np.ascontiguousarray(out)
+
+
 def _pil(img: np.ndarray):
     from PIL import Image
     return Image.fromarray(cv2.cvtColor(_bgr(img), cv2.COLOR_BGR2RGB))

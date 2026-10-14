@@ -203,6 +203,7 @@ class Controller(QObject):
         self.reveal_file = _reveal_file
         self.open_folder = _open_folder
         self.ask_resize = self._resize_dialog   # tests replace it
+        self.ask_border = self._border_dialog   # tests replace it
         self.print_image = _print_image         # tests replace it
         self.ask_mail = None                # tests replace the picker
         self.ask_table_preview = None       # tests replace the preview dialog
@@ -553,6 +554,8 @@ class Controller(QObject):
             self._run_recognition("ppt")
         elif name == "resize":
             self._do_resize()
+        elif name == "border":
+            self._do_border()
         elif name == "pdf":
             self._do_pdf()
         elif name == "print":
@@ -1537,6 +1540,30 @@ class Controller(QObject):
         where = f" 저장: {saved.name}" if saved else ""
         self.notify(f"{w} × {h}px 로 줄여 복사했습니다.{where} 원하는 곳에 Ctrl+V")
 
+    def _do_border(self) -> None:
+        if self.session.state is not State.EDITING:
+            return
+        ov, sel, doc, raw = self._take(close=False, autosave=False)
+        final = compose(raw, doc)
+        dpi = 96 * ov.scale
+        result = self.ask_border(final, self.settings)
+        self.close_overlays()
+        if result is None:                              # cancelled: keep the capture as it is
+            p = self._image_payload(final, dpi)
+            if p:
+                self._set_clipboard(p)
+            self.notify("테두리를 취소했습니다. 원본이 복사되어 있습니다.")
+            if self.settings.auto_save:
+                self._save(final)
+            return
+        self._persist()                                 # remember the chosen border
+        p = self._image_payload(result, dpi)
+        if p:
+            self._set_clipboard(p)
+        saved = self._save(result) if self.settings.auto_save else None
+        where = f" 저장: {saved.name}" if saved else ""
+        self.notify(f"테두리를 넣어 복사했습니다.{where} 원하는 곳에 Ctrl+V")
+
     def _do_pdf(self) -> None:
         if self.session.state is not State.EDITING:
             return
@@ -1587,6 +1614,10 @@ class Controller(QObject):
     def _resize_dialog(self, img, settings):
         from .resize_dialog import ask_resize
         return ask_resize(img, settings, self.active_overlay)
+
+    def _border_dialog(self, img, settings):
+        from .border_dialog import ask_border
+        return ask_border(img, settings, self.active_overlay)
 
     def _save(self, img, ask: bool = False, ext_override: str | None = None) -> Path | None:
         s = self.settings

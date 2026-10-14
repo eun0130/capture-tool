@@ -41,6 +41,9 @@ class Settings:
     table_quick: bool = False             # skip the 표 options dialog (use the saved choice)
     bar_expanded: bool = False           # action bar shows every button (전체) instead of the basic row
     pdf_one_page: bool = False            # PDF: split a long capture across A4 pages (True = fit to one page)
+    border_thickness: int = 8             # 테두리: last chosen border width in px
+    border_color: str = "#FFFFFF"         # 테두리: last chosen border colour
+    border_shadow: bool = False           # 테두리: last chose to add a drop shadow
     styled_text: bool = True             # text mode copies the text with its look (colours, background, indent)
     read_ahead: bool = True              # read the text of a chosen area in the background (instant 텍스트/표)
     show_recent: bool = True             # newest saved captures at the bottom when a capture starts
@@ -115,7 +118,7 @@ def _apply(s: Settings, data: dict, warnings: list[str]) -> None:
                 if not _is_int(v):
                     raise TypeError
                 s.jpg_quality = min(100, max(1, v))
-            elif name in ("auto_save", "launch_at_startup", "redact_pii", "drm_notice_shown", "ppt_new_slide", "auto_copy", "show_recent", "styled_text", "pdf_one_page", "read_ahead", "keep_style", "bar_expanded", "table_quick", "guide_shown",
+            elif name in ("auto_save", "launch_at_startup", "redact_pii", "drm_notice_shown", "ppt_new_slide", "auto_copy", "show_recent", "styled_text", "pdf_one_page", "border_shadow", "read_ahead", "keep_style", "bar_expanded", "table_quick", "guide_shown",
                           "ai_cloud_translate", "ai_cloud_consent", "share_consent"):
                 if not isinstance(v, bool):
                     raise TypeError
@@ -138,6 +141,12 @@ def _apply(s: Settings, data: dict, warnings: list[str]) -> None:
                 s.last_tool = v
             elif name == "last_color":
                 s.last_color = normalize_hex(v)
+            elif name == "border_color":
+                s.border_color = normalize_hex(v)
+            elif name == "border_thickness":
+                if not _is_int(v):
+                    raise TypeError
+                s.border_thickness = min(64, max(0, v))
             elif name == "share_expiry":
                 from .share import EXPIRIES
                 if v not in EXPIRIES:

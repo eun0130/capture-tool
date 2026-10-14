@@ -26,6 +26,7 @@ ACTIONS = [
     ("more", "more", "전체", "모든 기능 펼치기 / 기본만 보기 (마지막 상태를 기억)", "basic"),
     ("save_as", "save_as", "다른 이름 저장", "저장 위치를 골라 저장 (Ctrl+Shift+S)", "extra"),
     ("resize", "resize", "크기 줄이기", "캡처를 작게 — 복사·저장·PDF가 줄인 크기로 (메일·업로드용)", "extra"),
+    ("border", "border", "테두리", "캡처 둘레에 테두리(굵기·색)와 음영(그림자)을 넣어 복사·저장 — 미리 보기 제공", "extra"),
     ("pdf", "pdf", "PDF", "캡처를 PDF로 저장 — 긴 캡처는 여러 쪽으로", "extra"),
     ("print", "print", "인쇄", "캡처를 프린터로 인쇄 (용지에 맞춤)", "extra"),
     ("ppt_shapes", "shapes", "도형PPT", "도형을 알아봐서 PowerPoint에서 고칠 수 있는 도형으로 넣기", "extra"),
