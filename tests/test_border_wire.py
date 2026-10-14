@@ -57,6 +57,15 @@ def test_BW_04_auto_save_saves_the_framed_file(make, tmp_path):
     assert img.shape[0] == 310 and img.shape[1] == 410
 
 
+def test_BW_06_border_dialog_opens_after_overlays_close(make):
+    """BUG-106: show the dialog only after the always-on-top overlay is closed."""
+    c, ov = _editing(make)
+    seen = {}
+    c.ask_border = lambda img, s: (seen.setdefault("overlays_open", bool(c.overlays)), None)[1]
+    c.on_toolbar_action("border")
+    assert seen["overlays_open"] is False
+
+
 def test_BW_05_border_works_in_the_edit_window(make, tmp_path):
     c = make()
     pic = np.full((200, 300, 3), 180, np.uint8)

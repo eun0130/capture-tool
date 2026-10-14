@@ -1521,8 +1521,8 @@ class Controller(QObject):
         ov, sel, doc, raw = self._take(close=False, autosave=False)
         final = compose(raw, doc)
         dpi = 96 * ov.scale
-        result = self.ask_resize(final, self.settings)
-        self.close_overlays()
+        self.close_overlays()                           # hide the always-on-top capture first (BUG-106)
+        result = self.ask_resize(final, self.settings)  # else the dialog opens behind it
         if result is None:                              # cancelled: keep the capture as it is
             p = self._image_payload(final, dpi)
             if p:
@@ -1546,8 +1546,8 @@ class Controller(QObject):
         ov, sel, doc, raw = self._take(close=False, autosave=False)
         final = compose(raw, doc)
         dpi = 96 * ov.scale
-        result = self.ask_border(final, self.settings)
-        self.close_overlays()
+        self.close_overlays()                           # hide the always-on-top capture first (BUG-106)
+        result = self.ask_border(final, self.settings)  # else the dialog opens behind it
         if result is None:                              # cancelled: keep the capture as it is
             p = self._image_payload(final, dpi)
             if p:

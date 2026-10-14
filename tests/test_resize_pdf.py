@@ -130,6 +130,16 @@ def test_RPX_09_print_helper_cancel_and_accept(qt_app):
     assert os.path.exists(out) and os.path.getsize(out) > 500
 
 
+def test_RPX_11_resize_dialog_opens_after_overlays_close(make):
+    """BUG-106: the dialog must be shown only after the always-on-top capture overlay is gone,
+    otherwise it opens behind it and looks like nothing happened."""
+    c, ov = _editing(make)
+    seen = {}
+    c.ask_resize = lambda img, s: (seen.setdefault("overlays_open", bool(c.overlays)), None)[1]
+    c.on_toolbar_action("resize")
+    assert seen["overlays_open"] is False
+
+
 def test_RPX_10_pdf_and_resize_work_in_the_edit_window(make, tmp_path):
     """Blindspot: a long opened/scroll capture in the edit window. PDF splits into pages, resize
     and print use the shared path."""
