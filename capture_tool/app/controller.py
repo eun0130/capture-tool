@@ -190,6 +190,7 @@ class Controller(QObject):
         self.result_window = None          # whole-window capture result
         self.editor = None                  # edit window for captures bigger than a screen
         self._editor_path = None            # file it was auto-saved to when it opened
+        self._editor_dirty = False          # the picture itself changed there (turned): rewrite that file
         self.tip_active = False
         self._acted = False                 # the user did something with this capture (for auto-save on Esc)
         self._taken_path = None             # file the current capture was saved to (auto-save / link)
@@ -696,6 +697,7 @@ class Controller(QObject):
         from .editor import EditorWindow
         h, w = img.shape[:2]
         self._editor_path = self._save(img) if (save and self.settings.auto_save) else None
+        self._editor_dirty = False
         self.session.hotkey(Rect(0, 0, w, h))
         self.session.select(Rect(0, 0, w, h))
         self.mode = "draw"
@@ -1466,8 +1468,10 @@ class Controller(QObject):
         """Save the finished capture. An edit window was saved when it opened: then only rewrite
         that same file if something was drawn (no second copy)."""
         path, self._editor_path = self._editor_path, None
+        dirty, self._editor_dirty = self._editor_dirty, False
         if path is not None:
-            if doc is not None and doc.shapes and self._write_image(compose(raw, doc), Path(path)):
+            changed = dirty or (doc is not None and bool(doc.shapes))
+            if changed and self._write_image(compose(raw, doc), Path(path)):
                 return Path(path)
             return Path(path)
         return self._save(compose(raw, doc))
@@ -1590,20 +1594,33 @@ class Controller(QObject):
         self.notify(f"테두리를 넣어 복사했습니다.{where} 원하는 곳에 Ctrl+V")
 
     def _do_rotate(self, degrees: int) -> None:
-        """A quarter turn of the capture (drawings baked in), then the edit window with the turned
-        picture - every button there works on it, and turning again keeps turning."""
+        """A quarter turn of the capture (drawings baked in). A live capture opens in the edit window
+        turned; in the edit window the picture turns in place - the window, its zoom and the bars
+        stay, so drawing just goes on (BUG-113: it used to close and reopen, a flash)."""
         if self.session.state is not State.EDITING:
             return
         from ..core.export import rotate90
-        fresh = self.editor is None                     # a live capture: auto-save applies once
+        way = "시계" if degrees > 0 else "반시계"
+        ed = self.editor
+        if ed is not None:
+            cv = ed.canvas
+            cv.close_text_editor()
+            sel, doc = self.session.selection, self.session.document
+            turned = rotate90(compose(cv.crop(sel), doc), degrees)
+            self._remember_style(cv)
+            self._copy_image(turned, 96 * ed.dpr)
+            ed.replace_image(turned, "회전")
+            self._editor_dirty = True                   # auto-save: that file gets the turned picture
+            self._acted = True
+            self.notify(f"{way} 방향으로 90° 회전했습니다. 복사되어 있습니다. 이어서 그리거나 텍스트·표·PPT를 쓰세요.")
+            return
         ov, sel, doc, raw = self._take(close=False, autosave=False)
         final = compose(raw, doc)
         dpi = 96 * ov.scale
         turned = rotate90(final, degrees)
         self.close_overlays()
         self._copy_image(turned, dpi)
-        self.open_editor(turned, dpi, "회전", save=fresh)
-        way = "시계" if degrees > 0 else "반시계"
+        self.open_editor(turned, dpi, "회전", save=True)
         self.notify(f"{way} 방향으로 90° 회전했습니다. 복사되어 있고, 편집 창에서 텍스트·표·PPT 등을 쓸 수 있습니다.")
 
     def _do_pdf(self) -> None:

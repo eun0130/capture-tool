@@ -2,12 +2,14 @@
 same canvas, drawing toolbar and side bar as a normal capture, in a resizable window with zoom."""
 from __future__ import annotations
 
+import numpy as np
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QGuiApplication
 from PySide6.QtWidgets import QHBoxLayout, QLabel, QPushButton, QScrollArea, QVBoxLayout, QWidget
 
 from ..core.geometry import Monitor, Rect
 from .overlay import OverlayWindow
+from .render import bgr_to_pixmap
 
 ZOOMS = [0.25, 0.33, 0.5, 0.67, 0.8, 1.0, 1.25, 1.5, 2.0, 3.0, 4.0]
 HINT = ("그리기·텍스트(글자 인식)·PPT로·도형PPT·링크·고정 모두 쓸 수 있습니다 · "
@@ -116,6 +118,28 @@ class EditorWindow(QWidget):
             self.fit_width()
         else:
             self.set_zoom(1.0)
+
+    # --- another picture in this window -----------------------------------------------------------------
+    def replace_image(self, image, title: str) -> None:
+        """Show another picture (e.g. the capture turned) in this same window: the canvas, the
+        session's area and a fresh document take its size; the window, zoom and bars stay (BUG-113)."""
+        cv = self.canvas
+        cv.close_text_editor()
+        if cv.ocr_lines is not None:
+            cv.exit_ocr_mode()
+        h, w = image.shape[:2]
+        cv.image = np.ascontiguousarray(image)
+        cv.monitor = Monitor(-1, Rect(0, 0, w, h), self.dpr, False, "editor")
+        cv.pixmap = bgr_to_pixmap(cv.image, cv.scale)
+        cv._current = cv._move_index = cv._press = None
+        cv.selected = None
+        self.c.session.replace(Rect(0, 0, w, h))
+        self.setWindowTitle(f"캡처 편집 — {title} ({w} × {h:,}px)")
+        if w / cv.scale > self.area.viewport().width() - 4:
+            self.fit_width()                     # a landscape picture turned upright, or the reverse
+        else:
+            self._apply_zoom()
+        cv.update()
 
     # --- closing ----------------------------------------------------------------------------------------
     def show_recent(self, paths) -> None:

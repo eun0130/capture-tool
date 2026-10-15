@@ -59,6 +59,12 @@ class CaptureSession:
         self.document = Document(r.w, r.h)
         self.state = State.EDITING
 
+    def replace(self, r: Rect) -> None:
+        """Another picture in place of the one being edited (e.g. turned): its area and a fresh
+        document of that size. Nothing changes outside editing."""
+        if self.state is State.EDITING:
+            self._select(r)
+
     def resize(self, r: Rect) -> None:
         if self.state is not State.EDITING or r.w < 1 or r.h < 1:
             return

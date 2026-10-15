@@ -80,3 +80,17 @@ def test_after_finish_new_capture_allowed():
     s.key("Enter")
     assert s.hotkey(VB) is True
     assert s.document is None or s.document.shapes == []
+
+
+def test_SES_08_replace_gives_a_fresh_document_of_the_new_size():
+    """A turned picture in the edit window: the area and an empty document take its size."""
+    from capture_tool.core.annotations import Shape
+    s = CaptureSession()
+    assert s.hotkey(Rect(0, 0, 300, 400)) and s.state is State.SELECTING
+    s.replace(Rect(0, 0, 400, 300))                           # not editing yet: ignored
+    assert s.selection is None
+    s.select(Rect(0, 0, 300, 400))
+    s.document.add(Shape(kind="rect", points=[(1, 1), (5, 5)]))
+    s.replace(Rect(0, 0, 400, 300))
+    assert s.state is State.EDITING and s.selection == Rect(0, 0, 400, 300)
+    assert s.document.shapes == [] and (s.document.width, s.document.height) == (400, 300)
