@@ -22,6 +22,7 @@ from ..core.drawingml import gvml_package, svg
 from ..core.geometry import Rect, clamp_rect, nudge, order_cursor_first, virtual_bounds
 from ..core.naming import SaveDirError, render, resolve_save_dir, unique_path
 from ..core.ocr import OcrUnavailable, full_text, select_text
+from ..core.redact import describe as describe_pii
 from ..core.styled_text import read_styled, redact as redact_styled, styled_html
 from ..core.scroll_session import ScrollCapture, looks_blocked
 from ..core.session import CaptureSession, State
@@ -1288,13 +1289,31 @@ class Controller(QObject):
             return None
         return found.rows
 
+    def _mask_note(self, raw: str) -> str:
+        """What 개인정보 자동 가림 hid in `raw`, and where to turn it off - so a number that pastes
+        as ***** is never mistaken for a password field (BUG-109)."""
+        if not self.settings.redact_pii:
+            return ""
+        what = describe_pii(raw)
+        if not what:
+            return ""
+        return (f" {what}을(를) *로 가렸습니다. 숫자 그대로 쓰려면 텍스트 창의 '개인정보 자동 가림'을 끄세요"
+                " (기억됩니다 · 설정에서도).")
+
+    def set_redact(self, on: bool) -> None:
+        """The switch in the text window is remembered."""
+        if self.settings.redact_pii != bool(on):
+            self.settings.redact_pii = bool(on)
+            self._persist()
+
     def _copy_text(self, lines, grid=None, drag_hint=False) -> None:
         redact = self.settings.redact_pii
         if grid:
             cells = [[mask(c) if redact else c for c in row] for row in grid]
             if self._set_clipboard(text_payload("", table=cells)):
                 self._last_text = "\n".join("\t".join(row) for row in cells)
-                self.notify(f"표 {len(cells)}행×{len(cells[0])}열로 복사했습니다. Excel에 붙여넣으면 칸이 나뉩니다.")
+                note = self._mask_note("\n".join("\t".join(row) for row in grid))
+                self.notify(f"표 {len(cells)}행×{len(cells[0])}열로 복사했습니다. Excel에 붙여넣으면 칸이 나뉩니다.{note}")
             return
         raw_text = full_text(lines)
         text = mask(raw_text) if redact else raw_text
@@ -1304,11 +1323,11 @@ class Controller(QObject):
         payload, look = self._whole_text_payload(lines, text)
         if self._set_clipboard(payload):
             self._last_text, self._last_raw = text, raw_text
-            note = " (개인정보 가림)" if text != raw_text else ""
+            note = self._mask_note(raw_text)
             hint = " 글자 위를 드래그하면 그 부분만 복사합니다." if drag_hint else ""
             styled = (" 서식(색·배경·들여쓰기) 포함 — 엑셀·워드에 붙이면 그대로 나옵니다 (PowerPoint는 PPT 버튼)."
                       if look is not None else "")
-            self.notify(f"텍스트 {len(lines)}줄을 복사했습니다{note}.{styled}{hint}")
+            self.notify(f"텍스트 {len(lines)}줄을 복사했습니다.{note}{styled}{hint}")
 
     def _whole_text_payload(self, lines, text: str) -> tuple[dict, object]:
         """What copying all the text puts on the clipboard: the plain text, and with 서식 유지 the
@@ -1353,8 +1372,7 @@ class Controller(QObject):
             text = mask(text)
         if text.strip() and self._set_clipboard(text_payload(text)):
             self._last_text, self._last_raw = text, raw
-            note = " (개인정보 가림)" if self.settings.redact_pii and mask(raw) != raw else ""
-            self.notify(f"줄바꿈 없이 한 줄로 복사했습니다{note}.")
+            self.notify(f"줄바꿈 없이 한 줄로 복사했습니다.{self._mask_note(raw)}")
 
     def _toggle_styled(self) -> None:
         s = self.settings
@@ -1375,12 +1393,13 @@ class Controller(QObject):
             return
         self._last_raw = text
         self._text_part = True                         # what was copied last is a part, as plain text
+        note = self._mask_note(text)
         if self.settings.redact_pii:
             text = mask(text)
         if self._set_clipboard(text_payload(text)):
             self._last_text = text
             n = len(text.replace("\n", "").replace(" ", ""))
-            self.notify(f"선택한 글자 {n}자를 복사했습니다.")
+            self.notify(f"선택한 글자 {n}자를 복사했습니다.{note}")
 
     def on_ocr_action(self, name: str) -> None:
         ov = self.active_overlay
@@ -1397,7 +1416,8 @@ class Controller(QObject):
             else:
                 cells = [[mask(c) if self.settings.redact_pii else c for c in r] for r in rows]
                 if self._set_clipboard(table_payload(cells)):
-                    self.notify(f"표 {len(cells)}행×{len(cells[0])}열로 복사했습니다. Excel·PowerPoint에서 Ctrl+V 하세요.")
+                    note = self._mask_note("\n".join("\t".join(r) for r in rows))
+                    self.notify(f"표 {len(cells)}행×{len(cells[0])}열로 복사했습니다. Excel·PowerPoint에서 Ctrl+V 하세요.{note}")
         elif name in ("translate", "summarize"):
             self.ai_request(name, self._last_raw or full_text(self._text_lines))
         elif name == "back" and ov is not None:
@@ -1413,7 +1433,7 @@ class Controller(QObject):
         if self.text_panel:
             self.text_panel.close()
         self.text_panel = TextPanel(lines, self._set_clipboard, self.settings.redact_pii, qr, self.notify, grid,
-                                    ai_action=self.ai_request)
+                                    ai_action=self.ai_request, on_redact=self.set_redact)
         self.text_panel.move(pos + QPoint(0, 8))
         self.text_panel.show()
 

@@ -13,7 +13,7 @@ from ..core.table import to_grid
 
 class TextPanel(QWidget):
     def __init__(self, lines: list[OcrLine], clipboard_set, redact: bool = True, qr: str | None = None, notify=None,
-                 grid: list[list[str]] | None = None, ai_action=None):
+                 grid: list[list[str]] | None = None, ai_action=None, on_redact=None):
         super().__init__(None, Qt.Window | Qt.WindowStaysOnTopHint | Qt.Tool)
         self.setWindowTitle("인식된 텍스트 — Esc로 닫기")
         self.lines = lines
@@ -34,9 +34,11 @@ class TextPanel(QWidget):
         self.status = QLabel()
         self.status.setStyleSheet("color: #1F5FD1;")
         v.addWidget(self.status)
-        self.redact = QCheckBox("개인정보 자동 가림 (이메일·전화·주민번호·카드번호)")
+        self.redact = QCheckBox("개인정보 자동 가림 (이메일·전화·주민번호·카드번호) — 바꾸면 기억됩니다")
         self.redact.setChecked(redact)
         self.redact.toggled.connect(self._refresh)
+        if on_redact is not None:
+            self.redact.toggled.connect(lambda on: on_redact(bool(on)))
         v.addWidget(self.redact)
         self.buttons: dict[str, QPushButton] = {}
         if ai_action is not None:

@@ -79,6 +79,17 @@ def mask_word_boxes(words: list[tuple[str, tuple]]) -> list[tuple]:
     return boxes
 
 
+KIND_NAMES = {"rrn": "주민번호", "phone": "전화번호", "email": "이메일", "card": "카드번호"}
+
+
+def describe(text: str) -> str:
+    """"주민번호 1건·전화번호 2건" - what mask() would hide in `text` ("" when nothing)."""
+    counts: dict[str, int] = {}
+    for m in find_pii(text):
+        counts[m.kind] = counts.get(m.kind, 0) + 1
+    return "·".join(f"{KIND_NAMES[k]} {n}건" for k, n in counts.items() if k in KIND_NAMES)
+
+
 def mask(text: str) -> str:
     """Phone numbers, e-mail, resident numbers and card numbers replaced by * (spaces kept)."""
     out = list(text)
