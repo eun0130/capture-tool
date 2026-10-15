@@ -153,6 +153,31 @@ def with_margin(img: np.ndarray, m: int) -> np.ndarray:
     return out
 
 
+PHOTO_MODE_SHARE = 0.12      # a screenshot has one background colour on >12% of its pixels; a photo never
+PHOTO_MAX_SIDE = 2500        # bigger photos are read as they are (already plenty of pixels per letter)
+
+
+def looks_like_photo(img: np.ndarray) -> bool:
+    """A camera picture (sensor noise: no single colour covers a fair share of the pixels), as
+    opposed to a screenshot, a PDF page or a drawn picture."""
+    if img is None or img.size == 0 or img.ndim != 3:
+        return False
+    h, w = img.shape[:2]
+    k = 400 / max(h, w)
+    small = cv2.resize(img[:, :, :3], None, fx=k, fy=k, interpolation=cv2.INTER_AREA) if k < 1 else img[:, :, :3]
+    flat = small.reshape(-1, 3)
+    _, counts = np.unique(flat, axis=0, return_counts=True)
+    return counts.max() / flat.shape[0] < PHOTO_MODE_SHARE and len(counts) > 2000
+
+
+def enhance_photo(img: np.ndarray) -> np.ndarray:
+    """Blurry print reads better enlarged twice and sharpened (the reader's own tiny-text
+    enlargement only kicks in for low lines)."""
+    big = cv2.resize(img, None, fx=2, fy=2, interpolation=cv2.INTER_CUBIC)
+    blur = cv2.GaussianBlur(big, (0, 0), 1.2)
+    return cv2.addWeighted(big, 1.6, blur, -0.6, 0)
+
+
 def needs_latin(text: str) -> bool:
     return not _HANGUL.search(text) and bool(_LATIN_LETTER.search(text))
 
@@ -250,6 +275,54 @@ def _arrow_in(img: np.ndarray, box) -> str | None:
     k = 1 + int(np.argmax(st[1:, cv2.CC_STAT_AREA]))
     x, y, w, h = (int(v) for v in st[k][:4])
     return arrow_kind(lab[y:y + h, x:x + w] == k)
+
+
+def _bullet_symbol(mask: np.ndarray) -> str:
+    """A solid square-ish glyph by its shape: ■ (filled corners), ◆ (empty corners) or ●."""
+    h, w = mask.shape
+    fill = mask.mean()
+    if fill >= 0.8:
+        return "■"
+    ch, cw = max(1, h // 4), max(1, w // 4)
+    corners = np.mean([mask[:ch, :cw].mean(), mask[:ch, -cw:].mean(), mask[-ch:, :cw].mean(), mask[-ch:, -cw:].mean()])
+    return "◆" if corners < 0.15 and 0.3 <= fill <= 0.72 else "●"
+
+
+def fix_false_arrows(img: np.ndarray, text: str, box) -> str:
+    """The reader has no ◆ / ■ and calls a solid bullet at a line's start (or end) an arrow. If the
+    ink there is square-ish and has no shaft+head, the symbol is put back by its shape (BUG-111)."""
+    if not text or (text[0] not in "→←↔" and text[-1] not in "→←↔"):
+        return text
+    x, y, w, h = (int(round(v)) for v in box)
+    crop = img[max(0, y - 1):y + h + 1, max(0, x - 1):x + w + 1]
+    if crop.size == 0:
+        return text
+    g = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY).astype(int) if crop.ndim == 3 else crop.astype(int)
+    ink = (np.abs(g - int(np.median(g))) > 60).astype(np.uint8)
+    n, lab, st, _ = cv2.connectedComponentsWithStats(ink, connectivity=8)
+    th = ink.shape[0]
+    comps = [(int(st[k][0]), int(st[k][1]), int(st[k][2]), int(st[k][3]), k) for k in range(1, n)
+             if st[k][4] >= 0.04 * th * th and st[k][3] >= 0.3 * th]           # no specks, no dots
+    if not comps:
+        return text
+
+    def symbol(cx, cy, cw, chh, k):
+        if not (0.7 <= cw / max(1, chh) <= 1.3):
+            return None                                   # wide: could be an arrow, leave it
+        m = lab[cy:cy + chh, cx:cx + cw] == k
+        if arrow_kind(m) or np.median(m.sum(axis=0)) < 0.45 * chh:
+            return None                                   # an arrow, or anything with a thin shaft
+        return _bullet_symbol(m)
+
+    if text[0] in "→←↔":
+        s = symbol(*min(comps, key=lambda c: c[0]))
+        if s:
+            text = s + text[1:]
+    if len(text) > 1 and text[-1] in "→←↔":
+        s = symbol(*max(comps, key=lambda c: c[0] + c[2]))
+        if s:
+            text = text[:-1] + s
+    return text
 
 
 def fill_dropped_arrows(img: np.ndarray, text: str, box) -> str:
@@ -594,6 +667,10 @@ class OcrEngine:
         if img is None or img.size == 0 or min(img.shape[:2]) < 4:
             return []
         engine = self._load()
+        src = img
+        k = 1.0
+        if max(img.shape[:2]) <= PHOTO_MAX_SIDE and looks_like_photo(img):
+            img, k = enhance_photo(img), 2.0              # a camera picture: read enlarged and sharpened
         h, w = img.shape[:2]
         parts = tiles(w, h)
         lines = []
@@ -613,7 +690,11 @@ class OcrEngine:
                 cx, cy = bx + bw / 2, by + bh / 2
                 if own[0] <= cx < own[2] and own[1] <= cy < own[3]:
                     lines.append(line)
-        lines = [OcrLine(fix_capital_i(l.text), l.box, l.score, l.words) for l in lines]
+        if k != 1.0:                                      # back to the picture's own pixels
+            lines = [OcrLine(l.text, tuple(int(round(v / k)) for v in l.box), l.score,
+                             tuple((t, tuple(v / k for v in b)) for t, b in l.words)) for l in lines]
+        lines = [OcrLine(fix_false_arrows(src, fix_capital_i(l.text), l.box), l.box, l.score, l.words)
+                 for l in lines]
         return reading_order(lines)
 
     def _run_margined(self, engine, piece: np.ndarray, x0: int, y0: int, w: int, h: int) -> list[OcrLine]:
@@ -925,16 +1006,63 @@ def _ink_box(tile: np.ndarray) -> tuple[int, int, int, int] | None:
     return x0, y0, x1 - x0, y1 - y0
 
 
+MAX_TILT = 0.12          # radians (~7°): a photographed page leans; more than this is not a tilt
+
+
+def estimate_tilt(boxes) -> float:
+    """How much the rows lean (radians, positive = down to the right), from pairs of boxes that
+    sit side by side; 0 for a straight screenshot or too few pairs."""
+    import math
+    boxes = [tuple(b) for b in boxes]
+    angles = []
+    for ax, ay, aw, ah in boxes:
+        for bx, by, bw, bh in boxes:
+            if bx < ax + aw or bx - (ax + aw) > 3 * max(ah, bh):
+                continue                                       # not to the right, or far away
+            if not (0.6 <= ah / max(1, bh) <= 1.6):
+                continue
+            dx = (bx + bw / 2) - (ax + aw / 2)
+            dy = (by + bh / 2) - (ay + ah / 2)
+            if dx <= 0 or abs(dy) > 0.6 * max(ah, bh):
+                continue
+            a = math.atan2(dy, dx)
+            if abs(a) <= MAX_TILT:
+                angles.append(a)
+    if len(angles) < 4:
+        return 0.0
+    angles.sort()
+    t = angles[len(angles) // 2]
+    return t if abs(t) >= 0.004 else 0.0                           # under ~0.25°: straight
+
+
+def _cy(box, tilt: float) -> float:
+    """Vertical centre with the page's lean taken out."""
+    x, y, w, h = box
+    return y + h / 2 - (x + w / 2) * tilt
+
+
+def same_row(a: tuple, b: tuple, tilt: float = 0.0) -> bool:
+    """Two boxes (x, y, w, h) on one visual row: centres close (after the lean), and side by
+    side - pieces that sit over each other are stacked lines even when the (padded) boxes
+    overlap vertically."""
+    ax, ay, aw, ah = a
+    bx, by, bw, bh = b
+    dy = abs(_cy(a, tilt) - _cy(b, tilt))
+    tall = max(ah, bh)
+    if dy > 0.5 * tall:
+        return False
+    overlap = min(ax + aw, bx + bw) - max(ax, bx)
+    return overlap <= 0.2 * max(1, min(aw, bw)) or dy <= 0.2 * tall
+
+
 def reading_order(lines: list[OcrLine]) -> list[OcrLine]:
     """Top-to-bottom rows (tolerating small vertical offsets), left-to-right inside a row."""
+    tilt = estimate_tilt([l.box for l in lines])
     rows: list[list[OcrLine]] = []
-    for l in sorted(lines, key=lambda l: l.box[1] + l.box[3] / 2):
-        cy = l.box[1] + l.box[3] / 2
-        if rows:
-            last = rows[-1][0]
-            if abs(cy - (last.box[1] + last.box[3] / 2)) <= max(last.box[3], l.box[3]) * 0.5:
-                rows[-1].append(l)
-                continue
+    for l in sorted(lines, key=lambda l: _cy(l.box, tilt)):
+        if rows and same_row(rows[-1][0].box, l.box, tilt):
+            rows[-1].append(l)
+            continue
         rows.append([l])
     return [l for row in rows for l in sorted(row, key=lambda l: l.box[0])]
 
@@ -958,10 +1086,10 @@ def select_text(lines: list[OcrLine], rect: tuple) -> str:
 
 def _join_rows(lines: list[OcrLine]) -> str:
     """Segments in reading order: the ones on one visual row joined by spaces, rows by newlines."""
+    tilt = estimate_tilt([l.box for l in lines])
     rows: list[list[OcrLine]] = []
     for l in lines:
-        cy = l.box[1] + l.box[3] / 2
-        if rows and abs(cy - (rows[-1][0].box[1] + rows[-1][0].box[3] / 2)) <= max(l.box[3], rows[-1][0].box[3]) * 0.5:
+        if rows and same_row(rows[-1][0].box, l.box, tilt):
             rows[-1].append(l)
         else:
             rows.append([l])

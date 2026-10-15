@@ -556,6 +556,8 @@ class Controller(QObject):
             self._do_resize()
         elif name == "border":
             self._do_border()
+        elif name in ("rotate_left", "rotate_right"):
+            self._do_rotate(-90 if name == "rotate_left" else 90)
         elif name == "pdf":
             self._do_pdf()
         elif name == "print":
@@ -1586,6 +1588,23 @@ class Controller(QObject):
         saved = self._save(result) if self.settings.auto_save else None
         where = f" 저장: {saved.name}" if saved else ""
         self.notify(f"테두리를 넣어 복사했습니다.{where} 원하는 곳에 Ctrl+V")
+
+    def _do_rotate(self, degrees: int) -> None:
+        """A quarter turn of the capture (drawings baked in), then the edit window with the turned
+        picture - every button there works on it, and turning again keeps turning."""
+        if self.session.state is not State.EDITING:
+            return
+        from ..core.export import rotate90
+        fresh = self.editor is None                     # a live capture: auto-save applies once
+        ov, sel, doc, raw = self._take(close=False, autosave=False)
+        final = compose(raw, doc)
+        dpi = 96 * ov.scale
+        turned = rotate90(final, degrees)
+        self.close_overlays()
+        self._copy_image(turned, dpi)
+        self.open_editor(turned, dpi, "회전", save=fresh)
+        way = "시계" if degrees > 0 else "반시계"
+        self.notify(f"{way} 방향으로 90° 회전했습니다. 복사되어 있고, 편집 창에서 텍스트·표·PPT 등을 쓸 수 있습니다.")
 
     def _do_pdf(self) -> None:
         if self.session.state is not State.EDITING:

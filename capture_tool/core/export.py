@@ -120,6 +120,15 @@ def add_border(img: np.ndarray, thickness: int = 0, color=(0, 0, 0), shadow: boo
     return np.ascontiguousarray(out)
 
 
+def rotate90(img: np.ndarray, degrees: int) -> np.ndarray:
+    """A quarter turn: +90 clockwise, -90 counter-clockwise (any multiple of 90 works)."""
+    q = (int(degrees) // 90) % 4
+    if q == 0:
+        return img
+    code = {1: cv2.ROTATE_90_CLOCKWISE, 2: cv2.ROTATE_180, 3: cv2.ROTATE_90_COUNTERCLOCKWISE}[q]
+    return np.ascontiguousarray(cv2.rotate(img, code))
+
+
 def _pil(img: np.ndarray):
     from PIL import Image
     return Image.fromarray(cv2.cvtColor(_bgr(img), cv2.COLOR_BGR2RGB))

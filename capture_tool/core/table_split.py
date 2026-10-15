@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import re
 
+from .ocr import _cy, estimate_tilt, same_row
 from .text_table import find_text_table, is_rule_line, normalize_pipes
 
 RULES = ["auto", "pipe", "pair", "spaces", "comma", "line", "custom:|"]
@@ -82,13 +83,11 @@ def ocr_row_lines(items: list[tuple[str, tuple]]) -> list[str]:
     """OCR boxes (text, (x, y, w, h)) -> one text line per visual row; pieces far apart are
     joined by a tab (a likely column break), close ones by a space."""
     rows: list[list[tuple[str, tuple]]] = []
-    for text, box in sorted(items, key=lambda it: it[1][1] + it[1][3] / 2):
-        cy = box[1] + box[3] / 2
-        if rows:
-            ref = rows[-1][0][1]
-            if abs(cy - (ref[1] + ref[3] / 2)) <= max(ref[3], box[3]) * 0.5:
-                rows[-1].append((text, box))
-                continue
+    tilt = estimate_tilt([b for _, b in items])
+    for text, box in sorted(items, key=lambda it: _cy(it[1], tilt)):
+        if rows and same_row(rows[-1][0][1], box, tilt):
+            rows[-1].append((text, box))
+            continue
         rows.append([(text, box)])
     out = []
     for row in rows:

@@ -49,6 +49,8 @@ _P = {
     "resize": '<path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/><path d="M9 12h6"/>',
     "pdf": '<path d="M6 2h8l4 4v16H6z"/><path d="M14 2v4h4"/><path d="M8.5 13h2a1.5 1.5 0 010 3h-2v-3zM8.5 16v2.5"/>',
     "print": '<path d="M6 9V3h12v6M6 18H4v-6h16v6h-2M8 14h8v6H8z"/>',
+    "rotate_left": '<path d="M5 12a7.5 7.5 0 1 0 2.2-5.3"/><path d="M5 4v5h5"/>',
+    "rotate_right": '<path d="M19 12a7.5 7.5 0 1 1-2.2-5.3"/><path d="M19 4v5h-5"/>',
     "border": '<rect x="4" y="4" width="13" height="13" rx="1"/><path d="M9 20h11V9" stroke-dasharray="2.5 2.5"/>',
 }
 
