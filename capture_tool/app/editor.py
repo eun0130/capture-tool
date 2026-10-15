@@ -61,6 +61,7 @@ class EditorWindow(QWidget):
         body.addWidget(cv.side_bar, 0, Qt.AlignTop)
         cv.side_bar.set_columns(1)
         self.zoom = 1.0
+        self.recent = None                           # 최근 캡처 strip (show_recent)
         self.setAcceptDrops(True)                    # drop another picture here to open it instead
         g = scr.availableGeometry() if scr else None
         if g is not None:
@@ -117,6 +118,15 @@ class EditorWindow(QWidget):
             self.set_zoom(1.0)
 
     # --- closing ----------------------------------------------------------------------------------------
+    def show_recent(self, paths) -> None:
+        from .recent_strip import RecentStrip
+        if self.recent is None:
+            self.recent = RecentStrip(self, sync=self.c.sync)
+            self.recent.open_path.connect(self.c.open_image_file)
+            self.layout().addWidget(self.recent, 0, Qt.AlignHCenter)
+        self.recent.set_paths(paths)
+        self.recent.show()
+
     def close_from_controller(self) -> None:
         self._closing = True
         self.close()

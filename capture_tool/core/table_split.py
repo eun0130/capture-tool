@@ -5,9 +5,9 @@ from __future__ import annotations
 
 import re
 
-from .text_table import find_text_table
+from .text_table import find_text_table, is_rule_line, normalize_pipes
 
-RULES = ["auto", "pair", "spaces", "comma", "line", "custom:|"]
+RULES = ["auto", "pipe", "pair", "spaces", "comma", "line", "custom:|"]
 MAX_ROWS = 200
 MAX_COLS = 20
 _BULLET = re.compile(r"^\s*(?:[•·\-*▪◦●○■□]|\d{1,2}[.)])\s+")
@@ -17,6 +17,11 @@ _COMMA = re.compile(r",(?!\d{3}(?:\D|$))")      # "1,250,000" stays one cell
 
 
 def _cells(line: str, rule: str) -> list[str]:
+    if rule == "pipe":
+        s = line.strip()
+        s = s[1:] if s.startswith("|") else s
+        s = s[:-1] if s.endswith("|") else s
+        return [c.strip() for c in s.split("|")]
     if rule == "pair":
         m = _PAIR.match(line)
         return [m.group(1).strip(), m.group(2).strip()] if m else [line.strip()]
@@ -35,6 +40,8 @@ def _has_sep(line: str, rule: str) -> bool:
 
 
 def _auto(lines: list[str]) -> str:
+    if sum("|" in l for l in lines) >= max(1, (len(lines) + 1) // 2):
+        return "pipe"                                    # a bar on most lines: columns
     found = find_text_table("\n".join(lines))
     if found is not None and found.kind == "pairs":
         return "pair"
@@ -50,7 +57,8 @@ def split_table(lines: list[str], rule: str = "auto", title_first: bool = True, 
                 header: bool = False) -> tuple[str | None, list[list[str]]]:
     """(title, rows). The first line becomes the title when it has no separator and the rest
     do; rows are padded to the same width and capped in size."""
-    lines = [l for l in (x.rstrip() for x in lines) if l.strip()]
+    lines = [normalize_pipes(l) for l in (x.rstrip() for x in lines) if l.strip()]
+    lines = [l for l in lines if not is_rule_line(l)]
     if not lines:
         return None, []
     if strip_bullets:

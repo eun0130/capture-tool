@@ -79,3 +79,37 @@ def test_SPL_11_random_text_never_breaks():
         for rule in RULES:
             title, rows = split_table(lines, rule)
             assert all(len(r) == len(rows[0]) for r in rows)
+
+
+# --- v0.8.21: text with | columns (markdown / ASCII tables read by OCR) ------------------------
+PIPE = ["| 열 | 제목 | 내용 |", "|---|-----|----|", "| 1 | 가 | 나 |", "| 2 | 다 | 라 |"]
+
+
+def test_SPL_12_pipe_rule_drops_edge_cells_and_the_dash_row():
+    _, rows = split_table(PIPE, "pipe", title_first=False)
+    assert rows == [["열", "제목", "내용"], ["1", "가", "나"], ["2", "다", "라"]]
+
+
+def test_SPL_13_auto_picks_pipe_when_most_lines_have_bars():
+    assert "pipe" in RULES
+    assert split_table(PIPE, "auto", title_first=False) == split_table(PIPE, "pipe", title_first=False)
+    title, rows = split_table(["월간 보고"] + PIPE, "auto")
+    assert title == "월간 보고" and rows[0] == ["열", "제목", "내용"]
+
+
+def test_SPL_14_ocr_lookalikes_of_the_bar_count_as_bars():
+    lines = ["|열 | 제목 | 내용|", "|1ㅣ 이런 제목 ㅣ 사용", "|2│xxxx¦yyyy", "｜3 l 가 I 나"]
+    _, rows = split_table(lines, "pipe", title_first=False)
+    assert rows == [["열", "제목", "내용"], ["1", "이런 제목", "사용"], ["2", "xxxx", "yyyy"], ["3", "가", "나"]]
+    # a bar-less line keeps its letters: "l" and "I" inside words are never touched
+    assert split_table(["hello I am", "bill"], "pipe", title_first=False)[1] == [["hello I am"], ["bill"]]
+
+
+def test_SPL_15_garbled_separator_rows_are_dropped_for_every_rule():
+    lines = ["|열 | 제목 | 내용|", "|-−|-……-|-…−−", "|1| a | b|"]
+    _, rows = split_table(lines, "pipe", title_first=False)
+    assert rows == [["열", "제목", "내용"], ["1", "a", "b"]]
+    _, rows = split_table(["품목\t수량", "-----  ----", "사과\t3", "=========="], "spaces", title_first=False)
+    assert rows == [["품목", "수량"], ["사과", "3"]]
+    # a lone "-" cell is data, not a rule line
+    assert split_table(["a | -", "b | 2"], "pipe", title_first=False)[1] == [["a", "-"], ["b", "2"]]

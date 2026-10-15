@@ -143,3 +143,40 @@ def test_REUSE_12_setting_switch(qt_app):
     assert d.show_recent.isChecked()
     d.show_recent.setChecked(False)
     assert d.result_settings().show_recent is False
+
+
+# --- v0.8.21: the strip is reachable while the edit window is open -------------------------------
+def test_REUSE_13_capture_hotkey_with_the_edit_window_open_starts_a_new_capture(saved, tmp_path):
+    """BUG-107: Alt+~ used to only raise the edit window, so 최근 캡처 could never be reached."""
+    c, folder = saved
+    _save_images(folder, 3)
+    p = tmp_path / "x.png"
+    cv2.imwrite(str(p), np.zeros((50, 80, 3), np.uint8))
+    assert c.open_image_file(str(p)) and c.editor is not None
+    assert c.start_capture() is True
+    assert c.editor is None
+    ov = c.overlays[0]
+    assert ov.recent is not None and ov.recent.isVisible() and len(ov.recent.buttons) == 3
+
+
+def test_REUSE_14_edit_window_has_its_own_recent_strip(saved):
+    c, folder = saved
+    paths = _save_images(folder, 3)
+    c.start_capture()
+    c.overlays[0].recent.buttons[0].click()            # newest opens in the edit window
+    ed = c.editor
+    assert ed is not None and ed.recent is not None and ed.recent.isVisible()
+    assert len(ed.recent.buttons) == 3
+    ed.recent.buttons[2].click()                       # the oldest, straight from the edit window
+    assert c.editor is not None and c.editor is not ed
+    assert c.editor.canvas.image.shape[:2] == cv2.imread(str(paths[0])).shape[:2]
+
+
+def test_REUSE_15_edit_window_strip_follows_the_setting(saved, tmp_path):
+    c, folder = saved
+    _save_images(folder, 2)
+    c.settings.show_recent = False
+    p = tmp_path / "x.png"
+    cv2.imwrite(str(p), np.zeros((50, 80, 3), np.uint8))
+    assert c.open_image_file(str(p))
+    assert c.editor.recent is None or not c.editor.recent.isVisible()

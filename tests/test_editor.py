@@ -161,10 +161,13 @@ def test_ED_10_closing_the_window_ends_the_session(make):
     assert c.editor is None and c.start_capture()
 
 
-def test_ED_11_hotkey_while_the_editor_is_open_says_so(make):
+def test_ED_11_hotkey_while_the_editor_is_open_starts_a_new_capture(make):
+    """BUG-107: it used to only raise the edit window; now the window closes (like Esc) and a
+    fresh capture starts, so 최근 캡처 and everything else are reachable."""
     c, _ = scrolled(make)
-    assert not c.start_capture()
-    assert any("편집 창" in m for m in c.messages) and c.editor is not None
+    assert c.start_capture() is True
+    assert any("편집 창을 닫고" in m for m in c.messages) and c.editor is None
+    assert c.overlays and c.overlays[0].isVisible()
 
 
 def test_ED_12_auto_save_once_then_updated_with_drawings(make, tmp_path):

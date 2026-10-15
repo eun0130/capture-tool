@@ -77,3 +77,13 @@ def test_TXT_09_random_text_never_breaks():
         t = find_text_table(s)
         if t is not None:
             assert len(t.rows) >= 2 and all(len(r) == len(t.rows[0]) for r in t.rows)
+
+
+def test_TXT_10_ocr_garbled_separator_row_is_not_a_data_row():
+    t = find_text_table("|열 | 제목 | 내용|\n|-−|-……-|-…−−\n|1| a | b|\n|2| c | d|")
+    assert t.rows == [["열", "제목", "내용"], ["1", "a", "b"], ["2", "c", "d"]]
+
+
+def test_TXT_11_bar_lookalikes_from_ocr_split_columns():
+    t = find_text_table("|열 | 제목 |\n|1ㅣ 가\n|2│나\n")
+    assert t.rows == [["열", "제목"], ["1", "가"], ["2", "나"]]

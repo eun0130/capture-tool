@@ -9,7 +9,30 @@ MAX_ROWS = 200            # PowerPoint fills a table cell by cell; keep it quick
 MAX_COLS = 20
 MIN_PAIRS = 3             # "label: value" lines needed before they count as a table
 
+# characters OCR gives for a column bar: box drawing, broken bar, full-width bar, the Korean vowel ㅣ
+_BAR_ALWAYS = str.maketrans({c: "|" for c in "│┃¦｜"})
+_BAR_LONE = re.compile(r"(?<=\s)[lI](?=\s)|(?<![\w가-힣])ㅣ|ㅣ(?![\w가-힣])|(?<=\d)ㅣ")
+_RULE_CHARS = set("-−–—―…·.:=_~ 	|+")        # what a "---" row turns into when read from a picture
 _SEPARATOR = re.compile(r"\s*\|?\s*:?-+:?\s*(\|\s*:?-+:?\s*)*\|?\s*")
+
+
+def normalize_pipes(line: str) -> str:
+    """OCR look-alikes of the column bar become "|": box-drawing bars always; the Korean vowel ㅣ
+    when it stands alone or after a digit; a lone l / I only on a line that already has a bar."""
+    s = line.translate(_BAR_ALWAYS)
+    if "|" in s:
+        s = _BAR_LONE.sub("|", s)
+    elif "ㅣ" in s and s.count("ㅣ") >= 2:
+        s = s.replace("ㅣ", "|")
+    return s
+
+
+def is_rule_line(line: str) -> bool:
+    """A horizontal rule ("|---|---|", "=====", or its OCR mangling "|-−|-……-|"): never data."""
+    s = line.strip()
+    if len(s) < 2 or not s or set(s) - _RULE_CHARS:
+        return False
+    return sum(ch not in " 	|" for ch in s) >= 2        # "|" alone or "-" alone is a cell, not a rule
 _PAIR = re.compile(r"\s*(?:[•·\-*]|\d{1,2}[.)])?\s*([^:：|\t]{1,30}?)\s*[:：]\s+(\S.*)")
 _SPACES = re.compile(r"\S(?:.*?\S)?(?=\s{2,}|$)")
 
@@ -54,7 +77,8 @@ def _blocks(lines: list[str], parse) -> list[list[list[str]]]:
 
 
 def _pipe(line: str):
-    if _SEPARATOR.fullmatch(line) and "-" in line:
+    line = normalize_pipes(line)
+    if (_SEPARATOR.fullmatch(line) and "-" in line) or ("|" in line and is_rule_line(line)):
         return []
     return _pipe_cells(line)
 

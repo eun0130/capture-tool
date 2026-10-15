@@ -252,11 +252,10 @@ class Controller(QObject):
     def start_capture(self, mode: str = "draw") -> bool:
         t0 = time.perf_counter()
         if self.session.state is not State.IDLE:
-            if self.editor is not None:
-                self.editor.raise_()
-                self.editor.activateWindow()
-                self.notify("캡처 편집 창이 열려 있습니다. 편집 창에서 복사·저장하거나 닫은 뒤 다시 캡처하세요.")
-            return False
+            if self.editor is None:
+                return False
+            self.cancel()                      # the edit window closes like Esc (auto-save rules apply)
+            self.notify("편집 창을 닫고 새로 캡처합니다.")
         mons = self.screen.monitors()
         if not mons:
             self.notify("모니터를 찾지 못했습니다.")
@@ -708,6 +707,10 @@ class Controller(QObject):
         ed.raise_()
         ed.activateWindow()
         ed.canvas.setFocus()
+        if getattr(self.settings, "show_recent", True):
+            recent = self.recent_captures()
+            if recent:
+                ed.show_recent(recent)         # jump to another saved capture without leaving
 
     # --- reusing pictures: saved captures, any image file ---------------------------------------
     def _show_recent(self) -> None:

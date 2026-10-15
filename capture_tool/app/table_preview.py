@@ -8,7 +8,7 @@ from PySide6.QtWidgets import (QButtonGroup, QCheckBox, QDialog, QHBoxLayout, QL
 
 from ..core.table_split import split_table
 
-RULE_LABELS = [("auto", "자동"), ("pair", "\"항목: 값\" 두 칸"), ("spaces", "띄어쓰기 2칸 이상·탭"), ("comma", "쉼표 ,"),
+RULE_LABELS = [("auto", "자동"), ("pipe", "세로선 |"), ("pair", "\"항목: 값\" 두 칸"), ("spaces", "띄어쓰기 2칸 이상·탭"), ("comma", "쉼표 ,"),
                ("line", "한 줄 = 한 칸"), ("custom", "직접 입력")]
 
 
