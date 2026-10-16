@@ -140,7 +140,7 @@ def main() -> None:
     full = capture_shot(False)
     save("capture.png", full[96:560, 60:1060])
     wide = capture_shot(True)
-    save("bar_full.png", wide[388:500, 80:900])
+    save("bar_full.png", wide[388:548, :])          # the grouped 전체 rows are wide: whole width, shrunk
     save("recent.png", recent_shot())
 
     import subprocess

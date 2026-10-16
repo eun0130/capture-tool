@@ -62,6 +62,7 @@ class EditorWindow(QWidget):
         self.top.addWidget(self.zoom_label)
         body.addWidget(cv.side_bar, 0, Qt.AlignTop)
         cv.side_bar.set_columns(1)
+        controller.apply_bar_layout(cv.side_bar)
         self.zoom = 1.0
         self.recent = None                           # 최근 캡처 strip (show_recent)
         self.setAcceptDrops(True)                    # drop another picture here to open it instead

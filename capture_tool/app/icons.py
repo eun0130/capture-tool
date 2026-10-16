@@ -15,6 +15,7 @@ _P = {
     "pen": '<path d="M4 20l4-1 11-11-3-3L5 16z"/>',
     "text": '<path d="M6 5h12M12 5v14"/>',
     "step": '<circle cx="12" cy="12" r="8"/><path d="M10.5 9.5L12.5 8v8"/>',
+    "symbol": '<path d="M12 3.5l2.6 5.4 5.9.8-4.3 4.1 1.1 5.9L12 16.9l-5.3 2.8 1.1-5.9-4.3-4.1 5.9-.8z"/>',
     "highlight": '<path d="M9 14l-4 5h5l2-2M9 14l7-9 3 3-7 9z"/>',
     "mosaic": '<rect x="4" y="4" width="16" height="16"/><path d="M4 12h16M12 4v16"/>'
               '<rect x="4" y="4" width="8" height="8" fill="{c}"/><rect x="12" y="12" width="8" height="8" fill="{c}"/>',

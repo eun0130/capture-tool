@@ -1,12 +1,16 @@
-"""Quick-action icons floating next to the captured region: copy, save as, OCR, send to PowerPoint, pin."""
+"""Quick-action icons floating next to the captured region: copy, save as, OCR, send to PowerPoint, pin.
+Row mode: a favourites row the person arranges (core.bar_layout), the rest grouped under 전체."""
 from __future__ import annotations
 
 from PySide6.QtCore import QSize, Qt, Signal
-from PySide6.QtWidgets import QFrame, QGridLayout, QHBoxLayout, QToolButton, QWidget
+from PySide6.QtWidgets import QFrame, QGridLayout, QHBoxLayout, QLabel, QToolButton, QVBoxLayout, QWidget
 
+from .. import edition
+from ..core import bar_layout as bl
 from . import icons
 
-# (action, icon, label, tooltip, row): "basic" = the one-row bar, "extra" = shown under 전체
+# (action, icon, label, tooltip, row): "basic" = the one-row bar, "extra" = shown under 전체 (the
+# default arrangement; the person's own favourites decide the rows at run time)
 ACTIONS = [
     ("copy", "copy", "복사", "클립보드에 복사하고 닫기 (Enter · Ctrl+C) — 영역을 고르면 이미 복사되어 있습니다", "basic"),
     ("autosave", "save", "자동저장", "켜 두면 캡처를 끝낼 때마다 저장 폴더에 파일로도 저장 (누를 때마다 켜기/끄기)", "basic"),
@@ -23,7 +27,7 @@ ACTIONS = [
     ("search", "search", "검색", "검색 — 그림으로 찾기(구글·네이버, 검색창에 Ctrl+V) 또는 캡처 속 글자로 찾기(구글·네이버·파파고)",
      "basic"),
     ("pin", "pin", "고정", "캡처를 다른 모든 창 위에 계속 떠 있게 붙여 둡니다 — 여러 장 가능 (F3)", "basic"),
-    ("more", "more", "전체", "모든 기능 펼치기 / 기본만 보기 (마지막 상태를 기억)", "basic"),
+    ("more", "more", "전체", "모든 기능 펼치기 / 기본만 보기 (마지막 상태를 기억) — 버튼을 오른쪽 클릭하면 줄을 바꿀 수 있습니다", "basic"),
     ("save_as", "save_as", "다른 이름 저장", "저장 위치를 골라 저장 (Ctrl+Shift+S)", "extra"),
     ("resize", "resize", "크기 줄이기", "캡처를 작게 — 복사·저장·PDF가 줄인 크기로 (메일·업로드용)", "extra"),
     ("border", "border", "테두리", "캡처 둘레에 테두리(굵기·색)와 음영(그림자)을 넣어 복사·저장 — 미리 보기 제공", "extra"),
@@ -40,10 +44,9 @@ ACTIONS = [
     ("open_folder", "folder", "저장 폴더", "저장 폴더 열기", "extra"),
     ("help", "help", "도움말", "처음 쓰는 분을 위한 따라하기 설명서 (F1)", "extra"),
 ]
+LABELS = {name: label for name, _, label, _, _ in ACTIONS}
 
 INK = "#E9ECF2"                  # icon and label colour on the dark bar
-# groups shown with a thin divider between them in the one-row bar
-GROUPS = [("copy", "autosave"), ("text", "translate", "summarize", "table", "ppt"), ("mail", "kakao", "search"), ("pin",), ("more",)]
 
 STYLE = """
 QWidget#sidebar { background: #1B1F2A; border: 1px solid #353C4E; border-radius: 16px; }
@@ -58,6 +61,9 @@ QToolButton#tablebtn::menu-button { border: none; width: 18px; border-top-right-
 QToolButton#tablebtn::menu-button:hover { background: #384158; }
 QToolButton:checked { background: #20365E; color: #8FB6FF; }
 QFrame#divider { background: #353C4E; }
+QLabel#grouplabel { color: #8A93A6; font-size: 10px; padding: 0 2px 0 6px; }
+QLabel#place { color: #FFD166; font-size: 10px; font-weight: 600; border: 1px solid #5A4C1E; border-radius: 6px;
+               padding: 1px 5px; margin-left: 2px; }
 QMenu { background: #1F2430; color: #E9ECF2; border: 1px solid #353C4E; border-radius: 10px; padding: 6px; }
 QMenu::item { padding: 7px 22px 7px 14px; border-radius: 6px; }
 QMenu::item:selected { background: #2F3B55; }
@@ -68,9 +74,10 @@ QMenu::separator { height: 1px; background: #353C4E; margin: 5px 8px; }
 
 
 class SideBar(QWidget):
-    """Quick actions for the capture. Row mode (default): one row of the common actions under
-    the capture, a second row with the rest when expanded (전체). Column mode: everything in a
-    column (the edit window's right side)."""
+    """Quick actions for the capture. Row mode (default): the favourites row under the capture,
+    the remaining buttons in groups on a second row when expanded (전체). Column mode: everything
+    in a column in the same order (the edit window's right side). A right-click on a button
+    offers to move it between the rows (bar:* actions, handled by the controller)."""
     action = Signal(str)
 
     def __init__(self, parent=None):
@@ -82,16 +89,23 @@ class SideBar(QWidget):
         self._grid.setContentsMargins(4, 6, 4, 6)
         self._grid.setHorizontalSpacing(2)
         self._grid.setVerticalSpacing(4)
-        self._extra = QWidget(self)               # second row: its own spacing, not the first row's columns
-        self._extra_row = QHBoxLayout(self._extra)
-        self._extra_row.setContentsMargins(0, 0, 0, 0)
-        self._extra_row.setSpacing(4)
+        self._extra = QWidget(self)               # the 전체 rows: their own spacing, not the first row's columns
+        self._extra_rows = QVBoxLayout(self._extra)
+        self._extra_rows.setContentsMargins(0, 0, 0, 0)
+        self._extra_rows.setSpacing(4)
+        self._max_width = 10_000                  # the 전체 buttons wrap to more rows past this
         self.columns = 0                  # 0 = row mode
         self.expanded = False
         self.buttons: dict[str, QToolButton] = {}
-        self._row: dict[str, str] = {}
         self._dividers: list[QFrame] = []
-        for name, icon_name, label, tip, row in ACTIONS:
+        self.group_labels: list[QLabel] = []
+        self.place_label = QLabel("", self)
+        self.place_label.setObjectName("place")
+        self.place_label.hide()
+        self.column_order: list[str] = []
+        for name, icon_name, label, tip, _row in ACTIONS:
+            if name == "kakao" and not edition.has_kakao():
+                continue                                   # the work edition has no KakaoTalk at all
             b = QToolButton(self)
             primary = name == "copy"
             b.setObjectName("primary" if primary else "")
@@ -129,24 +143,64 @@ class SideBar(QWidget):
             else:
                 b.clicked.connect(lambda _=False, n=name: self.action.emit(n))
             self.buttons[name] = b
-            self._row[name] = row
+        self.layout_first, self.layout_groups = bl.rows(bl.default_profile("home"), available=list(self.buttons))
+        self.place = ""
         self._arrange()
 
-    def _arrange(self) -> None:
+    # --- arrangement --------------------------------------------------------------------------
+    def apply_layout(self, first: list[str], groups: list[tuple[str, list[str]]], place: str = "",
+                     max_width: int | None = None) -> None:
+        """The rows to show (core.bar_layout.rows), the place badge ("회사" or none) and how wide
+        the bar may get (the 전체 buttons wrap past it - a small laptop screen)."""
+        if max_width is not None and max_width != self._max_width:
+            self._max_width = max_width
+            self.layout_first = []                    # forces a new arrangement below
+        first = [n for n in first if n in self.buttons]
+        groups = [(label, [n for n in names if n in self.buttons]) for label, names in groups]
+        groups = [(label, names) for label, names in groups if names]
+        if (first, groups, place) == (self.layout_first, self.layout_groups, self.place):
+            return
+        self.layout_first, self.layout_groups, self.place = first, groups, place
+        self._arrange()
+
+    def _clear(self) -> None:
         for b in self.buttons.values():
             self._grid.removeWidget(b)
-            self._extra_row.removeWidget(b)
         self._grid.removeWidget(self._extra)
-        for d in self._dividers:
-            self._grid.removeWidget(d)
-            d.hide()                                  # gone now, not when Qt deletes it later
-            d.deleteLater()
-        self._dividers = []
-        while self._extra_row.count():
-            self._extra_row.takeAt(0)
+        self._grid.removeWidget(self.place_label)
+        while self._extra_rows.count():               # the 전체 rows and everything in them
+            item = self._extra_rows.takeAt(0)
+            row = item.layout()
+            if row is not None:
+                while row.count():
+                    row.takeAt(0)
+                row.deleteLater()
+        for w in self._dividers + self.group_labels:
+            self._grid.removeWidget(w)
+            w.hide()                                  # gone now, not when Qt deletes it later
+            w.deleteLater()
+        self._dividers, self.group_labels = [], []
+
+    def _divider(self, parent) -> QFrame:
+        d = QFrame(parent)
+        d.setObjectName("divider")
+        d.setFixedSize(1, 22)
+        d.show()
+        self._dividers.append(d)
+        return d
+
+    def _arrange(self) -> None:
+        self._clear()
+        placed = set(self.layout_first) | {n for _, names in self.layout_groups for n in names}
+        for n, b in self.buttons.items():
+            if n not in placed:
+                b.setVisible(False)                   # hidden at this place
         if self.columns:
-            self._extra.hide()                  # column: everything but the row-only switches
-            names = [n for n in self.buttons if n not in ("more", "autosave")]
+            self._extra.hide()                        # column: everything but the row-only switches
+            self.place_label.hide()
+            names = [n for n in self.layout_first if n not in ("more", "autosave")]
+            names += [n for _, group in self.layout_groups for n in group if n not in ("more", "autosave")]
+            self.column_order = names
             for i, n in enumerate(names):
                 b = self.buttons[n]
                 b.setToolButtonStyle(Qt.ToolButtonTextUnderIcon)
@@ -157,18 +211,12 @@ class SideBar(QWidget):
                 if n in self.buttons:
                     self.buttons[n].setVisible(False)
         else:
-            basic = [n for n in self.buttons if self._row[n] == "basic"]
-            extra = [n for n in self.buttons if self._row[n] == "extra"]
+            self.column_order = []
             col, group = 0, None
-            for n in basic:
-                g = next((k for k, names in enumerate(GROUPS) if n in names), None)
+            for n in self.layout_first:
+                g = bl.group_key(n)
                 if group is not None and g != group:          # a thin line between groups
-                    d = QFrame(self)
-                    d.setObjectName("divider")
-                    d.setFixedSize(1, 22)
-                    self._grid.addWidget(d, 0, col, Qt.AlignVCenter)
-                    d.show()
-                    self._dividers.append(d)
+                    self._grid.addWidget(self._divider(self), 0, col, Qt.AlignVCenter)
                     col += 1
                 group = g
                 b = self.buttons[n]
@@ -178,16 +226,46 @@ class SideBar(QWidget):
                 b.setVisible(True)
                 self._grid.addWidget(b, 0, col)
                 col += 1
-            for n in extra:
-                b = self.buttons[n]
-                b.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
-                b.setMinimumSize(QSize(0, 40))
-                b.setMaximumSize(QSize(16777215, 40))
-                self._extra_row.addWidget(b)
-                b.setVisible(self.expanded)
-            self._extra_row.addStretch(1)
+            if self.place:
+                self.place_label.setText(self.place)
+                self._grid.addWidget(self.place_label, 0, col, Qt.AlignVCenter)
+                self.place_label.show()
+                col += 1
+            else:
+                self.place_label.hide()
+            row, used = None, 0
+
+            def put(w, width):                       # into the current 전체 row, or a new one past max_width
+                nonlocal row, used
+                if row is None or (used and used + width + 4 > self._max_width):
+                    if row is not None:
+                        row.addStretch(1)
+                    row = QHBoxLayout()
+                    row.setContentsMargins(0, 0, 0, 0)
+                    row.setSpacing(4)
+                    self._extra_rows.addLayout(row)
+                    used = 0
+                row.addWidget(w)
+                used += width + 4
+            for gi, (label, names) in enumerate(self.layout_groups):
+                if gi and used:
+                    put(self._divider(self._extra), 1)
+                lb = QLabel(label, self._extra)
+                lb.setObjectName("grouplabel")
+                lb.show()
+                self.group_labels.append(lb)
+                put(lb, lb.sizeHint().width())
+                for n in names:
+                    b = self.buttons[n]
+                    b.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
+                    b.setMinimumSize(QSize(0, 40))
+                    b.setMaximumSize(QSize(16777215, 40))
+                    put(b, b.sizeHint().width())
+                    b.setVisible(self.expanded)
+            if row is not None:
+                row.addStretch(1)
             self._grid.addWidget(self._extra, 1, 0, 1, max(1, col))
-            self._extra.setVisible(self.expanded)
+            self._extra.setVisible(self.expanded and bool(self.layout_groups))
             if "more" in self.buttons:
                 self.buttons["more"].setText("기본" if self.expanded else "전체")
         self._grid.invalidate()
@@ -217,13 +295,16 @@ class SideBar(QWidget):
             b.hide()                       # gone right away, not only when Qt deletes it later
             b.setParent(None)
             b.deleteLater()
+            self.layout_first = [n for n in self.layout_first if n != name]
+            self.layout_groups = [(l, [n for n in ns if n != name]) for l, ns in self.layout_groups]
+            self.layout_groups = [(l, ns) for l, ns in self.layout_groups if ns]
             self._arrange()
 
     def fit_height(self, max_height: int) -> None:
         """Column mode only: two columns when one would be too tall for the screen."""
         if not self.columns:
             return
-        one = len(self.buttons) * 58 + 12
+        one = len(self.column_order) * 58 + 12
         want = 1 if one <= max_height else 2
         if want != self.columns:
             self.set_columns(want)
@@ -231,6 +312,61 @@ class SideBar(QWidget):
     def trigger(self, name: str) -> None:
         self.action.emit(name)
 
+    # --- rearranging by right-click --------------------------------------------------------------
+    def _button_at(self, pos) -> str | None:
+        w = self.childAt(pos)
+        while w is not None and w is not self:
+            for n, b in self.buttons.items():
+                if w is b:
+                    return n
+            w = w.parentWidget()
+        return None
+
+    def mousePressEvent(self, e):
+        if e.button() == Qt.RightButton:
+            name = self._button_at(e.position().toPoint())
+            if name is not None:
+                self._show_bar_menu(name, e.globalPosition().toPoint())
+                e.accept()
+                return
+        super().mousePressEvent(e)
+
+    def contextMenuEvent(self, e):
+        e.accept()                                     # the right-click press already opened the menu
+
+    def _show_bar_menu(self, name: str, global_pos) -> None:
+        self.bar_menu(name).exec(global_pos)
+
+    def bar_menu(self, name: str):
+        """What a button can do about its place: join or leave the favourites, move along the
+        row, hide at this place; and the default arrangement back."""
+        from PySide6.QtWidgets import QMenu
+        m = QMenu(self)
+        label = LABELS.get(name, name)
+        head = m.addAction(f"'{label}' 버튼")
+        head.setEnabled(False)
+
+        def item(text: str, key: str, enabled: bool = True):
+            a = m.addAction(text)
+            a.setData(key)
+            a.setEnabled(enabled)
+            a.triggered.connect(lambda _=False, k=key: self.action.emit(k))
+            return a
+        fixed = name in (bl.FIXED_FIRST, bl.FIXED_LAST)
+        if not fixed:
+            if name in self.layout_first:
+                i = self.layout_first.index(name)
+                item("즐겨찾기에서 빼기 — 전체 줄로", f"bar:fav_remove:{name}")
+                item("왼쪽으로", f"bar:left:{name}", i > 1)
+                item("오른쪽으로", f"bar:right:{name}", i < len(self.layout_first) - 2)
+            else:
+                item("즐겨찾기에 넣기 — 첫 줄 끝에", f"bar:fav_add:{name}")
+            item("이 장소에서 숨기기 — 설정 → 버튼 막대에서 되살림", f"bar:hide:{name}")
+            m.addSeparator()
+        item("기본 배치로 되돌리기", "bar:reset")
+        return m
+
+    # --- menus of single buttons ------------------------------------------------------------------
     kakao_provider = staticmethod(lambda: None)    # -> KakaoSender (set by the overlay)
 
     def kakao_menu(self, sender):

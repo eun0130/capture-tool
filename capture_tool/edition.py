@@ -1,0 +1,49 @@
+"""Which edition this is. 집용 "home" has everything; 회사용 "work" has no KakaoTalk at all (no
+button, no guide page, no sender), for PCs where it must not exist. The work installer is built
+with capture_tool/edition.txt saying "work" (build.ps1 -Edition work); the source tree carries
+no such file, so a developer run is the home edition. CAPTURE_EDITION in the environment
+overrides the file (tests, trying the work edition from source)."""
+from __future__ import annotations
+
+import os
+from pathlib import Path
+
+HOME, WORK = "home", "work"
+_MARKER = Path(__file__).with_name("edition.txt")
+_file_edition: str | None = None
+
+
+def _from_file() -> str:
+    global _file_edition
+    if _file_edition is None:
+        try:
+            text = _MARKER.read_text(encoding="utf-8").strip().lower()
+        except OSError:
+            text = ""
+        _file_edition = WORK if text == WORK else HOME
+    return _file_edition
+
+
+def reset() -> None:
+    """Forget the marker file's answer (tests swap the file)."""
+    global _file_edition
+    _file_edition = None
+
+
+def current() -> str:
+    env = os.environ.get("CAPTURE_EDITION", "").strip().lower()
+    if env in (HOME, WORK):
+        return env
+    return _from_file()
+
+
+def is_work() -> bool:
+    return current() == WORK
+
+
+def has_kakao() -> bool:
+    return not is_work()
+
+
+def title() -> str:
+    return "캡처 도구 (회사용)" if is_work() else "캡처 도구"

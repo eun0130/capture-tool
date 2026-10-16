@@ -4,7 +4,7 @@ the two identical)."""
 from __future__ import annotations
 
 import html
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 from PySide6.QtCore import Qt
@@ -39,19 +39,21 @@ PAGES = (
          "capture.png", "표를 골랐을 때: 파란 네모가 고른 곳, 바로 아래가 버튼 막대, 그 아래가 그리기 도구"),
     Page("2. 아래 버튼 막대 한눈에",
          "캡처하면 바로 아래에 버튼이 한 줄로 나옵니다.",
-         ("**복사**: 복사하고 캡처 화면을 닫습니다 (Enter, Ctrl+C 도 같음).",
-          "**자동저장**: 파랗게 눌려 있으면 캡처할 때마다 저장 폴더에 파일로도 저장됩니다. 누를 때마다 켜고 끕니다.",
-          "**텍스트**: 그림 속 글자를 읽어 복사합니다. **번역** · **요약**: 그림 속 글자를 바로 번역·요약합니다.",
-          "**표**: 그림 속 표를 칸 그대로 복사합니다.",
-          "**PPT**: 파워포인트 새 슬라이드에 넣습니다. **메일** · **카톡** · **검색**: 아래 각 장을 보세요.",
-          "**고정**: 캡처를 화면 위에 띄워 둡니다. **전체**: 나머지 버튼(다른 이름 저장 · 도형PPT · 스크롤 · 링크 · 저장 폴더 · 도움말)을 펼칩니다."),
-         "버튼 위에 마우스를 잠시 올리면 설명이 나옵니다.",
+         ("첫 줄은 **즐겨찾기**: **복사** · 자동저장 · 텍스트 · 번역 · 요약 · 표 · PPT · 메일 · 카톡 · 검색 · 고정 · **전체**.",
+          "**복사**: 복사하고 캡처 화면을 닫습니다 (Enter, Ctrl+C 도 같음). **자동저장**: 파랗게 눌려 있으면 캡처할 때마다 저장 폴더에 파일로도 저장됩니다.",
+          "**텍스트** · **번역** · **요약** · **표**: 그림 속 글자·표를 읽어 씁니다. **PPT** · **메일** · **카톡** · **검색**: 보냅니다. **고정**: 화면 위에 띄워 둡니다.",
+          "**전체**를 누르면 나머지 버튼이 **비슷한 것끼리 묶여** 둘째 줄에 나옵니다: 저장(다른 이름 저장 · 저장 폴더 · 링크), 보내기(도형PPT · 인쇄 · PDF),",
+          "그림 손질(테두리 · 배경 지우기 · 크기 줄이기 · 왼쪽 회전 · 오른쪽 회전 · 스크롤), 화면(도움말). 다시 누르면 접힙니다.",
+          "버튼을 **오른쪽 클릭**하면 **즐겨찾기에 넣기·빼기, 왼쪽·오른쪽으로, 이 장소에서 숨기기**를 고를 수 있습니다. 내 식대로 줄을 꾸미세요.",
+          "**집 / 회사**: 트레이 메뉴 **지금 장소**에서 바꾸면 장소마다 다른 배치를 씁니다. 회사에서는 카톡이 기본으로 숨겨지고 막대 끝에 **회사** 표시가 붙습니다."),
+         "버튼 위에 마우스를 잠시 올리면 설명이 나옵니다. 설정 → 버튼 막대에서도 배치를 바꿉니다.",
          "bar_full.png", "전체를 누르면 둘째 줄이 펼쳐집니다 (다시 누르면 기본)"),
     Page("3. 그림 그리기 · 글자 넣기",
          "붙이기 전에 표시를 하고 싶을 때.",
          ("캡처 아래의 그리기 도구에서 **네모 · 원 · 화살표 · 펜 · 글자(T) · 번호 · 형광펜 · 모자이크** 중 하나를 고릅니다.",
           "캡처 위에서 끌어서 그립니다. 색과 굵기는 도구 막대 오른쪽에서 바꿉니다.",
           "그린 것을 **두 번 클릭**하면 선택되어 끌어서 옮기고 색·굵기를 바꿀 수 있습니다(Delete 삭제). 글자는 두 번 클릭해 다시 고칩니다.",
+          "**기호**(S): 별·체크·화살표·번호 같은 기호를 고르고 클릭한 자리에 찍습니다. 누른 채 끌면 그대로 옮겨지고, 두 번 클릭하면 다시 옮기고 색·크기를 바꿉니다.",
           "잘못 그렸으면 **Ctrl + Z** (되돌리기). 그린 것도 클립보드 복사본에 같이 들어갑니다."),
          ""),
     Page("3-1. 자르기 (필요한 부분만 남기기)",
@@ -172,7 +174,7 @@ PAGES = (
          "",
          ("**전체** → **다른 이름 저장**: 위치를 골라 파일로 저장합니다. **저장 폴더**: 저장된 파일이 있는 폴더를 엽니다.",
           "**전체** → **링크**: 저장한 파일의 위치 링크, 또는 정해진 시간 뒤 지워지는 인터넷 공유 링크를 복사합니다.",
-          "트레이 아이콘을 오른쪽 클릭 → **설정** 에서 단축키, 저장 폴더, 메일, 모양(색·글꼴 그대로) 등을 바꿉니다."),
+          "트레이 아이콘을 오른쪽 클릭 → **설정** 에서 단축키, 저장 폴더, 버튼 막대(즐겨찾기 · 집/회사), 메일, 모양(색·글꼴 그대로) 등을 바꿉니다."),
          "이 설명서는 언제든 **전체 → 도움말**, 캡처 중 **F1**, 트레이 메뉴의 **사용 설명서** 로 다시 열 수 있습니다."),
     Page("14. 잘 안 될 때",
          "",
@@ -182,6 +184,30 @@ PAGES = (
           "**단축키가 안 먹어요**: 다른 프로그램이 같은 키를 쓰고 있을 수 있습니다. 설정에서 다른 키로 바꾸세요."),
          ""),
 )
+
+
+_NO_KAKAO = (("카카오톡·메일·문서", "메일·문서"), (" · **카톡**", ""), (" · 카톡", ""), ("(카톡)", ""))
+
+
+def _without_kakao(text: str) -> str:
+    for a, b in _NO_KAKAO:
+        text = text.replace(a, b)
+    return text
+
+
+def pages() -> list[Page]:
+    """The pages this edition shows: all of them, or - in the work edition, which has no
+    KakaoTalk - without the KakaoTalk chapter and its mentions."""
+    from .. import edition
+    if edition.has_kakao():
+        return list(PAGES)
+    out = []
+    for p in PAGES:
+        if "카카오톡" in p.title:
+            continue
+        steps = tuple(_without_kakao(s) for s in p.steps if "지금 장소" not in s)
+        out.append(replace(p, intro=_without_kakao(p.intro), steps=steps, tip=_without_kakao(p.tip)))
+    return out
 
 
 def _md_bold_to_html(s: str) -> str:
@@ -233,7 +259,8 @@ class GuideWindow(QWidget):
         root = QHBoxLayout(self)
         self.list = QListWidget()
         self.list.setFixedWidth(240)
-        for p in PAGES:
+        self.pages = pages()
+        for p in self.pages:
             self.list.addItem(p.title)
         self.list.currentRowChanged.connect(self._show)
         root.addWidget(self.list)
@@ -258,22 +285,22 @@ class GuideWindow(QWidget):
         self.show_page(0)
 
     def show_page(self, i: int) -> None:
-        i = max(0, min(len(PAGES) - 1, i))
+        i = max(0, min(len(self.pages) - 1, i))
         if self.list.currentRow() != i:
             self.list.setCurrentRow(i)
         else:
             self._show(i)
 
     def _show(self, i: int) -> None:
-        if not 0 <= i < len(PAGES):
+        if not 0 <= i < len(self.pages):
             return
-        self.body.setHtml(page_html(PAGES[i]))
-        self.pos.setText(f"{i + 1} / {len(PAGES)}")
+        self.body.setHtml(page_html(self.pages[i]))
+        self.pos.setText(f"{i + 1} / {len(self.pages)}")
         self.prev.setEnabled(i > 0)
-        self.next.setEnabled(i < len(PAGES) - 1)
+        self.next.setEnabled(i < len(self.pages) - 1)
 
     def show_topic(self, word: str) -> None:
-        for i, p in enumerate(PAGES):
+        for i, p in enumerate(self.pages):
             if word in p.title:
                 self.show_page(i)
                 return

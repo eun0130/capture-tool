@@ -56,9 +56,11 @@ jobs:
       - name: Install Inno Setup
         run: choco install innosetup -y --no-progress
 
-      - name: Build installer
+      - name: Build installers (집용, then 회사용 without KakaoTalk)
         shell: pwsh
-        run: ./build.ps1 -SkipTests
+        run: |
+          ./build.ps1 -SkipTests
+          ./build.ps1 -SkipTests -Edition work
 
       - uses: actions/upload-artifact@v4
         with:
@@ -77,7 +79,27 @@ jobs:
           if ($LASTEXITCODE -eq 0) {
             Write-Host "Release $tag already exists (uploaded from a developer PC); keeping its installer."
           } elseif ($notes) {
-            gh release create $tag installer/Output/*.exe --title "캡처 도구 $tag" --notes-file $notes
+            gh release create $tag installer/Output/CaptureTool-Setup-*.exe --title "캡처 도구 $tag" --notes-file $notes
           } else {
-            gh release create $tag installer/Output/*.exe --title "캡처 도구 $tag" --generate-notes
+            gh release create $tag installer/Output/CaptureTool-Setup-*.exe --title "캡처 도구 $tag" --generate-notes
+          }
+
+      - name: Publish the work edition from its own repository (eun0130/capture_work)
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: pwsh
+        env:
+          WORK_TOKEN: ${{ secrets.WORK_REPO_TOKEN }}
+        run: |
+          # WORK_REPO_TOKEN: a token with "repo" (contents: write) on eun0130/capture_work. Without it the
+          # work installer stays in the workflow artifact: publish it with tools/publish_work.ps1.
+          if (-not $env:WORK_TOKEN) { Write-Host "WORK_REPO_TOKEN not set: run tools/publish_work.ps1 on a developer PC"; exit 0 }
+          $env:GH_TOKEN = $env:WORK_TOKEN
+          $tag = "${{ github.ref_name }}"
+          $notes = if (Test-Path "docs/release-notes/$tag.md") { "docs/release-notes/$tag.md" } else { $null }
+          gh release view $tag --repo eun0130/capture_work 2>$null
+          if ($LASTEXITCODE -eq 0) { Write-Host "work release $tag already exists"; exit 0 }
+          if ($notes) {
+            gh release create $tag installer/Output/CaptureTool-Work-Setup-*.exe --repo eun0130/capture_work --title "캡처 도구 (회사용) $tag" --notes-file $notes
+          } else {
+            gh release create $tag installer/Output/CaptureTool-Work-Setup-*.exe --repo eun0130/capture_work --title "캡처 도구 (회사용) $tag" --notes "회사용 설치 파일 (카카오톡 기능 없음)"
           }

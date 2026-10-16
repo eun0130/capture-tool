@@ -115,7 +115,8 @@ class TrayApp:
         self.ocr = OcrEngine()
         self.ocr.warmup()
         self.tray = QSystemTrayIcon(app_icon())
-        self.tray.setToolTip(f"캡처 도구 {__version__}")
+        from .. import edition
+        self.tray.setToolTip(f"{edition.title()} {__version__}")
         self.controller = Controller(RealScreen(), RealClipboard(self.hk_window.hwnd), self.ocr, self.settings,
                                      self.settings_path, fallback_dir(), notify=self.toast)
         self.hk_window.manager.triggered.connect(self.on_hotkey)
@@ -162,6 +163,19 @@ class TrayApp:
         auto.toggled.connect(self._set_auto_save)
         m.addAction(auto)
         self.auto_save_action = auto
+        from .. import edition
+        if not edition.is_work():                    # the work edition is always at work
+            from PySide6.QtGui import QActionGroup
+            from ..core.bar_layout import PLACE_NAMES, WORKPLACES
+            place = m.addMenu("지금 장소 (버튼 막대 배치)")
+            grp = QActionGroup(place)
+            for key in WORKPLACES:
+                a = QAction(f"{PLACE_NAMES[key]}에서", place)
+                a.setCheckable(True)
+                a.setChecked(self.controller.workplace() == key)
+                a.triggered.connect(lambda _=False, k=key: (self.controller.set_workplace(k), self._build_menu()))
+                grp.addAction(a)
+                place.addAction(a)
 
         def sync_auto_save():                    # the capture's 자동저장 button may have changed it
             auto.blockSignals(True)

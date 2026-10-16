@@ -8,12 +8,15 @@ from PySide6.QtWidgets import (QColorDialog, QComboBox, QCompleter, QFrame, QGri
 
 from ..core.annotations import DEFAULT_FONT, FONT_MAX, FONT_MIN, MAX_WIDTH
 from ..core.fonts import SEPARATOR, build_font_list
+from ..core.symbols import DEFAULT as DEFAULT_SYMBOL, QUICK
 from . import icons
 
 TOOLS = [
     ("select", "선택/이동 (V) · 선택 후 색·두께·서식 변경, Delete 삭제"), ("rect", "사각형 (R)"),
     ("ellipse", "타원 (O)"), ("line", "직선 (L)"), ("arrow", "화살표 (A)"), ("curve", "곡선 (C)"),
-    ("pen", "펜 (P)"), ("text", "텍스트 (T)"), ("step", "번호 스탬프 (N)"), ("highlight", "형광펜 (H)"),
+    ("pen", "펜 (P)"), ("text", "텍스트 (T)"), ("step", "번호 스탬프 (N)"),
+    ("symbol", "기호 (S) · 고른 기호를 클릭한 자리에 찍기, 누른 채 끌면 옮기기 · 두 번 클릭해 다시 옮기기·색·크기"),
+    ("highlight", "형광펜 (H)"),
     ("mosaic", "모자이크 (M)"), ("crop", "자르기 (X) · 남길 부분을 네모로 끌면 그 크기로 잘립니다 (Ctrl+Z 되돌리기)"),
     ("lasso", "자유형 자르기 (K) · 남길 부분을 따라 그리면 그 모양으로 잘립니다"),
 ]
@@ -50,7 +53,7 @@ class Toolbar(QWidget):
     symbolChosen = Signal(str)
 
     def __init__(self, parent=None, tool="rect", color="#E03131", width=4, recent=None,
-                 font_family=DEFAULT_FONT, highlight_color=None, text_bg=None):
+                 font_family=DEFAULT_FONT, highlight_color=None, text_bg=None, symbol=None):
         super().__init__(parent)
         self.setObjectName("toolbar")
         self.setAttribute(Qt.WA_StyledBackground, True)
@@ -62,11 +65,12 @@ class Toolbar(QWidget):
         self.font_family = font_family or DEFAULT_FONT
         self.highlight_color = highlight_color or HIGHLIGHT_COLORS[0]
         self.bg = text_bg
+        self.symbol = symbol or DEFAULT_SYMBOL        # the 기호 tool's stamp
         self.tool = tool
         self.recent = list(recent or [])
         self.buttons: dict[str, QWidget] = {}
         self._items: list[QWidget] = []
-        self._group_of: dict[int, str] = {}     # item index -> "text" / "highlight" (shown on demand)
+        self._group_of: dict[int, frozenset] = {}   # item index -> {"text", "symbol", "highlight"} (shown on demand)
         self._shown: set[str] = set()
         self._split = 0
         self._grid = QGridLayout(self)
@@ -100,7 +104,7 @@ class Toolbar(QWidget):
         self.font_spin.setFocusPolicy(Qt.ClickFocus)
         self.font_spin.valueChanged.connect(self._font_spin_changed)
         self.buttons["font_size"] = self.font_spin
-        self._add_text_item(self.font_spin)
+        self._add_group_item(self.font_spin, "text", "symbol")
         for name, label, tip in TEXT_STYLES:
             b = QToolButton()
             b.setText(label)
@@ -136,7 +140,21 @@ class Toolbar(QWidget):
         sym.setFocusPolicy(Qt.NoFocus)
         sym.clicked.connect(self.open_symbols)
         self.buttons["symbol"] = sym
-        self._add_text_item(sym)
+        self._add_group_item(sym, "text", "symbol")
+        self.quick_buttons: list[QToolButton] = []       # the 기호 tool's one-click symbols
+        for ch in QUICK:
+            q = QToolButton()
+            q.setText(ch)
+            qf = QFont(DEFAULT_FONT)
+            qf.setPixelSize(18)
+            q.setFont(qf)
+            q.setFixedSize(QSize(30, 38))
+            q.setCheckable(True)
+            q.setToolTip(f"기호 {ch}")
+            q.setFocusPolicy(Qt.NoFocus)
+            q.clicked.connect(lambda _=False, ch=ch: self.choose_symbol(ch))
+            self.quick_buttons.append(q)
+            self._add_group_item(q, "symbol")
         for i, (c, n) in enumerate(zip(HIGHLIGHT_COLORS, HIGHLIGHT_NAMES)):
             b = QToolButton()
             b.setFixedSize(QSize(28, 38))
@@ -172,8 +190,8 @@ class Toolbar(QWidget):
         w.setParent(self)
         self._items.append(w)
 
-    def _add_group_item(self, w: QWidget, group: str) -> None:
-        self._group_of[len(self._items)] = group
+    def _add_group_item(self, w: QWidget, *groups: str) -> None:
+        self._group_of[len(self._items)] = frozenset(groups)
         self.addWidget(w)
 
     def _add_text_item(self, w: QWidget) -> None:
@@ -189,7 +207,7 @@ class Toolbar(QWidget):
 
     def _visible(self, i: int) -> bool:
         g = self._group_of.get(i)
-        return g is None or g in self._shown
+        return g is None or bool(g & self._shown)
 
     def arrange(self, max_width: int) -> None:
         """One row if it fits, otherwise drawing tools on row 1 and the rest on row 2."""
@@ -242,8 +260,10 @@ class Toolbar(QWidget):
         for n, _ in TOOLS:
             self.buttons[n].setChecked(n == name)
         self.show_text_style(name == "text")
+        self._show_group("symbol", name == "symbol")
         self._show_group("highlight", name == "highlight")
         self._refresh_color()
+        self._refresh_symbol()
         self.toolChanged.emit(name)
 
     # --- style -------------------------------------------------------------------------------
@@ -273,8 +293,20 @@ class Toolbar(QWidget):
         self.styleChanged.emit("bg")
 
     def choose_symbol(self, ch: str) -> None:
+        """A symbol picked: the 기호 tool stamps it from now on; the overlay puts it into an open
+        text box or a selected text."""
         self.symbols.hide()
+        self.symbol = ch
+        self._refresh_symbol()
         self.symbolChosen.emit(ch)
+
+    def _refresh_symbol(self) -> None:
+        if not hasattr(self, "quick_buttons"):
+            return
+        stamping = self.tool == "symbol"
+        for q in self.quick_buttons:
+            q.setChecked(stamping and q.text() == self.symbol)
+        self.buttons["symbol"].setText(self.symbol if stamping else "※")
 
     def set_width(self, w: float) -> None:
         w = round(min(MAX_WIDTH, max(1, w)))
@@ -531,7 +563,7 @@ class _Popup(QFrame):
         self.bar = bar
         self.setStyleSheet("QFrame { background: #FFFFFF; border: 1px solid #D9DCE1; border-radius: 12px; }"
                            "QLabel { border: none; color: #5B616B; font-size: 12px; }"
-                           "QToolButton { border: none; border-radius: 6px; font-size: 17px;"
+                           "QToolButton { border: none; border-radius: 6px; font-size: 17px; color: #212529;"
                            " font-family: \"Malgun Gothic\"; }"
                            "QToolButton:hover { background: #E6EEFB; }")
 
@@ -558,19 +590,28 @@ class BgPopup(_Popup):
         v.addLayout(grid)
 
 
+SYMBOLS_PER_ROW = 16
+
+
 class SymbolPopup(_Popup):
-    """Grid of symbols by group; a click puts the symbol into the text."""
+    """Symbols by group, one tab each (500+ symbols in one grid would be taller than the screen);
+    a click puts the symbol into the text, or makes it the 기호 tool's stamp."""
 
     def __init__(self, bar: Toolbar):
         super().__init__(bar)
+        from PySide6.QtWidgets import QTabWidget
         from ..core.symbols import SYMBOLS
+        self.setStyleSheet(self.styleSheet() + "QTabWidget::pane { border: none; }"
+                           "QTabBar::tab { padding: 5px 9px; font-size: 12px; }")
         v = QVBoxLayout(self)
-        v.setContentsMargins(12, 10, 12, 12)
-        v.setSpacing(4)
+        v.setContentsMargins(10, 10, 10, 10)
+        self.tabs = QTabWidget()
+        self.tabs.setDocumentMode(True)
         for name, chars in SYMBOLS:
-            v.addWidget(QLabel(name))
-            grid = QGridLayout()
+            page = QWidget()
+            grid = QGridLayout(page)
             grid.setSpacing(2)
+            grid.setContentsMargins(4, 8, 4, 6)
             for i, ch in enumerate(chars):
                 b = QToolButton()
                 b.setText(ch)
@@ -578,5 +619,8 @@ class SymbolPopup(_Popup):
                 b.setFixedSize(QSize(30, 30))
                 b.setFocusPolicy(Qt.NoFocus)
                 b.clicked.connect(lambda _=False, ch=ch: self.bar.choose_symbol(ch))
-                grid.addWidget(b, i // 12, i % 12)
-            v.addLayout(grid)
+                grid.addWidget(b, i // SYMBOLS_PER_ROW, i % SYMBOLS_PER_ROW)
+            grid.setColumnStretch(SYMBOLS_PER_ROW, 1)
+            grid.setRowStretch(len(chars) // SYMBOLS_PER_ROW + 1, 1)
+            self.tabs.addTab(page, name)
+        v.addWidget(self.tabs)

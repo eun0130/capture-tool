@@ -4,18 +4,29 @@
 #ifndef AppVersion
   #define AppVersion "0.1.0"
 #endif
+#ifndef Edition
+  #define Edition "home"
+#endif
+#if Edition == "work"
+  ; 회사용: no KakaoTalk (capture_tool\edition.txt in the build says "work")
+  #define EditionName " (회사용)"
+  #define OutBase "CaptureTool-Work-Setup-"
+#else
+  #define EditionName ""
+  #define OutBase "CaptureTool-Setup-"
+#endif
 
 [Setup]
 AppId={{6B1E4C52-8A3D-4F07-9E21-3C5D7A9B0F14}
 AppName={#AppName}
 AppVersion={#AppVersion}
-AppVerName={#AppName} {#AppVersion}
+AppVerName={#AppName}{#EditionName} {#AppVersion}
 AppPublisher=CaptureTool
 DefaultDirName={localappdata}\Programs\CaptureTool
 DisableProgramGroupPage=yes
 PrivilegesRequired=lowest
 OutputDir=Output
-OutputBaseFilename=CaptureTool-Setup-{#AppVersion}
+OutputBaseFilename={#OutBase}{#AppVersion}
 Compression=lzma2/max
 SolidCompression=yes
 ArchitecturesAllowed=x64compatible

@@ -4,8 +4,9 @@ from capture_tool.core.symbols import SYMBOLS, all_symbols
 
 def test_SYM_01_enough_symbols_grouped_and_unique():
     flat = all_symbols()
-    assert len(flat) >= 60 and len(flat) == len(set(flat))
-    assert {"★", "✓", "→", "①", "※"} <= set(flat)
+    assert len(flat) >= 250 and len(flat) == len(set(flat))                # v0.8.27: many more
+    assert {"★", "✓", "→", "①", "※", "☎", "⑳", "㎡", "☞", "✉"} <= set(flat)
+    assert len(SYMBOLS) >= 9 and all(len(chars) <= 72 for _, chars in SYMBOLS)   # fits the picker
     assert all(isinstance(name, str) and chars for name, chars in SYMBOLS)
 
 

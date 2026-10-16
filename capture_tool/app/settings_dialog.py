@@ -5,8 +5,8 @@ import copy
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (QButtonGroup, QCheckBox, QComboBox, QDialog, QDialogButtonBox, QFileDialog,
-                               QFormLayout, QHBoxLayout, QLabel, QLineEdit, QPushButton, QRadioButton, QSpinBox,
-                               QVBoxLayout, QWidget)
+                               QFormLayout, QHBoxLayout, QLabel, QLineEdit, QListWidget, QListWidgetItem,
+                               QPushButton, QRadioButton, QScrollArea, QSpinBox, QVBoxLayout, QWidget)
 
 from ..core.hotkey import HotkeyError, find_duplicates, is_reserved, known_conflicts, parse
 from ..core.settings import Settings
@@ -75,7 +75,8 @@ class SettingsDialog(QDialog):
         self.setWindowTitle("캡처 도구 설정")
         self.setMinimumWidth(560)
         self._base = settings
-        v = QVBoxLayout(self)
+        body = QWidget()                               # scrolls: the page is taller than a small screen
+        v = QVBoxLayout(body)
         v.addWidget(QLabel("<b>단축키</b> — 입력칸을 클릭하고 원하는 키 조합을 누르면 됩니다."))
         form = QFormLayout()
         self.edits: dict[str, HotkeyEdit] = {}
@@ -130,6 +131,61 @@ class SettingsDialog(QDialog):
         self.keep_style.setChecked(settings.keep_style)
         for w in (self.auto_save, self.auto_copy, self.show_recent, self.redact, self.startup, self.ppt_new_slide, self.pdf_one_page, self.keep_style):
             v.addWidget(w)
+        # --- action bar: a favourites row, the rest in groups, one arrangement per place ---------
+        from .. import edition
+        from ..core import bar_layout as bl
+        self._profiles = {p: bl.profile_of(settings, p) for p in bl.WORKPLACES}
+        self._place = "work" if edition.is_work() else (settings.workplace if settings.workplace in bl.WORKPLACES else "home")
+        v.addWidget(QLabel("<b>버튼 막대</b> — 첫 줄은 즐겨찾기, 나머지는 전체 줄에 비슷한 것끼리. "
+                           "캡처 중 버튼을 오른쪽 클릭해도 바꿀 수 있습니다."))
+        prow = QHBoxLayout()
+        prow.addWidget(QLabel("지금 장소"))
+        self.place_home = QRadioButton("집")
+        self.place_work = QRadioButton("회사")
+        pg = QButtonGroup(self)
+        pg.addButton(self.place_home)
+        pg.addButton(self.place_work)
+        (self.place_work if self._place == "work" else self.place_home).setChecked(True)
+        self.place_home.toggled.connect(self._switch_place)
+        prow.addWidget(self.place_home)
+        prow.addWidget(self.place_work)
+        prow.addWidget(QLabel("— 장소마다 다른 배치를 씁니다 (트레이 메뉴에서도 바꿈)"))
+        prow.addStretch(1)
+        if edition.is_work():
+            for w in (self.place_home, self.place_work):
+                w.setEnabled(False)
+        v.addLayout(prow)
+        brow = QHBoxLayout()
+        self.fav_list = QListWidget()
+        self.fav_list.setFixedHeight(150)
+        self.rest_list = QListWidget()
+        self.rest_list.setFixedHeight(150)
+        left = QVBoxLayout()
+        left.addWidget(QLabel("즐겨찾기 — 첫 줄, 위에서부터 왼쪽→오른쪽"))
+        left.addWidget(self.fav_list)
+        mid = QVBoxLayout()
+        for text, fn, tip in (("◀ 넣기", self._fav_add, "오른쪽에서 고른 버튼을 즐겨찾기 끝에"),
+                              ("빼기 ▶", self._fav_remove, "즐겨찾기에서 빼서 전체 줄로"),
+                              ("▲", lambda: self._fav_move(-1), "앞으로"), ("▼", lambda: self._fav_move(1), "뒤로")):
+            b = QPushButton(text)
+            b.setToolTip(tip)
+            b.clicked.connect(fn)
+            mid.addWidget(b)
+        mid.addStretch(1)
+        right = QVBoxLayout()
+        right.addWidget(QLabel("전체 줄 — 체크하면 이 장소에서 숨김"))
+        right.addWidget(self.rest_list)
+        brow.addLayout(left, 1)
+        brow.addLayout(mid)
+        brow.addLayout(right, 1)
+        v.addLayout(brow)
+        reset_row = QHBoxLayout()
+        rb = QPushButton("버튼 막대 기본 배치로 (집·회사 모두)")
+        rb.clicked.connect(self._bar_defaults)
+        reset_row.addWidget(rb)
+        reset_row.addStretch(1)
+        v.addLayout(reset_row)
+        self._load_bar_lists()
         # --- mail ------------------------------------------------------------------------------
         from ..core.mailcompose import PROVIDERS
         from .mail_ui import ORDER
@@ -187,8 +243,96 @@ class SettingsDialog(QDialog):
         buttons.accepted.connect(self._accept)
         buttons.rejected.connect(self.reject)
         buttons.button(QDialogButtonBox.RestoreDefaults).clicked.connect(self._defaults)
-        v.addWidget(buttons)
+        outer = QVBoxLayout(self)
+        area = QScrollArea()
+        area.setWidgetResizable(True)
+        area.setFrameShape(QScrollArea.NoFrame)
+        area.setWidget(body)
+        outer.addWidget(area, 1)
+        outer.addWidget(buttons)
+        from PySide6.QtGui import QGuiApplication
+        scr = QGuiApplication.primaryScreen()
+        avail = scr.availableGeometry().height() if scr is not None else 900
+        self.resize(max(640, body.sizeHint().width() + 40), min(body.sizeHint().height() + 80, avail - 80, 940))
         self._show_problems()
+
+    # --- action bar lists ------------------------------------------------------------------------
+    def _load_bar_lists(self) -> None:
+        from ..core import bar_layout as bl
+        from .side_bar import LABELS
+        p = self._profiles[self._place]
+        avail = set(bl.available_names())
+        self.fav_list.clear()
+        self.rest_list.clear()
+        for n in p.favourites:
+            if n in avail:
+                it = QListWidgetItem(LABELS.get(n, n))
+                it.setData(Qt.UserRole, n)
+                self.fav_list.addItem(it)
+        for _, label, names in bl.GROUPS:
+            rest = [n for n in names if n in avail and n not in p.favourites]
+            if not rest:
+                continue
+            head = QListWidgetItem(f"— {label} —")
+            head.setFlags(Qt.NoItemFlags)
+            self.rest_list.addItem(head)
+            for n in rest:
+                it = QListWidgetItem(LABELS.get(n, n))
+                it.setData(Qt.UserRole, n)
+                it.setFlags(it.flags() | Qt.ItemIsUserCheckable)
+                it.setCheckState(Qt.Checked if n in p.hidden else Qt.Unchecked)
+                self.rest_list.addItem(it)
+
+    def _collect_bar(self) -> None:
+        from ..core import bar_layout as bl
+        fav = [self.fav_list.item(i).data(Qt.UserRole) for i in range(self.fav_list.count())]
+        hidden = [self.rest_list.item(i).data(Qt.UserRole) for i in range(self.rest_list.count())
+                  if self.rest_list.item(i).data(Qt.UserRole) and self.rest_list.item(i).checkState() == Qt.Checked]
+        self._profiles[self._place] = bl.clean({"favourites": fav, "hidden": hidden})
+
+    def _switch_place(self, *_) -> None:
+        self._collect_bar()
+        self._place = "home" if self.place_home.isChecked() else "work"
+        self._load_bar_lists()
+
+    def _bar_edit(self, fn) -> None:
+        self._collect_bar()
+        self._profiles[self._place] = fn(self._profiles[self._place])
+        self._load_bar_lists()
+
+    def _select_fav(self, name: str) -> None:
+        for i in range(self.fav_list.count()):
+            if self.fav_list.item(i).data(Qt.UserRole) == name:
+                self.fav_list.setCurrentRow(i)
+                return
+
+    def _fav_add(self) -> None:
+        from ..core import bar_layout as bl
+        it = self.rest_list.currentItem()
+        n = it.data(Qt.UserRole) if it is not None else None
+        if n:
+            self._bar_edit(lambda p: bl.add_favourite(p, n))
+            self._select_fav(n)
+
+    def _fav_remove(self) -> None:
+        from ..core import bar_layout as bl
+        it = self.fav_list.currentItem()
+        n = it.data(Qt.UserRole) if it is not None else None
+        if n:
+            self._bar_edit(lambda p: bl.remove_favourite(p, n))
+
+    def _fav_move(self, delta: int) -> None:
+        from ..core import bar_layout as bl
+        it = self.fav_list.currentItem()
+        n = it.data(Qt.UserRole) if it is not None else None
+        if n:
+            self._bar_edit(lambda p: bl.move_favourite(p, n, delta))
+            self._select_fav(n)
+
+    def _bar_defaults(self) -> None:
+        from ..core import bar_layout as bl
+        self._profiles = {p: bl.default_profile(p) for p in bl.WORKPLACES}
+        self._load_bar_lists()
 
     def _refresh_key(self) -> None:
         self.ai_key_status.setText("Gemini 키: 설정됨" if self._ai_key else "Gemini 키: 없음 (오프라인으로 동작)")
@@ -284,6 +428,11 @@ class SettingsDialog(QDialog):
         s.ai_cloud_translate = self.ai_cloud_translate.isChecked()
         s.ai_key = self._ai_key
         s.share_expiry = self.share_expiry.currentData()
+        from ..core import bar_layout as bl
+        self._collect_bar()
+        s.workplace = self._place
+        for place, p in self._profiles.items():
+            bl.store_profile(s, place, p)
         return s
 
     def _accept(self):

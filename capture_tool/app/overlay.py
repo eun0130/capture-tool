@@ -10,11 +10,14 @@ from PySide6.QtCore import Signal
 from PySide6.QtGui import QColor, QCursor, QFont, QGuiApplication, QPainter, QPainterPath, QPen, QPolygonF
 from PySide6.QtWidgets import QHBoxLayout, QLabel, QLineEdit, QPushButton, QWidget
 
-from ..core.annotations import Shape
+from dataclasses import replace as _replace
+
+from ..core.annotations import DEFAULT_FONT, Shape
 from ..core.clip import polygon
 from ..core.color import pixel_color
 from ..core.geometry import Rect, layout_action_bars, layout_bars, match_screen
 from ..core.session import State
+from ..core.symbols import all_symbols
 from .render import FONT_FAMILY, bgr_to_pixmap, bgr_to_qimage, mosaic_region, paint_document, pixelate
 from .side_bar import SideBar
 from .toolbar import Toolbar
@@ -23,10 +26,15 @@ DIM = QColor(15, 18, 24, 140)
 ACCENT = QColor("#4C8DFF")
 TOOL_KEYS = {Qt.Key_V: "select", Qt.Key_R: "rect", Qt.Key_O: "ellipse", Qt.Key_L: "line", Qt.Key_A: "arrow",
              Qt.Key_C: "curve", Qt.Key_P: "pen", Qt.Key_T: "text", Qt.Key_N: "step", Qt.Key_H: "highlight",
-             Qt.Key_M: "mosaic", Qt.Key_K: "lasso", Qt.Key_X: "crop"}
+             Qt.Key_M: "mosaic", Qt.Key_K: "lasso", Qt.Key_X: "crop", Qt.Key_S: "symbol"}
 CROP_MIN = 8                     # px; a smaller box is a slip of the mouse
 BOX_TOOLS = {"rect", "ellipse", "highlight", "mosaic", "line", "arrow"}
 TEXT_STYLE_KEYS = {Qt.Key_B: "bold", Qt.Key_I: "italic", Qt.Key_U: "underline", Qt.Key_5: "strike"}
+
+
+def _is_stamp(s: Shape) -> bool:
+    """A text that is one symbol: what the 기호 tool puts down."""
+    return s.kind == "text" and bool(s.text) and len(s.text) == 1 and s.text in all_symbols()
 
 
 class TextEditor(QLineEdit):
@@ -178,7 +186,7 @@ class OverlayWindow(QWidget):
         s = controller.settings
         self.toolbar = Toolbar(self, tool=s.last_tool, color=s.last_color, width=s.last_width, recent=s.recent_colors,
                                font_family=s.last_font_family, highlight_color=s.last_highlight_color,
-                               text_bg=s.last_text_bg)
+                               text_bg=s.last_text_bg, symbol=getattr(s, "last_symbol", None))
         self.toolbar.hide()
         self.toolbar.toolChanged.connect(self._tool_changed)
         self.toolbar.action.connect(controller.on_toolbar_action)
@@ -200,6 +208,7 @@ class OverlayWindow(QWidget):
         self._move_index = None
         self._editor: QLineEdit | None = None
         self._pending_symbol: str | None = None   # picked with no text box open: goes in the next one
+        self._stamped = False                     # this press put a 기호 stamp down (drag moves it)
         self.hover_window = None
         self.selected: int | None = None     # index of the shape picked with the select tool
         self.recent = None                   # strip of the newest saved captures (when a capture starts)
@@ -271,7 +280,13 @@ class OverlayWindow(QWidget):
             self._editor._fit()
         elif (self.selected is not None and doc is not None and 0 <= self.selected < len(doc.shapes)
               and doc.shapes[self.selected].kind == "text"):
-            doc.update(self.selected, text=doc.shapes[self.selected].text + ch)
+            old = doc.shapes[self.selected].text or ""
+            if len(old) == 1 and old in all_symbols():      # a stamp: this symbol instead of that one
+                doc.update(self.selected, text=ch)
+            else:
+                doc.update(self.selected, text=old + ch)
+        elif self.tool == "symbol":
+            self.c.notify(f"'{ch}' — 찍을 자리를 클릭하세요. 누른 채 끌면 바로 옮겨집니다.")
         else:
             self._pending_symbol = ch
             if self.tool != "text":
@@ -381,6 +396,7 @@ class OverlayWindow(QWidget):
             else:
                 self.toolbar.hide()
                 self.ocr_bar.show()
+            self.c.apply_bar_layout(self.side_bar, max(400, self.embedded.width() - 260))
             self.side_bar.show()
             return
         sel = self._selection_here()
@@ -402,6 +418,7 @@ class OverlayWindow(QWidget):
         if settings is not None:
             sb.set_expanded(getattr(settings, "bar_expanded", False))
             sb.set_autosave(getattr(settings, "auto_save", False))
+        self.c.apply_bar_layout(sb, self.width() - 16)
         (x, y), (sx, sy) = layout_action_bars(local, screen, (tb.width(), tb.height()), (sb.width(), sb.height()))
         tb.move(x, y)
         if self.ocr_lines is None:
@@ -434,6 +451,7 @@ class OverlayWindow(QWidget):
         self.hide_recent()                   # selecting: the strip makes room
         pos = e.position()
         self._press, self._cursor, self._moved = pos, pos, False
+        self._stamped = False
         st = self.c.session.state
         if st is State.EDITING and self.active:
             self._begin_edit(pos)
@@ -463,6 +481,17 @@ class OverlayWindow(QWidget):
         elif self.tool == "text":
             self._open_text_editor(pos)
             self._press = None
+        elif self.tool == "symbol":
+            i = self._shape_at(d)
+            if i is not None:                               # on a drawing: this press moves it
+                self._move_index = i
+            else:                                           # the glyph centred on the click
+                size = tb.font_size
+                at = (d[0] - size * 0.45, d[1] - size * 0.65)
+                if doc.add(Shape(kind="text", points=[at], text=tb.symbol, color=tb.color, width=tb.line_width,
+                                 font_size=size, font_family=DEFAULT_FONT)):
+                    self._move_index = len(doc.shapes) - 1
+                    self._stamped = True
         elif self.tool == "select":
             self._move_index = self._shape_at(d)
             self._select(self._move_index)
@@ -498,6 +527,9 @@ class OverlayWindow(QWidget):
             return
         d = self.to_doc(pos)
         doc = self.c.session.document
+        if self._stamped and doc.shapes:                # the first click of this double-click stamped: not meant
+            doc.undo()
+            self._stamped = False
         if self.tool == "step" and doc.shapes and doc.shapes[-1].kind == "step" and doc.shapes[-1].points[0] == d:
             doc.undo()                                  # the first click put a number here: not meant
         i = self._shape_at(d)
@@ -506,7 +538,8 @@ class OverlayWindow(QWidget):
         if self.tool != "select":
             self.set_tool("select")
         self._select(i)
-        if self.c.session.document.shapes[i].kind == "text":
+        s = self.c.session.document.shapes[i]
+        if s.kind == "text" and not _is_stamp(s):         # a 기호 stamp is picked up, not retyped
             self._edit_text_shape(i)
         self.update()
 
@@ -570,9 +603,14 @@ class OverlayWindow(QWidget):
                 self._current = None
             elif self._move_index is not None:
                 a, b = self.to_doc(press), self.to_doc(pos)
-                if self._moved:
+                if self._moved and self._stamped:           # a fresh stamp: one undo step, where it was let go
+                    s = doc.shapes[self._move_index]
+                    doc.undo()
+                    doc.add(_replace(s, points=[(s.points[0][0] + b[0] - a[0], s.points[0][1] + b[1] - a[1])]))
+                elif self._moved:
                     doc.move(self._move_index, b[0] - a[0], b[1] - a[1])
                 self._move_index = None
+                self._stamped = False
         self.update()
 
     # --- text tool ---------------------------------------------------------------

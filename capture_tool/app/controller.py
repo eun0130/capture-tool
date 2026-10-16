@@ -13,6 +13,8 @@ from PySide6.QtCore import QObject, QPoint, QRect, QRunnable, Qt, QThreadPool, Q
 from PySide6.QtGui import QCursor
 
 from ..core import settings as settings_io
+from .. import edition
+from ..core import bar_layout as bl
 from ..core.clipboard_payload import (HTML, UNICODE, cf_html, dib_from_bgr, image_payload, png_with_dpi, table_payload,
                                       shapes_payload, text_payload)
 from ..core.clip import flatten, mask_outside
@@ -220,8 +222,10 @@ class Controller(QObject):
         self.word = WordSender()
         from ..platform.excel import ExcelSender
         self.excel = ExcelSender()
-        from ..platform.kakao import KakaoSender
-        self.kakao = KakaoSender()
+        self.kakao = None                        # the work edition has no KakaoTalk at all
+        if edition.has_kakao():
+            from ..platform.kakao import KakaoSender
+            self.kakao = KakaoSender()
         self._kakao_done.connect(self.notify)
         self._search_done.connect(self._open_search)
         self.drm = detect_drm()
@@ -534,6 +538,9 @@ class Controller(QObject):
 
     # --- finishing ---------------------------------------------------------------
     def on_toolbar_action(self, name: str) -> None:
+        if name.startswith("bar:"):
+            self._bar_layout_action(name)
+            return
         if name == "help":
             self.show_guide()
             return
@@ -548,7 +555,8 @@ class Controller(QObject):
         if name in ("link_file", "link_web"):
             self._link_from_capture(name)
         elif name.startswith("kakao"):
-            self._send_to_kakao(name)
+            if self.kakao is not None:
+                self._send_to_kakao(name)
         elif name == "mail":
             self._send_mail()
         elif name in ("pin_stack", "pin_other"):
@@ -880,6 +888,69 @@ class Controller(QObject):
         elif name == "open_folder":
             folder, _ = resolve_save_dir(s.save_dir, self.fallback_dir)
             self.open_folder(folder)
+
+    # --- action bar arrangement (core.bar_layout): favourites, groups, one per place --------------
+    def workplace(self) -> str:
+        """Where the person is: "home" or "work" (the work edition is always at work)."""
+        if edition.is_work():
+            return "work"
+        p = getattr(self.settings, "workplace", "home")
+        return p if p in bl.WORKPLACES else "home"
+
+    def bar_profile(self) -> bl.Profile:
+        return bl.profile_of(self.settings, self.workplace())
+
+    def apply_bar_layout(self, sb, max_width: int | None = None) -> None:
+        first, groups = bl.rows(self.bar_profile(), available=list(sb.buttons))
+        badge = "회사" if (self.workplace() == "work" and not edition.is_work()) else ""
+        sb.apply_layout(first, groups, badge, max_width)
+
+    def _relayout_bars(self) -> None:
+        bars = [ov.side_bar for ov in self.overlays]
+        if self.editor is not None:
+            bars.append(self.editor.canvas.side_bar)
+        for sb in bars:
+            self.apply_bar_layout(sb)
+        ov = self.active_overlay
+        if ov is not None and self.session.state is State.EDITING:
+            ov.show_toolbar()                           # the bar's width changed: place it again
+
+    def set_workplace(self, place: str) -> None:
+        if edition.is_work() or place not in bl.WORKPLACES:
+            return
+        self.settings.workplace = place
+        self._persist()
+        self._relayout_bars()
+        self.notify(f"지금 장소: {bl.PLACE_NAMES[place]} — 이 장소의 버튼 배치를 씁니다. 버튼을 오른쪽 클릭하면 바꿀 수 있습니다.")
+
+    def _bar_layout_action(self, name: str) -> None:
+        """bar:<op>[:<button>] from a button's right-click menu."""
+        from .side_bar import LABELS
+        parts = name.split(":")
+        op = parts[1] if len(parts) > 1 else ""
+        target = parts[2] if len(parts) > 2 else ""
+        place = self.workplace()
+        p = self.bar_profile()
+        label = LABELS.get(target, target)
+        if op == "reset":
+            new, msg = bl.default_profile(place), "버튼 막대를 기본 배치로 되돌렸습니다."
+        elif op == "fav_add":
+            new, msg = bl.add_favourite(p, target), f"'{label}' 버튼을 즐겨찾기(첫 줄)에 넣었습니다."
+        elif op == "fav_remove":
+            new, msg = bl.remove_favourite(p, target), f"'{label}' 버튼을 전체 줄로 옮겼습니다."
+        elif op in ("left", "right"):
+            new, msg = bl.move_favourite(p, target, -1 if op == "left" else 1), ""
+        elif op == "hide":
+            new, msg = bl.set_hidden(p, target, True), f"'{label}' 버튼을 이 장소에서 숨겼습니다. 설정 → 버튼 막대에서 되살립니다."
+        else:
+            return
+        if new == p:
+            return
+        bl.store_profile(self.settings, place, new)
+        self._persist()
+        self._relayout_bars()
+        if msg:
+            self.notify(msg)
 
     # --- web search -------------------------------------------------------------------------------
     def _web_search(self, name: str) -> None:
@@ -1507,6 +1578,7 @@ class Controller(QObject):
         s.last_font_family = tb.font_family
         s.last_highlight_color = tb.highlight_color
         s.last_text_bg = tb.bg
+        s.last_symbol = getattr(tb, "symbol", s.last_symbol)
         s.recent_colors = push_recent(s.recent_colors, tb.color)
         self._persist()
 

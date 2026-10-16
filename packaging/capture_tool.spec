@@ -11,6 +11,10 @@ datas += collect_data_files("sacremoses")            # tokenizer rules of some t
 # pictures of the in-app beginner's guide (tools/make_guide_images.py)
 GUIDE = os.path.join(ROOT, "capture_tool", "app", "guide_images")
 datas += [(os.path.join(GUIDE, f), os.path.join("capture_tool", "app", "guide_images")) for f in os.listdir(GUIDE)]
+# edition marker (build.ps1 -Edition work writes it for the 회사용 build; absent = 집용)
+EDITION = os.path.join(ROOT, "capture_tool", "edition.txt")
+if os.path.exists(EDITION):
+    datas.append((EDITION, "capture_tool"))
 binaries = collect_dynamic_libs("onnxruntime")
 binaries += collect_dynamic_libs("ctranslate2") + collect_dynamic_libs("onnxruntime_genai")
 
