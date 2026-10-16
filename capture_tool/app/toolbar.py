@@ -375,6 +375,17 @@ class Toolbar(QWidget):
         self.palette.show()
 
 
+def colour_dialog(parent, start: str, title: str) -> QColorDialog:
+    """The system colour picker, made to show ABOVE the capture: the capture overlay stays on
+    top of every window, so a plain dialog opened behind it, invisible, holding every key
+    (BUG-116). Owned by the top-level window (overlay or edit window), on top itself."""
+    dlg = QColorDialog(QColor(start), parent.window() if parent is not None else None)
+    dlg.setWindowTitle(title)
+    dlg.setWindowFlag(Qt.WindowStaysOnTopHint, True)
+    dlg.setOption(QColorDialog.DontUseNativeDialog, True)      # the native one ignores the flag
+    return dlg
+
+
 class FontPicker(QComboBox):
     """Font box: popular Korean fonts (installed ones) on top, a separator, then every other
     font A→Z. Type a name to jump to it."""
@@ -507,10 +518,11 @@ class PalettePopup(QFrame):
         self.recent_row.addStretch(1)
 
     def _custom(self) -> None:
-        c = QColorDialog.getColor(QColor(self.bar.color), self, "색 선택")
-        if c.isValid():
-            self.bar.set_color(c.name().upper())
-        self.hide()
+        self.hide()                                           # the popup would close the dialog's focus chain
+        dlg = colour_dialog(self.bar, self.bar.color, "색 선택")
+        if dlg.exec() == QColorDialog.Accepted and dlg.selectedColor().isValid():
+            self.bar.set_color(dlg.selectedColor().name().upper())
+        dlg.deleteLater()
 
 
 class _Popup(QFrame):

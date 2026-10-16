@@ -115,7 +115,13 @@ class BorderDialog(QDialog):
             self._update()
 
     def _pick_colour(self):
-        c = QColorDialog.getColor(QColor(self.color), self, "테두리 색")
+        from .toolbar import colour_dialog
+        dlg = colour_dialog(self, self.color, "테두리 색")
+        if dlg.exec() != QColorDialog.Accepted or not dlg.selectedColor().isValid():
+            dlg.deleteLater()
+            return
+        c = dlg.selectedColor()
+        dlg.deleteLater()
         if c.isValid():
             self.color = c.name()
             for b in self.swatch_group.buttons():
