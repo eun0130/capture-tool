@@ -15,8 +15,8 @@ gh run download $RunId -n CaptureTool-Setup -D $dir
 $exe = Get-ChildItem $dir -Filter "CaptureTool-Work-Setup-$Version.exe" | Select-Object -First 1
 if (-not $exe) { throw "CaptureTool-Work-Setup-$Version.exe not in the artifact of run $RunId" }
 $notes = "docs/release-notes/$tag.md"
-gh release view $tag --repo $Repo 2>$null
-if ($LASTEXITCODE -eq 0) {
+$existing = @(gh release list --repo $Repo --json tagName --jq ".[].tagName")   # no stderr: PS 5.1 would stop on it
+if ($existing -contains $tag) {
     gh release upload $tag $exe.FullName --repo $Repo --clobber
 } elseif (Test-Path $notes) {
     gh release create $tag $exe.FullName --repo $Repo --title "캡처 도구 (회사용) $tag" --notes-file $notes
