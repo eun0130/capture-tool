@@ -27,6 +27,7 @@ ACTIONS = [
     ("save_as", "save_as", "다른 이름 저장", "저장 위치를 골라 저장 (Ctrl+Shift+S)", "extra"),
     ("resize", "resize", "크기 줄이기", "캡처를 작게 — 복사·저장·PDF가 줄인 크기로 (메일·업로드용)", "extra"),
     ("border", "border", "테두리", "캡처 둘레에 테두리(굵기·색)와 음영(그림자)을 넣어 복사·저장 — 미리 보기 제공", "extra"),
+    ("transparent", "transparent", "배경 지우기", "종이·화면 바탕을 지우고 글씨·사인·도장만 남긴 투명 PNG로 복사·저장 — 색별로 남길 것 고르기, 미리 보기 (올가미로 따면 더 깔끔)", "extra"),
     ("rotate_left", "rotate_left", "왼쪽 회전", "반시계 방향으로 90° 돌려 편집 창에서 열기 — 돌린 그림으로 텍스트·표·PPT 모두 사용", "extra"),
     ("rotate_right", "rotate_right", "오른쪽 회전", "시계 방향으로 90° 돌려 편집 창에서 열기 (옆으로 찍은 사진·문서)", "extra"),
     ("pdf", "pdf", "PDF", "캡처를 PDF로 저장 — 긴 캡처는 여러 쪽으로", "extra"),

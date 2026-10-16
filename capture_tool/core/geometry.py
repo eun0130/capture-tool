@@ -124,6 +124,31 @@ def _overlaps(a: Rect, b: Rect) -> bool:
     return a.x < b.right and b.x < a.right and a.y < b.bottom and b.y < a.bottom
 
 
+def _overlap_area(a: Rect, b: Rect) -> int:
+    return max(0, min(a.right, b.right) - max(a.x, b.x)) * max(0, min(a.bottom, b.bottom) - max(a.y, b.y))
+
+
+def place_toast(size: tuple[int, int], screen: Rect, avoid: Iterable[Rect], margin: int = 60) -> tuple[int, int]:
+    """Top-left for a message of `size` on `screen` that covers none of `avoid` (the capture and
+    its bars): bottom centre first, then the top, the corners and the sides; when every spot is
+    busy, the one that covers the least (BUG-114)."""
+    w, h = size
+    avoid = list(avoid)
+    cx, cy = screen.x + (screen.w - w) // 2, screen.y + (screen.h - h) // 2
+    top, bottom = screen.y + margin, screen.bottom - h - margin
+    left, right = screen.x + margin, screen.right - w - margin
+    spots = [(cx, bottom), (cx, top), (right, bottom), (left, bottom), (right, top), (left, top),
+             (right, cy), (left, cy)]
+    best, least = spots[0], None
+    for x, y in spots:
+        covered = sum(_overlap_area(Rect(x, y, w, h), a) for a in avoid)
+        if covered == 0:
+            return x, y
+        if least is None or covered < least:
+            best, least = (x, y), covered
+    return best
+
+
 def layout_bars(sel: Rect, monitor: Rect, tb_size: tuple[int, int], sb_size: tuple[int, int],
                 gap: int = 8) -> tuple[tuple[int, int], tuple[int, int]]:
     """Place the drawing toolbar and the quick-action side bar around the selection

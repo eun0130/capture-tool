@@ -420,7 +420,7 @@ class OverlayWindow(QWidget):
             self.recent = RecentStrip(self, sync=self.c.sync)
             self.recent.open_path.connect(self.c.open_image_file)
         self.recent.set_paths(paths)
-        self.recent.place()
+        self.recent.place(self.mapFromGlobal(QCursor.pos()))
         self.recent.show()
         self.recent.raise_()
 
@@ -464,14 +464,7 @@ class OverlayWindow(QWidget):
             self._open_text_editor(pos)
             self._press = None
         elif self.tool == "select":
-            self._move_index = None
-            for i in range(len(doc.shapes) - 1, -1, -1):
-                if doc.shapes[i].kind == "clip":   # the crop outline is not an object to pick
-                    continue
-                x1, y1, x2, y2 = doc.shapes[i].bbox()
-                if x1 - 6 <= d[0] <= x2 + 6 and y1 - 6 <= d[1] <= y2 + 6:
-                    self._move_index = i
-                    break
+            self._move_index = self._shape_at(d)
             self._select(self._move_index)
         elif self.tool == "lasso":
             self._current = Shape(kind="clip", points=[d])
@@ -481,6 +474,41 @@ class OverlayWindow(QWidget):
             color = tb.highlight_color if self.tool == "highlight" else tb.color
             self._current = Shape(kind=self.tool, points=[d, d], color=color, width=tb.line_width,
                                   fill=tb.fill, opacity=tb.opacity)
+
+    def _shape_at(self, d) -> int | None:
+        """The topmost drawing under a document point (the crop outline is not one)."""
+        doc = self.c.session.document
+        for i in range(len(doc.shapes) - 1, -1, -1):
+            if doc.shapes[i].kind == "clip":
+                continue
+            x1, y1, x2, y2 = doc.shapes[i].bbox()
+            if x1 - 6 <= d[0] <= x2 + 6 and y1 - 6 <= d[1] <= y2 + 6:
+                return i
+        return None
+
+    def mouseDoubleClickEvent(self, e):
+        """Double-click a drawing with any tool: it is picked (select tool) to drag, restyle or
+        delete; a text opens again so its words can be changed."""
+        if (e.button() != Qt.LeftButton or self.c.session.state is not State.EDITING or not self.active
+                or self.ocr_lines is not None or self._editor is not None):
+            return
+        pos = e.position()
+        self._press = self._current = None          # the click that came first drew nothing
+        if not self._inside_selection(pos):
+            return
+        d = self.to_doc(pos)
+        doc = self.c.session.document
+        if self.tool == "step" and doc.shapes and doc.shapes[-1].kind == "step" and doc.shapes[-1].points[0] == d:
+            doc.undo()                                  # the first click put a number here: not meant
+        i = self._shape_at(d)
+        if i is None:
+            return
+        if self.tool != "select":
+            self.set_tool("select")
+        self._select(i)
+        if self.c.session.document.shapes[i].kind == "text":
+            self._edit_text_shape(i)
+        self.update()
 
     def mouseMoveEvent(self, e):
         pos = e.position()
@@ -563,6 +591,26 @@ class OverlayWindow(QWidget):
         ed.editingFinished.connect(lambda: self._editor_left(ed))
         self._editor = ed
 
+    def _edit_text_shape(self, index: int) -> None:
+        """Open an existing text in the box again, in its place and style; Enter replaces its
+        words, Esc (or no change) keeps it as it was."""
+        s = self.c.session.document.shapes[index]
+        sel = self.c.session.selection
+        self.toolbar.load_text_style(s)
+        ed = TextEditor(self, self.toolbar, self.scale)
+        lp = self.to_local(sel.x + s.points[0][0], sel.y + s.points[0][1])
+        ed.move(int(lp.x()), int(lp.y()))
+        ed.doc_point = s.points[0]
+        ed.edit_index = index
+        ed.setText(s.text or "")
+        ed._fit()
+        ed.selectAll()
+        ed.show()
+        ed.setFocus()
+        ed.returnPressed.connect(lambda: self.close_text_editor(ed))
+        ed.editingFinished.connect(lambda: self._editor_left(ed))
+        self._editor = ed
+
     def _editor_left(self, ed) -> None:
         """Focus left the text box. A toolbar popup (symbols, background, palette) takes focus
         while it is open; the box must stay open for the symbol or color to go into it."""
@@ -580,8 +628,13 @@ class OverlayWindow(QWidget):
         self._editor = None
         text = cur.text()
         doc = self.c.session.document
-        if text.strip() and doc is not None:
-            tb = self.toolbar
+        idx = getattr(cur, "edit_index", None)
+        tb = self.toolbar
+        if idx is not None:                              # an existing text: change it in place
+            if text.strip() and doc is not None and 0 <= idx < len(doc.shapes) and doc.shapes[idx].kind == "text":
+                doc.update(idx, text=text, color=tb.color, font_size=tb.font_size, bold=tb.bold, italic=tb.italic,
+                           underline=tb.underline, strike=tb.strike, font_family=tb.font_family, bg=tb.bg)
+        elif text.strip() and doc is not None:
             doc.add(Shape(kind="text", points=[cur.doc_point], text=text, color=tb.color, width=tb.line_width,
                           font_size=tb.font_size, bold=tb.bold, italic=tb.italic, underline=tb.underline,
                           strike=tb.strike, font_family=tb.font_family, bg=tb.bg))

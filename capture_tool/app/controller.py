@@ -206,6 +206,7 @@ class Controller(QObject):
         self.open_folder = _open_folder
         self.ask_resize = self._resize_dialog   # tests replace it
         self.ask_border = self._border_dialog   # tests replace it
+        self.ask_transparent = self._transparent_dialog
         self.print_image = _print_image         # tests replace it
         self.ask_mail = None                # tests replace the picker
         self.ask_table_preview = None       # tests replace the preview dialog
@@ -241,6 +242,27 @@ class Controller(QObject):
         log.info(msg)
         if self._notify:
             self._notify(msg)
+
+    def busy_rects(self) -> list[Rect]:
+        """Where the capture being edited and its bars are on screen (logical px), so a message
+        can stay out of their way (BUG-114). Empty when nothing is being edited."""
+        out: list[Rect] = []
+        if self.session.state is not State.EDITING:
+            return out
+        if self.editor is not None:
+            g = self.editor.frameGeometry()
+            return [Rect(g.x(), g.y(), g.width(), g.height())]
+        ov, sel = self.active_overlay, self.session.selection
+        if ov is None or sel is None:
+            return out
+        lr = ov.local_rect(sel)
+        tl = ov.mapToGlobal(QPoint(int(lr.x()), int(lr.y())))
+        out.append(Rect(tl.x(), tl.y(), int(lr.width()), int(lr.height())))
+        for w in (ov.toolbar, ov.side_bar, ov.ocr_bar):
+            if w.isVisible():
+                p = w.mapToGlobal(QPoint(0, 0))
+                out.append(Rect(p.x(), p.y(), w.width(), w.height()))
+        return out
 
     def _set_clipboard(self, payload: dict) -> bool:
         try:
@@ -555,6 +577,8 @@ class Controller(QObject):
             self._run_recognition("ppt")
         elif name == "resize":
             self._do_resize()
+        elif name == "transparent":
+            self._do_transparent()
         elif name == "border":
             self._do_border()
         elif name in ("rotate_left", "rotate_right"):
@@ -1592,6 +1616,36 @@ class Controller(QObject):
         saved = self._save(result) if self.settings.auto_save else None
         where = f" 저장: {saved.name}" if saved else ""
         self.notify(f"테두리를 넣어 복사했습니다.{where} 원하는 곳에 Ctrl+V")
+
+    def _transparent_dialog(self, img, settings):
+        from .transparent_dialog import ask_transparent
+        return ask_transparent(img, settings)
+
+    def _do_transparent(self) -> None:
+        """배경 지우기: the paper/screen background becomes transparent, only the ink (a signature,
+        a stamp, writing) is left - copied as a transparent PNG and saved as PNG."""
+        if self.session.state is not State.EDITING:
+            return
+        ov, sel, doc, raw = self._take(close=False, autosave=False)
+        final = compose(raw, doc)
+        dpi = 96 * ov.scale
+        self.close_overlays()                           # the dialog must not open behind the overlay
+        result = self.ask_transparent(final, self.settings)
+        if result is None:
+            p = self._image_payload(final, dpi)
+            if p:
+                self._set_clipboard(p)
+            self.notify("배경 지우기를 취소했습니다. 원본이 복사되어 있습니다.")
+            if self.settings.auto_save:
+                self._save(final)
+            return
+        self._persist()                                 # remember the level
+        p = self._image_payload(result, dpi)
+        if p:
+            self._set_clipboard(p)
+        saved = self._save(result, ext_override="png") if self.settings.auto_save else None
+        where = f" 저장: {saved.name}" if saved else ""
+        self.notify(f"배경을 지워 투명 PNG로 복사했습니다.{where} PPT·워드·그림판에 Ctrl+V 하면 뒤가 비쳐 보입니다.")
 
     def _do_rotate(self, degrees: int) -> None:
         """A quarter turn of the capture (drawings baked in). A live capture opens in the edit window

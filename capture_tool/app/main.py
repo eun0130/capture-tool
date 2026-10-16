@@ -141,7 +141,8 @@ class TrayApp:
             if self._toast is None:
                 from .toast import Toast
                 self._toast = Toast()
-            self._toast.show_message(msg, toast_ms(msg))
+            c = getattr(self, "controller", None)
+            self._toast.show_message(msg, toast_ms(msg), avoid=c.busy_rects() if c is not None else ())
         QTimer.singleShot(0, show)
 
     def _build_menu(self) -> None:

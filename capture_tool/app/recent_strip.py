@@ -102,12 +102,16 @@ class RecentStrip(QWidget):
                 except RuntimeError:                          # the strip went away meanwhile
                     return
 
-    def place(self) -> None:
+    def place(self, cursor=None) -> None:
+        """Centred at the bottom - or at the top when the mouse is in the lower half, so the strip
+        never sits on what the person is about to capture (BUG-115)."""
         p = self.parentWidget()
         if p is None:
             return
         self.adjustSize()
-        self.move(max(8, (p.width() - self.width()) // 2), max(8, p.height() - self.height() - 56))
+        x = max(8, (p.width() - self.width()) // 2)
+        low = cursor is not None and cursor.y() > p.height() // 2
+        self.move(x, 56 if low else max(8, p.height() - self.height() - 56))
 
     # dropping image files on it
     def dragEnterEvent(self, e):

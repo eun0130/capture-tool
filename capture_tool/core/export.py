@@ -168,3 +168,153 @@ def image_to_pdf(img: np.ndarray, dpi: float = 96, fit_one_page: bool = False,
     out = io.BytesIO()
     pages[0].save(out, "PDF", resolution=float(dpi), save_all=True, append_images=pages[1:])
     return out.getvalue()
+
+
+# --- 배경 지우기: only the ink (a signature, a stamp, writing) is left --------------------------------------
+from dataclasses import dataclass as _dataclass
+
+
+@_dataclass
+class Layer:
+    """One colour of ink in a cut-out picture: its name for people, swatch, pixel mask and share."""
+    name: str
+    color: str
+    mask: np.ndarray
+    share: float
+
+
+def remove_background(img: np.ndarray, level: int = 2) -> np.ndarray:
+    """BGRA copy of `img` whose paper (or screen) background is transparent and whose ink keeps its
+    colours. The background is estimated locally (a morphological closing - or opening on a dark
+    background - wide enough to swallow strokes), so uneven lighting on a photographed page is
+    background too. `level` 1..4: how different from the background a pixel must be to count as
+    ink (1 keeps faint marks, 4 only strong ink). An alpha channel already there (a lasso cut) is kept."""
+    level = min(4, max(1, int(level)))
+    bgr = np.ascontiguousarray(img[:, :, :3])
+    h, w = bgr.shape[:2]
+    k = max(15, min(h, w) // 10) | 1
+    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (k, k))
+    border = np.concatenate([bgr[0], bgr[-1], bgr[:, 0], bgr[:, -1]])
+    dark = border.mean() < 100                      # light ink on a dark ground: the reverse operation
+    bg = cv2.morphologyEx(bgr, cv2.MORPH_OPEN if dark else cv2.MORPH_CLOSE, kernel)
+    diff = np.abs(bgr.astype(np.int16) - bg.astype(np.int16)).max(axis=2).astype(np.float32)
+    lo, hi = 4 + 8 * level, 20 + 18 * level              # 2: 20..56 of 255
+    alpha = np.clip((diff - lo) / (hi - lo), 0, 1)
+    alpha = (alpha * 255).astype(np.uint8)
+    n, labels, stats, _ = cv2.connectedComponentsWithStats((alpha > 0).astype(np.uint8), connectivity=8)
+    specks = np.flatnonzero(stats[:, cv2.CC_STAT_AREA] <= 2)        # JPEG noise, not a 1-px stroke
+    if len(specks):
+        alpha[np.isin(labels, specks[specks != 0])] = 0
+    if img.ndim == 3 and img.shape[2] == 4:
+        alpha = np.minimum(alpha, img[:, :, 3])
+    return np.dstack([bgr, alpha])
+
+
+def _colour_name(bgr) -> str:
+    b, g, r = (int(v) for v in bgr)
+    hsv = cv2.cvtColor(np.array([[[b, g, r]]], np.uint8), cv2.COLOR_BGR2HSV)[0, 0]
+    hue, sat, val = int(hsv[0]), int(hsv[1]), int(hsv[2])
+    if sat < 35 or val < 50:
+        return "검정" if val < 90 else ("회색" if val < 190 else "흰색")
+    if hue < 10 or hue >= 160:
+        return "빨강"
+    if hue < 35:
+        return "노랑"
+    if hue < 85:
+        return "초록"
+    if hue < 130:
+        return "파랑"
+    return "보라"
+
+
+def ink_layers(bgra: np.ndarray, max_layers: int = 3) -> list[Layer]:
+    """The ink of a cut-out picture split by colour (k-means in Lab, close centres merged): a black
+    signature and a red stamp become two layers. One layer when there is only one colour."""
+    alpha = bgra[:, :, 3]
+    ink = alpha > 96
+    pts = bgra[:, :, :3][ink]
+    n = len(pts)
+    if n == 0:
+        return []
+    lab = cv2.cvtColor(pts.reshape(-1, 1, 3), cv2.COLOR_BGR2LAB).reshape(-1, 3).astype(np.float32)
+    lab[:, 0] *= 0.35                       # hue matters, shade less: one stamp is one layer, light or dark
+    k = min(max_layers, max(1, n // 20))
+    if k > 1:
+        crit = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 20, 1.0)
+        _, labels, centres = cv2.kmeans(lab, k, None, crit, 3, cv2.KMEANS_PP_CENTERS)
+        labels = labels.ravel()
+    else:
+        labels, centres = np.zeros(n, np.int32), lab.mean(axis=0, keepdims=True)
+    # merge centres that are the same colour to the eye, and slivers (the light fringe of a
+    # stroke's anti-aliased edge) into the nearest real colour
+    group = list(range(len(centres)))
+    for i in range(len(centres)):
+        for j in range(i):
+            if group[j] == j and np.linalg.norm(centres[i] - centres[j]) < 24:
+                group[i] = j
+                break
+    while True:
+        heads = sorted(set(group))
+        shares = {g: np.isin(labels, [i for i, h in enumerate(group) if h == g]).mean() for g in heads}
+        small = [g for g in heads if shares[g] < 0.04]
+        if len(heads) < 2 or not small:
+            break
+        g = min(small, key=lambda x: shares[x])
+        near = min((h for h in heads if h != g), key=lambda h: np.linalg.norm(centres[h] - centres[g]))
+        group = [near if x == g else x for x in group]
+    layers = []
+    for gi in sorted(set(group)):
+        members = [i for i, g in enumerate(group) if g == gi]
+        sel = np.isin(labels, members)
+        if not sel.any():
+            continue
+        mask = np.zeros(alpha.shape, bool)
+        idx = np.flatnonzero(ink)
+        mask.flat[idx[sel]] = True
+        mean_bgr = pts[sel].mean(axis=0)
+        b, g, r = (int(round(v)) for v in mean_bgr)
+        layers.append(Layer(f"{_colour_name(mean_bgr)} 부분", f"#{r:02X}{g:02X}{b:02X}", mask, sel.mean()))
+    layers = _adopt_fringe(layers)
+    layers.sort(key=lambda l: -l.share)
+    return layers
+
+
+def _adopt_fringe(layers: list[Layer]) -> list[Layer]:
+    """A blurry stamp is a coloured core with a pale, nearly grey rim: a grey layer that mostly
+    touches one coloured layer is that colour's rim and joins it."""
+    chromatic = [l for l in layers if l.name.split()[0] not in ("검정", "회색", "흰색")]
+    if not chromatic:
+        return layers
+    out = []
+    for l in layers:
+        if l in chromatic or l.name.split()[0] == "검정":
+            out.append(l)
+            continue
+        near = max(chromatic, key=lambda c: (cv2.dilate(c.mask.astype(np.uint8), np.ones((5, 5), np.uint8)) > 0)[l.mask].mean())
+        touch = (cv2.dilate(near.mask.astype(np.uint8), np.ones((5, 5), np.uint8)) > 0)[l.mask].mean()
+        if touch > 0.5:
+            near.mask |= l.mask
+            near.share += l.share
+        else:
+            out.append(l)
+    return out
+
+
+def apply_layers(bgra: np.ndarray, layers: list[Layer], keep: list[bool]) -> np.ndarray:
+    """Copy of the cut-out with every unchecked layer made transparent."""
+    out = bgra.copy()
+    for layer, on in zip(layers, keep):
+        if not on:
+            out[:, :, 3][layer.mask] = 0
+    return out
+
+
+def on_checkerboard(bgra: np.ndarray, cell: int = 8) -> np.ndarray:
+    """BGR preview: the transparent parts show a grey-white checkerboard."""
+    if bgra.ndim != 3 or bgra.shape[2] != 4:
+        return bgra
+    h, w = bgra.shape[:2]
+    ys, xs = np.mgrid[0:h, 0:w]
+    board = np.where(((ys // cell + xs // cell) % 2) == 0, 255, 204).astype(np.float32)
+    a = bgra[:, :, 3:4].astype(np.float32) / 255
+    return (bgra[:, :, :3] * a + board[:, :, None] * (1 - a)).round().astype(np.uint8)

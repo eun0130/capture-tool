@@ -51,6 +51,7 @@ _P = {
     "print": '<path d="M6 9V3h12v6M6 18H4v-6h16v6h-2M8 14h8v6H8z"/>',
     "rotate_left": '<path d="M5 12a7.5 7.5 0 1 0 2.2-5.3"/><path d="M5 4v5h5"/>',
     "rotate_right": '<path d="M19 12a7.5 7.5 0 1 1-2.2-5.3"/><path d="M19 4v5h-5"/>',
+    "transparent": '<path d="M4 17c3-9 5-9 7-2s3 5 5-3 3-2 4 3" /><path d="M3 21h18" stroke-dasharray="2 2"/>',
     "border": '<rect x="4" y="4" width="13" height="13" rx="1"/><path d="M9 20h11V9" stroke-dasharray="2.5 2.5"/>',
 }
 

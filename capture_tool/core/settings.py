@@ -44,6 +44,7 @@ class Settings:
     border_thickness: int = 8             # 테두리: last chosen border width in px
     border_color: str = "#FFFFFF"         # 테두리: last chosen border colour
     border_shadow: bool = False           # 테두리: last chose to add a drop shadow
+    transparent_level: int = 2            # 배경 지우기: how strongly the background is cut (1..4)
     styled_text: bool = True             # text mode copies the text with its look (colours, background, indent)
     read_ahead: bool = True              # read the text of a chosen area in the background (instant 텍스트/표)
     show_recent: bool = True             # newest saved captures at the bottom when a capture starts
@@ -147,6 +148,10 @@ def _apply(s: Settings, data: dict, warnings: list[str]) -> None:
                 if not _is_int(v):
                     raise TypeError
                 s.border_thickness = min(64, max(0, v))
+            elif name == "transparent_level":
+                if not _is_int(v):
+                    raise TypeError
+                s.transparent_level = min(4, max(1, v))
             elif name == "share_expiry":
                 from .share import EXPIRIES
                 if v not in EXPIRIES:

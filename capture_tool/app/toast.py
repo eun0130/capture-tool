@@ -8,6 +8,8 @@ from PySide6.QtCore import QPoint, Qt, QTimer
 from PySide6.QtGui import QCursor, QGuiApplication
 from PySide6.QtWidgets import QHBoxLayout, QLabel, QWidget
 
+from ..core.geometry import Rect, place_toast
+
 SHOW_MS = 3200
 MS_PER_CHAR = 110         # longer messages (what to do next) stay long enough to read
 MAX_MS = 10000
@@ -37,13 +39,16 @@ class Toast(QWidget):
         self._timer.timeout.connect(self.hide)
         self._excluded = False
 
-    def show_message(self, text: str, ms: int = SHOW_MS) -> None:
+    def show_message(self, text: str, ms: int = SHOW_MS, avoid=()) -> None:
+        """`avoid`: screen rectangles (logical px) the message must not cover - the capture
+        being edited and its bars (BUG-114)."""
         self.label.setText(text)
         self.adjustSize()
         scr = QGuiApplication.screenAt(QCursor.pos()) or QGuiApplication.primaryScreen()
         if scr is not None:
             g = scr.availableGeometry()
-            self.move(QPoint(g.center().x() - self.width() // 2, g.bottom() - self.height() - 60))
+            x, y = place_toast((self.width(), self.height()), Rect(g.x(), g.y(), g.width(), g.height()), avoid)
+            self.move(QPoint(x, y))
         self.show()
         self.raise_()
         if not self._excluded:
