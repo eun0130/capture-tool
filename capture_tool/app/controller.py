@@ -558,7 +558,8 @@ class Controller(QObject):
             if self.kakao is not None:
                 self._send_to_kakao(name)
         elif name == "mail":
-            self._send_mail()
+            if edition.has("mail"):
+                self._send_mail()
         elif name in ("pin_stack", "pin_other"):
             self._pin_from_capture(name)
         elif name == "pin_manager":
@@ -924,7 +925,9 @@ class Controller(QObject):
         self.notify(f"지금 장소: {bl.PLACE_NAMES[place]} — 이 장소의 버튼 배치를 씁니다. 버튼을 오른쪽 클릭하면 바꿀 수 있습니다.")
 
     def _bar_layout_action(self, name: str) -> None:
-        """bar:<op>[:<button>] from a button's right-click menu."""
+        """bar:<op>[:<button>[:<anchor>]] from a button's right-click menu or a drag: fav_add,
+        fav_remove, left, right, hide, reset, and fav_after:<button>:<anchor> for a drop on the
+        favourites row (after the button before the blue line; 복사 = the front)."""
         from .side_bar import LABELS
         parts = name.split(":")
         op = parts[1] if len(parts) > 1 else ""
@@ -940,6 +943,12 @@ class Controller(QObject):
             new, msg = bl.remove_favourite(p, target), f"'{label}' 버튼을 전체 줄로 옮겼습니다."
         elif op in ("left", "right"):
             new, msg = bl.move_favourite(p, target, -1 if op == "left" else 1), ""
+        elif op == "fav_after":
+            anchor = parts[3] if len(parts) > 3 else ""
+            new = bl.insert_after(p, target, anchor)
+            joined = target not in p.favourites
+            msg = (f"'{label}' 버튼을 즐겨찾기(첫 줄)에 넣었습니다." if joined
+                   else f"'{label}' 옮김 — {bl.PLACE_NAMES[place]} 배치에 저장")
         elif op == "hide":
             new, msg = bl.set_hidden(p, target, True), f"'{label}' 버튼을 이 장소에서 숨겼습니다. 설정 → 버튼 막대에서 되살립니다."
         else:

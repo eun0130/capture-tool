@@ -105,7 +105,11 @@ def grab(widget, rect: QRect | None = None) -> np.ndarray:
     return qimage_to_bgr((widget.grab(rect) if rect else widget.grab()).toImage())
 
 
-def capture_shot(expanded: bool):
+def capture_shot(expanded: bool, dragging: str = ""):
+    """The capture screen; `dragging` = a bar button held mid-drag (its ghost and the blue line
+    drawn in, since the ghost is a window of its own)."""
+    from PySide6.QtCore import QPoint, Qt
+    from PySide6.QtTest import QTest
     s = Settings()
     s.bar_expanded = expanded
     c = controller(s)
@@ -114,6 +118,28 @@ def capture_shot(expanded: bool):
     drag(ov, (90, 150), (910, 385))
     ov.show_toolbar()
     app.processEvents()
+    if dragging:
+        sb = ov.side_bar
+        src, dst = sb.buttons[dragging], sb.buttons["kakao"]
+        start = src.rect().center()
+        end = src.mapFrom(sb, dst.mapTo(sb, dst.rect().center()) + QPoint(12, 6))
+        QTest.mousePress(src, Qt.LeftButton, Qt.NoModifier, start)
+        for i in range(1, 5):
+            QTest.mouseMove(src, start + (end - start) * (i / 4))
+        app.processEvents()
+        img = grab(ov)
+        gi = sb.ghost.pixmap().toImage().convertToFormat(QImage.Format_ARGB32)
+        ghost = np.frombuffer(gi.constBits(), np.uint8).reshape(gi.height(), gi.bytesPerLine() // 4, 4)[:, :gi.width()]
+        at = ov.mapFromGlobal(sb.ghost.pos())
+        y, x = at.y(), at.x()
+        h, w = ghost.shape[:2]
+        alpha = ghost[:, :, 3:4].astype(np.float32) / 255 * 0.85           # the ghost is 85% opaque
+        img[y:y + h, x:x + w] = (img[y:y + h, x:x + w] * (1 - alpha) + ghost[:, :, :3] * alpha).astype(np.uint8)
+        lr = sb._line.geometry().translated(sb.mapTo(ov, QPoint(0, 0)))  # the 3-px line survives the shrink wider
+        cv2.rectangle(img, (lr.left() - 3, lr.top()), (lr.right() + 3, lr.bottom()), (250, 146, 90), -1)
+        QTest.mouseRelease(src, Qt.LeftButton, Qt.NoModifier, QPoint(-500, -500))   # far outside: cancelled
+        c.close_all()
+        return img
     img = grab(ov)
     c.close_all()
     return img
@@ -139,7 +165,7 @@ def recent_shot():
 def main() -> None:
     full = capture_shot(False)
     save("capture.png", full[96:560, 60:1060])
-    wide = capture_shot(True)
+    wide = capture_shot(True, dragging="translate")
     save("bar_full.png", wide[388:548, :])          # the grouped 전체 rows are wide: whole width, shrunk
     save("recent.png", recent_shot())
 

@@ -80,11 +80,12 @@ def test_BU_05_each_place_has_its_own_bar_and_the_switch_shows_a_badge(make):
     c.set_workplace("work")
     assert c.settings.workplace == "work" and "회사" in c.messages[-1]
     assert "kakao" not in sb.layout_first and sb.buttons["kakao"].isVisible() is False
+    assert "mail" not in sb.layout_first and sb.buttons["mail"].isVisible() is False      # neither works at the office
     assert sb.place_label.isVisible() and sb.place_label.text() == "회사"
     _menu_action(sb.bar_menu("pdf"), "bar:fav_add:pdf").trigger()
     assert "pdf" in bl.profile_of(c.settings, "work").favourites and "pdf" not in bl.profile_of(c.settings, "home").favourites
     c.set_workplace("home")
-    assert "kakao" in sb.layout_first and "pdf" not in sb.layout_first and sb.place_label.isVisible() is False
+    assert "kakao" in sb.layout_first and "mail" in sb.layout_first and "pdf" not in sb.layout_first and sb.place_label.isVisible() is False
     c.set_workplace("moon")
     assert c.settings.workplace == "home"
 

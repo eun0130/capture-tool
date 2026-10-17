@@ -1,6 +1,7 @@
 """Two editions from one source. 집용 has everything; 회사용 (the work installer, published from
 its own repository) has no KakaoTalk at all - no button, no guide page, no code path - so a
 company PC never shows it, whatever the settings say."""
+import sys
 from pathlib import Path
 
 import pytest
@@ -41,19 +42,20 @@ def test_ED_02_the_work_edition_has_no_kakao_button(make, work):
     c.start_capture()
     ov = c.overlays[0]
     drag(ov, (100, 100), (500, 400))
-    assert "kakao" not in ov.side_bar.buttons
-    assert "mail" in ov.side_bar.buttons and "search" in ov.side_bar.buttons
+    assert "kakao" not in ov.side_bar.buttons and "mail" not in ov.side_bar.buttons
+    assert "ppt" in ov.side_bar.buttons and "search" in ov.side_bar.buttons
     assert ov.side_bar.layout_first[0] == "copy" and "kakao" not in ov.side_bar.layout_first
     c.on_toolbar_action("kakao_main")                        # nothing to send to: ignored, no crash
     assert not any("카카오" in m for m in c.messages)
 
 
-def test_ED_03_the_work_guide_never_mentions_kakao(work):
+def test_ED_03_the_work_guide_never_mentions_kakao_or_mail(work):
     pages = guide.pages()
-    assert len(pages) == len(guide.PAGES) - 1
+    assert len(pages) == len(guide.PAGES) - 2                # no KakaoTalk chapter, no mail chapter
     text = "\n".join(p.title + p.intro + "".join(p.steps) + p.tip for p in pages)
     assert "카톡" not in text and "카카오" not in text
-    assert any("메일" in p.title for p in pages)             # the rest is there
+    assert "메일" not in text.replace("이메일", "")           # (이메일 = the personal-data masking, stays)
+    assert any("검색" in p.title for p in pages)             # the rest is there
 
 
 def test_ED_03b_the_home_guide_is_the_full_one(monkeypatch):
@@ -75,6 +77,22 @@ def test_ED_04_the_build_makes_both_installers_and_publishes_the_work_one_apart(
     assert not (ROOT / "capture_tool" / "edition.txt").exists()   # never left behind in the source tree
 
 
+def test_ED_07_an_installed_build_ignores_the_environment_and_bundles_no_kakao_or_mail_code(monkeypatch, tmp_path):
+    """Review finding: a runtime switch could be flipped back on a company PC. Frozen builds
+    take the edition from the marker only, and the work bundle has no KakaoTalk / mail modules."""
+    monkeypatch.setattr(edition, "_MARKER", tmp_path / "edition.txt")
+    (tmp_path / "edition.txt").write_text("work", encoding="utf-8")
+    edition.reset()
+    monkeypatch.setenv("CAPTURE_EDITION", "home")
+    assert edition.current() == "home"                       # from source: the variable wins (tests, dev runs)
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    assert edition.current() == "work"                       # installed: the marker, whatever the environment says
+    monkeypatch.delattr(sys, "frozen", raising=False)
+    edition.reset()
+    spec = (ROOT / "packaging" / "capture_tool.spec").read_text(encoding="utf-8")
+    assert "capture_tool.platform.kakao" in spec and "capture_tool.app.mail_ui" in spec and "excludes += WORK_EXCLUDES" in spec
+
+
 def test_ED_05_the_work_edition_is_always_at_work(make, work):
     from capture_tool.core.settings import Settings
     c = make(settings=Settings(workplace="home"))
@@ -83,3 +101,26 @@ def test_ED_05_the_work_edition_is_always_at_work(make, work):
     ov = c.overlays[0]
     drag(ov, (100, 100), (500, 400))
     assert ov.side_bar.place_label.isVisible() is False      # nothing to tell apart: no "회사" badge
+
+
+def test_ED_06_the_work_edition_has_no_mail_either(make, work):
+    """Neither KakaoTalk nor web mail is allowed on a company PC: no 메일 button, no mail
+    settings, the action ignored; and the home edition at 회사 hides both by default."""
+    from capture_tool.app.settings_dialog import SettingsDialog
+    from capture_tool.core import bar_layout as bl
+    from capture_tool.core.settings import Settings
+    assert not edition.has("mail") and not edition.has("kakao") and edition.has("ppt")
+    assert edition.excluded() == ("kakao", "mail")
+    assert "mail" not in bl.available_names() and "kakao" not in bl.available_names()
+    c = make()
+    c.ask_mail = lambda *a, **k: pytest.fail("the mail picker opened")
+    c.start_capture()
+    ov = c.overlays[0]
+    drag(ov, (100, 100), (500, 400))
+    assert "mail" not in ov.side_bar.buttons
+    c.on_toolbar_action("mail")
+    assert c.mail_helper is None
+    d = SettingsDialog(Settings())
+    assert d.has_mail_section is False
+    assert d.result_settings().mail_provider == ""
+    assert bl.default_profile("work").hidden == ["mail", "kakao"]

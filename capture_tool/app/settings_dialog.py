@@ -4,7 +4,7 @@ from __future__ import annotations
 import copy
 
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import (QButtonGroup, QCheckBox, QComboBox, QDialog, QDialogButtonBox, QFileDialog,
+from PySide6.QtWidgets import (QAbstractItemView, QButtonGroup, QCheckBox, QComboBox, QDialog, QDialogButtonBox, QFileDialog,
                                QFormLayout, QHBoxLayout, QLabel, QLineEdit, QListWidget, QListWidgetItem,
                                QPushButton, QRadioButton, QScrollArea, QSpinBox, QVBoxLayout, QWidget)
 
@@ -158,10 +158,12 @@ class SettingsDialog(QDialog):
         brow = QHBoxLayout()
         self.fav_list = QListWidget()
         self.fav_list.setFixedHeight(150)
+        self.fav_list.setDragDropMode(QAbstractItemView.InternalMove)     # drag to reorder, like the bar
+        self.fav_list.setDefaultDropAction(Qt.MoveAction)
         self.rest_list = QListWidget()
         self.rest_list.setFixedHeight(150)
         left = QVBoxLayout()
-        left.addWidget(QLabel("즐겨찾기 — 첫 줄, 위에서부터 왼쪽→오른쪽"))
+        left.addWidget(QLabel("즐겨찾기 — 첫 줄, 위에서부터 왼쪽→오른쪽 (끌어서 순서 변경)"))
         left.addWidget(self.fav_list)
         mid = QVBoxLayout()
         for text, fn, tip in (("◀ 넣기", self._fav_add, "오른쪽에서 고른 버튼을 즐겨찾기 끝에"),
@@ -188,22 +190,31 @@ class SettingsDialog(QDialog):
         self._load_bar_lists()
         # --- mail ------------------------------------------------------------------------------
         from ..core.mailcompose import PROVIDERS
-        from .mail_ui import ORDER
-        v.addWidget(QLabel("<b>메일</b> — [메일] 버튼이 여는 메일 쓰기 화면. 보내기는 항상 직접 누릅니다."))
+        self.has_mail_section = edition.has("mail")      # the work edition has no 메일 button (nor mail_ui): nothing to set
+        mail_box = QWidget(self)
+        mv = QVBoxLayout(mail_box)
+        mv.setContentsMargins(0, 0, 0, 0)
+        mv.addWidget(QLabel("<b>메일</b> — [메일] 버튼이 여는 메일 쓰기 화면. 보내기는 항상 직접 누릅니다."))
         mrow = QHBoxLayout()
         self.mail_provider = QComboBox()
         self.mail_provider.addItem("처음 보낼 때 고르기", "")
-        for pid in ORDER:
-            self.mail_provider.addItem(PROVIDERS[pid].label, pid)
+        if self.has_mail_section:
+            from .mail_ui import ORDER
+            for pid in ORDER:
+                self.mail_provider.addItem(PROVIDERS[pid].label, pid)
         self.mail_provider.setCurrentIndex(max(0, self.mail_provider.findData(settings.mail_provider)))
         mrow.addWidget(self.mail_provider, 1)
         self.mail_account = QLineEdit(settings.mail_account)
         self.mail_account.setPlaceholderText("Gmail 계정이 여러 개면 보낼 계정 (선택)")
         mrow.addWidget(self.mail_account, 1)
-        v.addLayout(mrow)
+        mv.addLayout(mrow)
         self.mail_custom = QLineEdit(settings.mail_custom_url)
         self.mail_custom.setPlaceholderText("직접 입력: 회사 메일 쓰기 주소 https://… ({to} {cc} {subject} 사용 가능)")
-        v.addWidget(self.mail_custom)
+        mv.addWidget(self.mail_custom)
+        if self.has_mail_section:
+            v.addWidget(mail_box)
+        else:
+            mail_box.hide()
         # --- AI: translate / summary --------------------------------------------------------
         v.addWidget(QLabel("<b>AI 번역·요약</b> — 번역은 항상 무료·오프라인. 요약 방식을 고르세요."))
         self.ai_local = QRadioButton("요약: 오프라인 AI (PC 안에서 처리 · 무료 · 느림, 처음 한 번 약 1.4GB 받기)")
@@ -382,7 +393,7 @@ class SettingsDialog(QDialog):
         for a, b in find_duplicates(parsed):
             errors.append(f"'{labels[a]}'와 '{labels[b]}' 단축키가 겹칩니다.")
         from ..core.mailcompose import valid_custom
-        custom = self.mail_custom.text().strip()
+        custom = self.mail_custom.text().strip() if self.has_mail_section else ""
         if (self.mail_provider.currentData() == "custom" or custom) and not valid_custom(custom):
             errors.append("회사 메일 쓰기 주소는 https:// 로 시작해야 합니다. (예: https://mail.회사.com/write)")
         acct = self.mail_account.text().strip()

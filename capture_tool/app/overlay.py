@@ -687,6 +687,8 @@ class OverlayWindow(QWidget):
         ctrl, shift = bool(mods & Qt.ControlModifier), bool(mods & Qt.ShiftModifier)
         st = self.c.session.state
         if k == Qt.Key_Escape:            # one Esc always ends the capture - in text mode too (BUG-098)
+            if self.side_bar.cancel_drag():   # ...unless a bar button is being dragged: that is what Esc cancels
+                return
             self.c.cancel()
             return
         if st is State.SELECTING:

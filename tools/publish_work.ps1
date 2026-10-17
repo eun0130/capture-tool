@@ -21,6 +21,6 @@ if ($existing -contains $tag) {
 } elseif (Test-Path $notes) {
     gh release create $tag $exe.FullName --repo $Repo --title "캡처 도구 (회사용) $tag" --notes-file $notes
 } else {
-    gh release create $tag $exe.FullName --repo $Repo --title "캡처 도구 (회사용) $tag" --notes "회사용 설치 파일 (카카오톡 기능 없음)"
+    gh release create $tag $exe.FullName --repo $Repo --title "캡처 도구 (회사용) $tag" --notes "회사용 설치 파일 (카카오톡·메일 기능 없음)"
 }
 Write-Host "published $($exe.Name) to https://github.com/$Repo/releases/tag/$tag"

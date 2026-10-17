@@ -8,7 +8,7 @@ Windows용 무료 캡처 도구. 단축키 한 번으로 캡처하고, 그 자�
 ## 설치
 
 1. [Releases](../../releases)에서 `CaptureTool-Setup-x.y.z.exe`를 받아 실행합니다.
-   - **회사용**(카카오톡 기능이 아예 없는 빌드)은 [capture_work Releases](https://github.com/eun0130/capture_work/releases)의 `CaptureTool-Work-Setup-x.y.z.exe`를 받습니다.
+   - **회사용**(카카오톡·메일 기능이 아예 없는 빌드)은 [capture_work Releases](https://github.com/eun0130/capture_work/releases)의 `CaptureTool-Work-Setup-x.y.z.exe`를 받습니다.
 2. 관리자 권한이 필요 없고, 따로 설치할 것(Python, 런타임, 언어팩)이 없습니다. 인터넷 없이도 동작합니다.
 3. 코드 서명 전이라 "Windows의 PC 보호" 창이 뜨면 **추가 정보 → 실행**을 누르세요.
 
@@ -42,7 +42,7 @@ python -m venv .venv
 .\.venv\Scripts\python run_capture.py         # 실행
 .\.venv\Scripts\python run_capture.py --selftest   # 실제 화면에서 속도·OCR·도형 점검
 .\build.ps1                                   # 테스트 → exe → installer\Output\Setup.exe (Inno Setup 6 필요)
-.\build.ps1 -Edition work                     # 회사용 (카카오톡 없음) → CaptureTool-Work-Setup-x.y.z.exe
+.\build.ps1 -Edition work                     # 회사용 (카카오톡·메일 없음) → CaptureTool-Work-Setup-x.y.z.exe
 ```
 
 구조: `capture_tool/core`(순수 로직, Qt·Windows 미사용) · `platform`(Windows API) · `app`(PySide6 화면).

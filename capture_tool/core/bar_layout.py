@@ -48,12 +48,13 @@ def group_label(name: str) -> str:
 
 def available_names() -> list[str]:
     """Every button this edition has (the work edition has no 카톡)."""
-    return [n for n in NAMES if n != "kakao" or edition.has_kakao()]
+    return [n for n in NAMES if edition.has(n)]
 
 
 def default_profile(place: str) -> Profile:
-    if place == "work":
-        return Profile([n for n in DEFAULT_FAVOURITES if n != "kakao"], ["kakao"])
+    if place == "work":                      # neither messenger nor web mail is allowed at the office
+        off = [n for n in NAMES if n in edition.EXCLUDED_AT_WORK]
+        return Profile([n for n in DEFAULT_FAVOURITES if n not in off], off)
     return Profile(list(DEFAULT_FAVOURITES), [])
 
 
@@ -73,6 +74,7 @@ def clean(data) -> Profile:
     if not isinstance(data, dict):
         return Profile([], [])
     hidden = _names(data.get("hidden"))
+    hidden = [n for n in NAMES if n in hidden]            # in bar order, whatever order it was saved in
     favourites = [n for n in _names(data.get("favourites")) if n not in hidden]
     return Profile(favourites, hidden)
 
@@ -119,6 +121,20 @@ def move_favourite(p: Profile, name: str, delta: int) -> Profile:
     fav.pop(i)
     fav.insert(j, name)
     return Profile(fav, list(p.hidden))
+
+
+def insert_after(p: Profile, name: str, anchor: str) -> Profile:
+    """`name` becomes the favourite right after `anchor` (a drop on the row: the button before
+    the blue line); after 복사 or anything that is no favourite = the front. A button that was
+    no favourite joins (unhidden); a favourite moves."""
+    if name not in _GROUP_OF or name == anchor:
+        return p
+    fav = [n for n in p.favourites if n != name]
+    at = fav.index(anchor) + 1 if anchor in fav else 0
+    fav.insert(at, name)
+    hidden = [n for n in p.hidden if n != name]
+    new = Profile(fav, hidden)
+    return p if new == p else new
 
 
 def set_hidden(p: Profile, name: str, on: bool) -> Profile:

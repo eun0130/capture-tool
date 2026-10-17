@@ -13,8 +13,16 @@ GUIDE = os.path.join(ROOT, "capture_tool", "app", "guide_images")
 datas += [(os.path.join(GUIDE, f), os.path.join("capture_tool", "app", "guide_images")) for f in os.listdir(GUIDE)]
 # edition marker (build.ps1 -Edition work writes it for the 회사용 build; absent = 집용)
 EDITION = os.path.join(ROOT, "capture_tool", "edition.txt")
+WORK_EXCLUDES = ["capture_tool.platform.kakao", "capture_tool.app.mail_ui"]   # not even in the 회사용 bundle
+excludes = [
+    "tkinter", "matplotlib", "pytest", "IPython",
+    "PySide6.QtWebEngineCore", "PySide6.QtWebEngineWidgets", "PySide6.QtQml", "PySide6.QtQuick",
+    "PySide6.Qt3DCore", "PySide6.QtMultimedia", "PySide6.QtPdf", "PySide6.QtCharts",
+    "PySide6.QtDataVisualization", "PySide6.QtBluetooth", "PySide6.QtSql", "PySide6.QtDesigner",
+]
 if os.path.exists(EDITION):
     datas.append((EDITION, "capture_tool"))
+    excludes += WORK_EXCLUDES
 binaries = collect_dynamic_libs("onnxruntime")
 binaries += collect_dynamic_libs("ctranslate2") + collect_dynamic_libs("onnxruntime_genai")
 
@@ -33,12 +41,7 @@ a = Analysis(
     hiddenimports=["rapidocr", "onnxruntime", "PySide6.QtSvg", "PySide6.QtNetwork",
                    "win32com.client", "pythoncom", "pywintypes",
                    "ctranslate2", "sentencepiece", "onnxruntime_genai", "sacremoses", "subword_nmt.apply_bpe"],
-    excludes=[
-        "tkinter", "matplotlib", "pytest", "IPython",
-        "PySide6.QtWebEngineCore", "PySide6.QtWebEngineWidgets", "PySide6.QtQml", "PySide6.QtQuick",
-        "PySide6.Qt3DCore", "PySide6.QtMultimedia", "PySide6.QtPdf", "PySide6.QtCharts",
-        "PySide6.QtDataVisualization", "PySide6.QtBluetooth", "PySide6.QtSql", "PySide6.QtDesigner",
-    ],
+    excludes=excludes,
     noarchive=False,
 )
 pyz = PYZ(a.pure)

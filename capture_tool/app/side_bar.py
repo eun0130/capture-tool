@@ -2,8 +2,10 @@
 Row mode: a favourites row the person arranges (core.bar_layout), the rest grouped under 전체."""
 from __future__ import annotations
 
-from PySide6.QtCore import QSize, Qt, Signal
-from PySide6.QtWidgets import QFrame, QGridLayout, QHBoxLayout, QLabel, QToolButton, QVBoxLayout, QWidget
+from PySide6.QtCore import QEvent, QPoint, QRect, QSize, Qt, QTimer, Signal
+from PySide6.QtGui import QColor, QPainter, QPen, QPixmap, QRegion
+from PySide6.QtWidgets import (QFrame, QGraphicsOpacityEffect, QGridLayout, QHBoxLayout, QLabel, QToolButton,
+                               QVBoxLayout, QWidget)
 
 from .. import edition
 from ..core import bar_layout as bl
@@ -61,6 +63,9 @@ QToolButton#tablebtn::menu-button { border: none; width: 18px; border-top-right-
 QToolButton#tablebtn::menu-button:hover { background: #384158; }
 QToolButton:checked { background: #20365E; color: #8FB6FF; }
 QFrame#divider { background: #353C4E; }
+QFrame#dropline { background: #5A92FA; border-radius: 1px; }
+QFrame#dropzone { border: 2px solid #3B7CF6; border-radius: 10px; background: rgba(59, 124, 246, 40); }
+QToolButton[landed="true"] { background: #20365E; border: 2px solid #5A92FA; }
 QLabel#grouplabel { color: #8A93A6; font-size: 10px; padding: 0 2px 0 6px; }
 QLabel#place { color: #FFD166; font-size: 10px; font-weight: 600; border: 1px solid #5A4C1E; border-radius: 6px;
                padding: 1px 5px; margin-left: 2px; }
@@ -76,9 +81,12 @@ QMenu::separator { height: 1px; background: #353C4E; margin: 5px 8px; }
 class SideBar(QWidget):
     """Quick actions for the capture. Row mode (default): the favourites row under the capture,
     the remaining buttons in groups on a second row when expanded (전체). Column mode: everything
-    in a column in the same order (the edit window's right side). A right-click on a button
-    offers to move it between the rows (bar:* actions, handled by the controller)."""
+    in a column in the same order (the edit window's right side). A button dragged along the
+    favourites lands where the blue line is, a 전체 button dragged up joins them, a favourite
+    dragged onto the 전체 rows leaves them; a right-click offers the same (bar:* actions, handled
+    by the controller)."""
     action = Signal(str)
+    DRAG_START = 6                    # px of movement before a press becomes a drag (a click is less)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -103,9 +111,20 @@ class SideBar(QWidget):
         self.place_label.setObjectName("place")
         self.place_label.hide()
         self.column_order: list[str] = []
+        self._press: tuple[str, QPoint] | None = None   # (button, where) of a left press that may become a drag
+        self._drag: dict | None = None
+        self.ghost: QLabel | None = None                 # the dragged button's picture under the pointer
+        self._line = QFrame(self)                        # where the drop would land on the favourites
+        self._line.setObjectName("dropline")
+        self._line.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+        self._line.hide()
+        self._zone = QFrame(self)                        # the 전체 rows lit up as "drop here to leave the favourites"
+        self._zone.setObjectName("dropzone")
+        self._zone.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+        self._zone.hide()
         for name, icon_name, label, tip, _row in ACTIONS:
-            if name == "kakao" and not edition.has_kakao():
-                continue                                   # the work edition has no KakaoTalk at all
+            if not edition.has(name):
+                continue                                   # the work edition has no KakaoTalk / mail at all
             b = QToolButton(self)
             primary = name == "copy"
             b.setObjectName("primary" if primary else "")
@@ -142,6 +161,7 @@ class SideBar(QWidget):
                 b.clicked.connect(lambda _=False, btn=b: self.search_menu().exec(btn.mapToGlobal(btn.rect().bottomLeft())))
             else:
                 b.clicked.connect(lambda _=False, n=name: self.action.emit(n))
+            b.installEventFilter(self)                     # dragging (below)
             self.buttons[name] = b
         self.layout_first, self.layout_groups = bl.rows(bl.default_profile("home"), available=list(self.buttons))
         self.place = ""
@@ -190,6 +210,7 @@ class SideBar(QWidget):
         return d
 
     def _arrange(self) -> None:
+        self.cancel_drag()
         self._clear()
         placed = set(self.layout_first) | {n for _, names in self.layout_groups for n in names}
         for n, b in self.buttons.items():
@@ -365,6 +386,179 @@ class SideBar(QWidget):
             m.addSeparator()
         item("기본 배치로 되돌리기", "bar:reset")
         return m
+
+    # --- rearranging by dragging ------------------------------------------------------------------
+    def eventFilter(self, obj, e):
+        t = e.type()
+        if t == QEvent.MouseButtonPress and e.button() == Qt.LeftButton:
+            name = next((n for n, b in self.buttons.items() if b is obj), None)
+            fixed = name in (bl.FIXED_FIRST, bl.FIXED_LAST)
+            self._press = (name, e.globalPosition().toPoint()) if name is not None and not fixed else None
+        elif t == QEvent.MouseMove and self._press is not None:
+            if not (e.buttons() & Qt.LeftButton):
+                self._press = None
+            else:
+                gpos = e.globalPosition().toPoint()
+                if self._drag is None and (gpos - self._press[1]).manhattanLength() >= self.DRAG_START:
+                    self._start_drag(self._press[0], obj, gpos)
+                if self._drag is not None:
+                    self._update_drag(gpos)
+                    return True
+        elif t == QEvent.MouseButtonRelease and e.button() == Qt.LeftButton:
+            self._press = None
+            if self._drag is not None:
+                self._finish_drag(e.globalPosition().toPoint())
+                return True                               # no click out of a drop
+        return super().eventFilter(obj, e)
+
+    def dragging(self) -> bool:
+        return self._drag is not None
+
+    def _start_drag(self, name: str, btn, gpos: QPoint) -> None:
+        btn.setDown(False)
+        pm = QPixmap(btn.size())                     # the button on a dark rounded card (its own grab() has
+        pm.fill(Qt.transparent)                      # the palette's light background behind the light text)
+        painter = QPainter(pm)
+        painter.setRenderHint(QPainter.Antialiasing, True)
+        painter.setPen(QPen(QColor("#5A92FA"), 1))
+        painter.setBrush(QColor("#2D3446"))
+        painter.drawRoundedRect(pm.rect().adjusted(0, 0, -1, -1), 10, 10)
+        btn.render(painter, QPoint(0, 0), QRegion(), QWidget.DrawChildren)
+        painter.end()
+        ghost = QLabel(None, Qt.ToolTip | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint
+                       | Qt.WindowTransparentForInput)
+        ghost.setAttribute(Qt.WA_TranslucentBackground, True)
+        ghost.setAttribute(Qt.WA_ShowWithoutActivating, True)
+        ghost.setPixmap(pm)
+        ghost.resize(pm.size())
+        ghost.setWindowOpacity(0.85)
+        self.ghost = ghost
+        dim = QGraphicsOpacityEffect(btn)
+        dim.setOpacity(0.3)
+        btn.setGraphicsEffect(dim)
+        btn.setCursor(Qt.ClosedHandCursor)
+        self._drag = {"name": name, "btn": btn, "offset": gpos - btn.mapToGlobal(QPoint(0, 0)), "target": None}
+        ghost.move(gpos - self._drag["offset"])
+        ghost.show()
+
+    def _slots(self) -> list[tuple[str, QRect]]:
+        """The buttons in slot order with their rectangles in the bar's coordinates."""
+        names = self.column_order if self.columns else self.layout_first
+        out = []
+        for n in names:
+            b = self.buttons.get(n)
+            if b is not None and b.isVisible():
+                out.append((n, QRect(b.mapTo(self, QPoint(0, 0)), b.size())))
+        return out
+
+    def _drop_target(self, pos: QPoint):
+        """What a drop at `pos` (bar coordinates) would do: ("after", anchor, line rect) for a
+        place on the favourites, ("remove", zone rect) for the 전체 rows, None = cancel."""
+        name = self._drag["name"]
+        slots = self._slots()
+        if not slots:
+            return None
+        if self.columns:
+            if not self.rect().adjusted(-30, -30, 30, 30).contains(pos):
+                return None
+            row_y = min((r.center().y() for _, r in slots), key=lambda y: abs(y - pos.y()))
+            k = 0
+            for _, r in slots:
+                c = r.center()
+                if c.y() < row_y - 1 or (abs(c.y() - row_y) <= 1 and (c.y() < pos.y() if self.columns == 1 else c.x() < pos.x())):
+                    k += 1
+            k = max(1, k)
+            fav_count = sum(1 for n, _ in slots if n in self.layout_first)
+            if k <= fav_count:
+                prev = slots[k - 1][1]
+                return ("after", slots[k - 1][0], QRect(prev.left(), prev.bottom() + 1, prev.width(), 3))
+            if name in self.layout_first:
+                rest = [r for n, r in slots if n not in self.layout_first]
+                zone = rest[0]
+                for r in rest[1:]:
+                    zone = zone.united(r)
+                return ("remove", zone.adjusted(-3, -3, 3, 3))
+            return None
+        top = min(r.top() for _, r in slots)
+        bottom = max(r.bottom() for _, r in slots)
+        band = QRect(0, top - 16, self.width(), bottom - top + 32).adjusted(-30, 0, 30, 0)
+        if band.contains(pos):
+            k = sum(1 for _, r in slots if r.center().x() < pos.x())
+            k = min(max(k, 1), len(slots) - 1)
+            prev, nxt = slots[k - 1][1], slots[k][1]
+            x = (prev.right() + nxt.left()) // 2 - 1
+            return ("after", slots[k - 1][0], QRect(x, nxt.top(), 3, nxt.height()))
+        if self._extra.isVisible() and name in self.layout_first:
+            zone = QRect(self._extra.mapTo(self, QPoint(0, 0)), self._extra.size())
+            if zone.adjusted(-8, -8, 8, 8).contains(pos):
+                return ("remove", zone.adjusted(-3, -3, 3, 3))
+        return None
+
+    def _update_drag(self, gpos: QPoint) -> None:
+        d = self._drag
+        self.ghost.move(gpos - d["offset"])
+        target = self._drop_target(self.mapFromGlobal(gpos))
+        d["target"] = target
+        self._line.setVisible(bool(target) and target[0] == "after")
+        self._zone.setVisible(bool(target) and target[0] == "remove")
+        if target and target[0] == "after":
+            self._line.setGeometry(target[2])
+            self._line.raise_()
+        elif target:
+            self._zone.setGeometry(target[1])
+            self._zone.raise_()
+        self.ghost.setWindowOpacity(0.85 if target else 0.45)
+
+    def _end_drag(self) -> dict | None:
+        d, self._drag = self._drag, None
+        if d is None:
+            return None
+        self._line.hide()
+        self._zone.hide()
+        if self.ghost is not None:
+            self.ghost.hide()
+            self.ghost.deleteLater()
+            self.ghost = None
+        btn = d["btn"]
+        btn.setGraphicsEffect(None)
+        btn.unsetCursor()
+        btn.setDown(False)
+        return d
+
+    def cancel_drag(self) -> bool:
+        """Esc (or a new arrangement) while dragging: back where it was. True if there was one."""
+        self._press = None
+        return self._end_drag() is not None
+
+    def _finish_drag(self, gpos: QPoint) -> None:
+        target = self._drop_target(self.mapFromGlobal(gpos))
+        d = self._end_drag()
+        if d is None or not target:
+            return
+        name = d["name"]
+        if target[0] == "after":
+            if target[1] == name:
+                return
+            self.action.emit(f"bar:fav_after:{name}:{target[1]}")
+        else:
+            self.action.emit(f"bar:fav_remove:{name}")
+        self._flash(name)
+
+    def _flash(self, name: str) -> None:
+        """A short blue frame on the button that just landed."""
+        b = self.buttons.get(name)
+        if b is None:
+            return
+        b.setProperty("landed", True)
+        b.style().unpolish(b)
+        b.style().polish(b)
+
+        def off():
+            if b in self.buttons.values():
+                b.setProperty("landed", False)
+                b.style().unpolish(b)
+                b.style().polish(b)
+        QTimer.singleShot(600, off)
 
     # --- menus of single buttons ------------------------------------------------------------------
     kakao_provider = staticmethod(lambda: None)    # -> KakaoSender (set by the overlay)

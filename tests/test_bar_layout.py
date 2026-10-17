@@ -4,12 +4,12 @@ from capture_tool.core import bar_layout as bl
 from capture_tool.core.settings import Settings, load, save
 
 
-def test_BL_01_defaults_are_the_old_bar_and_work_hides_kakao():
+def test_BL_01_defaults_are_the_old_bar_and_work_hides_kakao_and_mail():
     home = bl.default_profile("home")
     assert home.favourites == ["autosave", "text", "translate", "summarize", "table", "ppt", "mail", "kakao", "search", "pin"]
     assert home.hidden == []
     work = bl.default_profile("work")
-    assert "kakao" not in work.favourites and work.hidden == ["kakao"]
+    assert "kakao" not in work.favourites and "mail" not in work.favourites and work.hidden == ["mail", "kakao"]
     assert set(bl.NAMES) == {"copy", "more"} | {n for _, _, names in bl.GROUPS for n in names}
     assert bl.group_label("kakao") == "보내기" and bl.group_label("border") == "그림 손질" and bl.group_label("copy") == ""
 
@@ -74,3 +74,17 @@ def test_BL_05_a_profile_round_trips_through_a_plain_dict():
     assert bl.clean(d) == p
     assert bl.clean({"favourites": ["more", "copy", "text", "text"], "hidden": ["text", "nope"]}) == bl.Profile([], ["text"])
     assert bl.clean(None) == bl.Profile([], []) and bl.clean({"favourites": "text"}) == bl.Profile([], [])
+
+
+def test_BL_06_insert_after_puts_a_button_right_after_another_favourite():
+    p = bl.default_profile("home")
+    q = bl.insert_after(p, "translate", "kakao")                        # a favourite moved along the row
+    assert q.favourites.index("translate") == q.favourites.index("kakao") + 1 and len(q.favourites) == len(p.favourites)
+    assert p.favourites.index("translate") == 2                          # p untouched
+    assert bl.insert_after(p, "translate", "copy").favourites[0] == "translate"      # after 복사 = the front
+    assert bl.insert_after(p, "translate", "text") == p                  # already right there
+    r = bl.insert_after(bl.set_hidden(p, "pdf", True), "pdf", "search")  # a 전체 button (even a hidden one) joins
+    assert r.favourites.index("pdf") == r.favourites.index("search") + 1 and "pdf" not in r.hidden
+    assert bl.insert_after(p, "pdf", "bogus").favourites[0] == "pdf"     # an unknown anchor = the front
+    assert bl.insert_after(p, "copy", "text") == p and bl.insert_after(p, "more", "text") == p and bl.insert_after(p, "bogus", "text") == p
+    assert bl.insert_after(p, "translate", "translate") == p

@@ -44,10 +44,12 @@ PAGES = (
           "**텍스트** · **번역** · **요약** · **표**: 그림 속 글자·표를 읽어 씁니다. **PPT** · **메일** · **카톡** · **검색**: 보냅니다. **고정**: 화면 위에 띄워 둡니다.",
           "**전체**를 누르면 나머지 버튼이 **비슷한 것끼리 묶여** 둘째 줄에 나옵니다: 저장(다른 이름 저장 · 저장 폴더 · 링크), 보내기(도형PPT · 인쇄 · PDF),",
           "그림 손질(테두리 · 배경 지우기 · 크기 줄이기 · 왼쪽 회전 · 오른쪽 회전 · 스크롤), 화면(도움말). 다시 누르면 접힙니다.",
-          "버튼을 **오른쪽 클릭**하면 **즐겨찾기에 넣기·빼기, 왼쪽·오른쪽으로, 이 장소에서 숨기기**를 고를 수 있습니다. 내 식대로 줄을 꾸미세요.",
-          "**집 / 회사**: 트레이 메뉴 **지금 장소**에서 바꾸면 장소마다 다른 배치를 씁니다. 회사에서는 카톡이 기본으로 숨겨지고 막대 끝에 **회사** 표시가 붙습니다."),
-         "버튼 위에 마우스를 잠시 올리면 설명이 나옵니다. 설정 → 버튼 막대에서도 배치를 바꿉니다.",
-         "bar_full.png", "전체를 누르면 둘째 줄이 펼쳐집니다 (다시 누르면 기본)"),
+          "버튼을 **누른 채 끌면** 자리를 옮깁니다: 원래 자리는 흐려지고 놓일 자리에 **파란 선**이 보입니다. 놓으면 그 자리로 가고 바로 저장됩니다.",
+          "전체 줄의 버튼을 **첫 줄로 끌어 올리면** 즐겨찾기에 들어가고, 첫 줄 버튼을 **전체 줄로 끌어내리면** 빠져서 제 그룹으로 돌아갑니다. 막대 밖에서 놓으면 취소. 복사·전체는 자리가 고정입니다.",
+          "버튼을 **오른쪽 클릭**해도 됩니다: **즐겨찾기에 넣기·빼기, 왼쪽·오른쪽으로, 이 장소에서 숨기기**. 내 식대로 줄을 꾸미세요.",
+          "**집 / 회사**: 트레이 메뉴 **지금 장소**에서 바꾸면 장소마다 다른 배치를 씁니다. 회사에서는 메일·카톡이 기본으로 숨겨지고 막대 끝에 **회사** 표시가 붙습니다."),
+         "버튼 위에 마우스를 잠시 올리면 설명이 나옵니다. 설정 → 버튼 막대에서도 배치를 바꿉니다 (목록도 끌어서 순서 변경).",
+         "bar_full.png", "전체를 펼친 모습. 번역을 누른 채 끄는 중: 원래 자리는 흐리고, 파란 선이 놓일 자리"),
     Page("3. 그림 그리기 · 글자 넣기",
          "붙이기 전에 표시를 하고 싶을 때.",
          ("캡처 아래의 그리기 도구에서 **네모 · 원 · 화살표 · 펜 · 글자(T) · 번호 · 형광펜 · 모자이크** 중 하나를 고릅니다.",
@@ -186,27 +188,33 @@ PAGES = (
 )
 
 
-_NO_KAKAO = (("카카오톡·메일·문서", "메일·문서"), (" · **카톡**", ""), (" · 카톡", ""), ("(카톡)", ""))
+# what the work edition's pages say instead (it has neither KakaoTalk nor web mail)
+_AT_WORK = (("카카오톡·메일·문서", "문서"), (" · **메일** · **카톡**", ""), (" · 메일 · 카톡", ""), ("·PPT·메일에는", "·PPT에는"),
+            ("**메일** · **카톡** · **PPT** 를", "**PPT** 를"), ("표·텍스트·PPT·메일 버튼", "표·텍스트·PPT 버튼"),
+            ("도형PPT·메일·고정", "도형PPT·고정"), ("메일에 첨부하거나 메신저로", "메신저로"),
+            ("버튼 막대(즐겨찾기 · 집/회사), 메일, 모양", "버튼 막대(즐겨찾기), 모양"),
+            ("메일 도우미의 \"파일로 저장(첨부용)\"이나 **다른 이름 저장**", "**다른 이름 저장**"))
+_WORK_SKIPS_TITLES = ("카카오톡", "메일로 보내기")          # chapters the work edition has not got
 
 
-def _without_kakao(text: str) -> str:
-    for a, b in _NO_KAKAO:
+def _at_work(text: str) -> str:
+    for a, b in _AT_WORK:
         text = text.replace(a, b)
     return text
 
 
 def pages() -> list[Page]:
-    """The pages this edition shows: all of them, or - in the work edition, which has no
-    KakaoTalk - without the KakaoTalk chapter and its mentions."""
+    """The pages this edition shows: all of them, or - in the work edition, which has neither
+    KakaoTalk nor web mail - without those chapters and their mentions."""
     from .. import edition
-    if edition.has_kakao():
+    if not edition.is_work():
         return list(PAGES)
     out = []
     for p in PAGES:
-        if "카카오톡" in p.title:
+        if any(t in p.title for t in _WORK_SKIPS_TITLES):
             continue
-        steps = tuple(_without_kakao(s) for s in p.steps if "지금 장소" not in s)
-        out.append(replace(p, intro=_without_kakao(p.intro), steps=steps, tip=_without_kakao(p.tip)))
+        steps = tuple(_at_work(s) for s in p.steps if "지금 장소" not in s)
+        out.append(replace(p, intro=_at_work(p.intro), steps=steps, tip=_at_work(p.tip)))
     return out
 
 
