@@ -137,3 +137,30 @@ def test_BU_08_the_whole_row_wraps_on_a_narrow_screen(make):
     rest = [sb.buttons[n] for _, ns in sb.layout_groups for n in ns]
     assert all(b.isVisible() and b.mapTo(sb, QPoint(0, 0)).x() + b.width() <= 620 for b in rest)
     assert len({b.mapTo(sb, QPoint(0, 0)).y() for b in rest}) >= 2
+
+
+def test_BU_09_no_label_is_ever_elided_whichever_row_is_the_wider_one(make):
+    """BUG-117: with many favourites moved up, the 전체 row was wider than the first row and the
+    grid squeezed it to the first row's width - 배경 지우기 showed as 배경 지…. Both rows, and
+    the edit window's column, keep every label whole."""
+    import numpy as np
+    c = make(settings=Settings(bar_expanded=True))
+    fav = ["autosave", "text", "scroll", "table", "ppt", "ppt_shapes", "pin", "translate", "summarize", "search", "mail", "kakao"]
+    bl.store_profile(c.settings, "home", bl.Profile(fav, []))
+    ov, sb = _open(c)
+    c.apply_bar_layout(sb, 10_000)
+    assert sb._extra_rows.count() == 1
+    rest = [n for _, ns in sb.layout_groups for n in ns]
+    assert "transparent" in rest and "save_as" in rest
+    for n in sb.layout_first + rest:
+        b = sb.buttons[n]
+        assert b.width() >= b.sizeHint().width(), n
+    assert sb.width() >= sb._extra.sizeHint().width()
+    sb.set_autosave(True)
+    assert sb.buttons["autosave"].width() >= sb.buttons["autosave"].sizeHint().width()
+    c.open_editor(np.full((300, 400, 3), 200, np.uint8), 96.0, "시험")
+    col = c.editor.canvas.side_bar
+    for n in col.column_order:
+        b = col.buttons[n]
+        assert b.width() >= b.sizeHint().width(), n
+    assert len({col.buttons[n].width() for n in col.column_order}) == 1          # one column width, aligned

@@ -201,6 +201,16 @@ class SideBar(QWidget):
             w.deleteLater()
         self._dividers, self.group_labels = [], []
 
+    @staticmethod
+    def _row_button(b) -> None:
+        """A row-mode button: label beside the icon, never narrower than its text. (The grid gave
+        the 전체 row only the first row's width when it was the wider one, and Qt then elided the
+        long labels - 배경 지우기 became 배경 지… - BUG-117.)"""
+        b.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
+        b.setMinimumSize(QSize(0, 40))
+        b.setMaximumSize(QSize(16777215, 40))
+        b.setMinimumWidth(b.sizeHint().width())
+
     def _divider(self, parent) -> QFrame:
         d = QFrame(parent)
         d.setObjectName("divider")
@@ -222,10 +232,14 @@ class SideBar(QWidget):
             names = [n for n in self.layout_first if n not in ("more", "autosave")]
             names += [n for _, group in self.layout_groups for n in group if n not in ("more", "autosave")]
             self.column_order = names
+            for n in names:
+                self.buttons[n].setMinimumSize(QSize(0, 0))
+                self.buttons[n].setMaximumSize(QSize(16777215, 16777215))
+                self.buttons[n].setToolButtonStyle(Qt.ToolButtonTextUnderIcon)
+            width = max([64] + [self.buttons[n].sizeHint().width() for n in names])   # the longest label fits
             for i, n in enumerate(names):
                 b = self.buttons[n]
-                b.setToolButtonStyle(Qt.ToolButtonTextUnderIcon)
-                b.setFixedSize(QSize(64, 54))
+                b.setFixedSize(QSize(width, 54))
                 self._grid.addWidget(b, i // self.columns, i % self.columns)
                 b.setVisible(True)
             for n in ("more", "autosave"):
@@ -241,9 +255,7 @@ class SideBar(QWidget):
                     col += 1
                 group = g
                 b = self.buttons[n]
-                b.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
-                b.setMinimumSize(QSize(0, 40))
-                b.setMaximumSize(QSize(16777215, 40))
+                self._row_button(b)
                 b.setVisible(True)
                 self._grid.addWidget(b, 0, col)
                 col += 1
@@ -278,9 +290,7 @@ class SideBar(QWidget):
                 put(lb, lb.sizeHint().width())
                 for n in names:
                     b = self.buttons[n]
-                    b.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
-                    b.setMinimumSize(QSize(0, 40))
-                    b.setMaximumSize(QSize(16777215, 40))
+                    self._row_button(b)
                     put(b, b.sizeHint().width())
                     b.setVisible(self.expanded)
             if row is not None:
@@ -307,6 +317,9 @@ class SideBar(QWidget):
         if b is not None:
             b.setChecked(bool(on))
             b.setText("자동저장 켜짐" if on else "자동저장")
+            if not self.columns:
+                b.setMinimumWidth(0)
+                self._row_button(b)                       # the new text's width, not the old one's
             self.adjustSize()
 
     def remove_action(self, name: str) -> None:
