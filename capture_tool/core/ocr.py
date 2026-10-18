@@ -2,6 +2,7 @@
 background at startup so the first recognition does not wait for model loading."""
 from __future__ import annotations
 
+import difflib
 import importlib.util
 import os
 import re
@@ -139,6 +140,38 @@ SECOND_READING_MARGIN = 0.05  # prefer the Latin reading unless clearly less con
 MARGIN = 24              # px added around a low piece before reading (its own border colour)
 MARGIN_LOW = MARGIN
 LOW_PIECE = 100
+DET_SIDE = 736           # the reader scales a picture's shorter side up to this before finding text
+LETTER_LIMIT_PX = 160    # letters that would come out taller than this after that upscale are read as
+TITLE_LETTER_PX = 128    # loose strokes: such a piece gets a frame that lands them near this instead
+INK = 60                 # a pixel this unlike the border colour is ink
+INK_ROW = 0.02           # a row with ink on this share of its width holds letters (a line or a circle: less)
+
+
+def text_height(img: np.ndarray) -> int:
+    """The letter height of a low piece: its tallest run of rows holding ink across a few per
+    cent of the width (one line, or the tallest of two or three). A vertical rule or a radio
+    circle, thin in every row, does not count."""
+    img = img[:, :, :3] if img.ndim == 3 else img[:, :, None]
+    border = np.concatenate([img[0], img[-1], img[:, 0], img[:, -1]])
+    bg = np.median(border, axis=0).astype(np.int16)
+    ink = (np.abs(img.astype(np.int16) - bg).max(axis=2) > INK).sum(axis=1)
+    rows = ink >= max(3, INK_ROW * img.shape[1])
+    best = run = 0
+    for r in rows:
+        run = run + 1 if r else 0
+        best = max(best, run)
+    return best
+
+
+def frame_width(img: np.ndarray) -> int:
+    """The frame (px) around a low piece: 24, or for big text (a title line cropped tightly) as
+    much blank space as keeps the reader's upscale from blowing the letters up to 200-400 px,
+    where it reads them as loose strokes ("매 현 호 Q3 2026 L7" for a 36 pt title)."""
+    t = text_height(img)
+    side = min(img.shape[0], img.shape[1])
+    if t * DET_SIDE / (side + 2 * MARGIN_LOW) <= LETTER_LIMIT_PX:
+        return MARGIN_LOW
+    return max(MARGIN_LOW, int(round((DET_SIDE * t / TITLE_LETTER_PX - side) / 2)))
 
 
 def with_margin(img: np.ndarray, m: int) -> np.ndarray:
@@ -715,7 +748,7 @@ class OcrEngine:
             return self._run_tile(engine, piece, x0, y0)
         if piece.shape[0] >= LOW_PIECE:           # only low (one-line) pieces lose text at the edge;
             return self._run_tile(engine, piece, x0, y0)   # bigger ones read best as they are
-        m = MARGIN_LOW
+        m = frame_width(piece)
         out = []
         for line in self._run_tile(engine, with_margin(piece, m), x0 - m, y0 - m):
             bx, by, bw, bh = line.box                 # back inside the image
@@ -812,7 +845,7 @@ class OcrEngine:
         if img is None or img.size == 0:
             return []
         engine = self._load()
-        m = MARGIN_LOW if self.margin else 0                 # text at the very edge is found too
+        m = (frame_width(img) if img.shape[0] < LOW_PIECE else MARGIN_LOW) if self.margin else 0
         work = with_margin(img, m) if m else np.ascontiguousarray(img)
         try:
             r = engine(work, use_det=True, use_cls=False, use_rec=True, return_word_box=True)
@@ -1080,29 +1113,153 @@ def same_row(a: tuple, b: tuple, tilt: float = 0.0) -> bool:
     return overlap <= 0.2 * max(1, min(aw, bw)) or dy <= 0.2 * tall
 
 
-def reading_order(lines: list[OcrLine]) -> list[OcrLine]:
+COLUMN_LINES = 3         # lines on each side before a gap counts as the gutter between two text columns
+COLUMN_WIDTH = 8         # each column at least this many line heights wide (a form's label column is narrower)
+COLUMN_FILL = 0.6        # share of a column's lines that run up to its right edge: wrapped text does, code does not
+
+
+def _rows_of(lines: list[OcrLine], tilt: float) -> list[list[OcrLine]]:
     """Top-to-bottom rows (tolerating small vertical offsets), left-to-right inside a row."""
-    tilt = estimate_tilt([l.box for l in lines])
     rows: list[list[OcrLine]] = []
     for l in sorted(lines, key=lambda l: _cy(l.box, tilt)):
         if rows and same_row(rows[-1][0].box, l.box, tilt):
             rows[-1].append(l)
             continue
         rows.append([l])
-    return [l for row in rows for l in sorted(row, key=lambda l: l.box[0])]
+    return [sorted(row, key=lambda l: l.box[0]) for row in rows]
+
+
+def _wrapped_column(group: list[OcrLine], h: float) -> bool:
+    """Enough lines, wide enough, and most of them running up to the column's right edge."""
+    if len(group) < COLUMN_LINES:
+        return False
+    left = min(l.box[0] for l in group)
+    right = max(l.box[0] + l.box[2] for l in group)
+    if right - left < COLUMN_WIDTH * h:
+        return False
+    slack = max(3 * h, 0.25 * (right - left))
+    return sum(1 for l in group if l.box[0] + l.box[2] >= right - slack) >= COLUMN_FILL * len(group)
+
+
+def _column_gutter(lines: list[OcrLine]) -> tuple[float, float] | None:
+    """The x-range of the gutter between two text columns: (almost) no line crosses it, and on
+    both sides sit wrapped lines. None for one column, a form's label/value pairs (the label
+    column is narrow) and code (ragged lines)."""
+    if len(lines) < 2 * COLUMN_LINES:
+        return None
+    h = float(np.median([l.box[3] for l in lines]))
+    x0 = min(l.box[0] for l in lines)
+    width = int(max(l.box[0] + l.box[2] for l in lines) - x0)
+    if h <= 0 or width < 2 * COLUMN_WIDTH * h:
+        return None
+    cover = np.zeros(width + 1, np.int32)                   # how many lines cross each x
+    for l in lines:
+        a, b = int(l.box[0] - x0), int(l.box[0] + l.box[2] - x0)
+        cover[max(0, a):max(0, b) + 1] += 1
+    low = cover <= max(2, int(0.2 * len(lines)))            # a title across the columns is tolerated
+    best = None
+    i = 0
+    while i <= width:
+        if not low[i]:
+            i += 1
+            continue
+        j = i
+        while j <= width and low[j]:
+            j += 1
+        if j - i >= 0.8 * h:
+            gs, ge = x0 + i, x0 + j
+            left = [l for l in lines if l.box[0] + l.box[2] <= gs + 0.3 * h]
+            right = [l for l in lines if l.box[0] >= ge - 0.3 * h]
+            if _wrapped_column(left, h) and _wrapped_column(right, h):
+                n = min(len(left), len(right))
+                if best is None or n > best[0]:
+                    best = (n, gs, ge)
+        i = j
+    return (best[1], best[2]) if best else None
+
+
+def _ordered_rows(lines: list[OcrLine]) -> list[list[OcrLine]]:
+    """Rows in reading order: top to bottom, left to right inside a row. Text set in two columns
+    is read column by column (each column in rows again); a line across both columns (a title,
+    a footer) separates what is above it from what is below."""
+    tilt = estimate_tilt([l.box for l in lines])
+    rows = _rows_of(lines, tilt)
+    gutter = _column_gutter(lines)
+    if gutter is None:
+        return rows
+    gs, ge = gutter
+    mid = (gs + ge) / 2
+    out: list[list[OcrLine]] = []
+    left: list[OcrLine] = []
+    right: list[OcrLine] = []
+
+    def flush() -> None:
+        for side in (left, right):
+            if side:
+                out.extend(_ordered_rows(side))
+                side.clear()
+
+    for row in rows:
+        if any(l.box[0] < gs and l.box[0] + l.box[2] > ge for l in row):
+            flush()
+            out.append(row)
+            continue
+        for l in row:
+            (left if l.box[0] + l.box[2] / 2 < mid else right).append(l)
+    flush()
+    return out
+
+
+def reading_order(lines: list[OcrLine]) -> list[OcrLine]:
+    """Top-to-bottom rows, left-to-right inside a row; two text columns one after the other."""
+    return [l for row in _ordered_rows(lines) for l in row]
+
+
+def _char_centres(line: OcrLine) -> list[float]:
+    """The x centre of every character of line.text. The reader's word boxes place the letters
+    they cover (a Korean letter is twice as wide as a Latin one); characters between them (spaces,
+    letters a fix changed) are spread between their neighbours; without word boxes, evenly over
+    the line box."""
+    x, _, w, _ = line.box
+    text = line.text
+    n = len(text)
+    letters = [i for i, c in enumerate(text) if c != " "]
+    pos: list[float] = []
+    wtext = ""
+    for t, b in line.words or ():
+        t = str(t).replace(" ", "")
+        if t:
+            per = (float(b[2]) - float(b[0])) / len(t)
+            pos.extend(float(b[0]) + (i + 0.5) * per for i in range(len(t)))
+            wtext += t
+    known: dict[int, float] = {}
+    if pos and letters:
+        sm = difflib.SequenceMatcher(None, "".join(text[i] for i in letters), wtext, autojunk=False)
+        found = {letters[a + k]: pos[b + k] for a, b, size in sm.get_matching_blocks() for k in range(size)}
+        if len(found) >= 0.5 * len(letters):
+            known = found
+    anchors = [(-0.5, float(x))] + sorted(known.items()) + [(n - 0.5, float(x + w))]
+    out = []
+    for i in range(n):
+        if i in known:
+            out.append(known[i])
+            continue
+        i0, p0 = max((a for a in anchors if a[0] < i), key=lambda a: a[0])
+        i1, p1 = min((a for a in anchors if a[0] > i), key=lambda a: a[0])
+        out.append(p0 + (p1 - p0) * (i - i0) / (i1 - i0))
+    return out
 
 
 def select_text(lines: list[OcrLine], rect: tuple) -> str:
-    """Text under a dragged rectangle (x, y, w, h): whole characters whose horizontal half lies
-    inside it (widths estimated proportionally), rows joined by newlines, segments by spaces."""
+    """Text under a dragged rectangle (x, y, w, h): whole characters whose centre lies inside it
+    (placed by the reader's word boxes), rows joined by newlines, segments by spaces."""
     rx, ry, rw, rh = rect
     picked: list[OcrLine] = []
     for l in reading_order(lines):
         x, y, w, h = l.box
         if y + h <= ry or y >= ry + rh or x + w <= rx or x >= rx + rw or not l.text:
             continue
-        per = w / len(l.text)
-        chars = [c for i, c in enumerate(l.text) if rx <= x + (i + 0.5) * per <= rx + rw]
+        chars = [c for c, cx in zip(l.text, _char_centres(l)) if rx <= cx <= rx + rw]
         part = "".join(chars).strip()
         if part:
             picked.append(OcrLine(part, l.box, l.score))
@@ -1111,14 +1268,7 @@ def select_text(lines: list[OcrLine], rect: tuple) -> str:
 
 def _join_rows(lines: list[OcrLine]) -> str:
     """Segments in reading order: the ones on one visual row joined by spaces, rows by newlines."""
-    tilt = estimate_tilt([l.box for l in lines])
-    rows: list[list[OcrLine]] = []
-    for l in lines:
-        if rows and same_row(rows[-1][0].box, l.box, tilt):
-            rows[-1].append(l)
-        else:
-            rows.append([l])
-    return "\n".join(" ".join(l.text for l in row) for row in rows)
+    return "\n".join(" ".join(l.text for l in row) for row in _ordered_rows(lines))
 
 
 def full_text(lines: list[OcrLine]) -> str:

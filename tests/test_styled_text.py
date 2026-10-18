@@ -324,6 +324,18 @@ def test_ST_23_two_columns_side_by_side_keep_their_gap(engine):
     assert all(len(t.split()) == 2 and "   " in t for t in lines), lines
 
 
+def test_ST_24_a_tight_crop_of_one_big_title_line_reads_whole(engine):
+    """BUG-122: a title cropped tightly (36/48 pt) came back as loose letters."""
+    from capture_tool.core.ocr import full_text
+    for pt, text in ((24, "분기별 매출 현황 보고서 Q3 2026"), (36, "3. 설치 방법 안내"), (48, "Quarterly Sales Report"),
+                     (48, "분기별 매출 현황 보고서 Q3 2026")):
+        img = draw([[(text, BLACK)]], LIGHT, font(SANS, pt), pad=2, gap=0)
+        got = "".join(full_text(engine.recognize(img)).split())
+        assert got == "".join(text.split()), (pt, got)
+        st = styled(engine, img)
+        assert "".join("".join(text_lines(st)).split()) == "".join(text.split()), (pt, text_lines(st))
+
+
 # --- Confluence (web editor): only its own palette colours survive a paste -------------------------
 # Rules read from Atlassian's editor (@atlaskit/adf-schema 57.7.1): a span's text colour / highlight is
 # kept only when it is exactly one of the palette colours; table cell backgrounds are kept as they are.

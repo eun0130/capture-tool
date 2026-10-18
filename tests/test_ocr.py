@@ -3,7 +3,7 @@ import threading
 import numpy as np
 import pytest
 
-from capture_tool.core.ocr import OcrEngine, OcrLine, OcrUnavailable, full_text, select_text
+from capture_tool.core.ocr import MARGIN, OcrEngine, OcrLine, OcrUnavailable, full_text, select_text
 from capture_tool.core.redact import char_boxes
 
 
@@ -264,3 +264,92 @@ def test_OCR_FT_01_full_text_joins_segments_on_the_same_row():
              OcrLine("meeting", (100, 11, 150, 30), 0.9), OcrLine("tomorrow.", (20, 60, 150, 30), 0.9)]
     assert full_text(words) == "The meeting starts\ntomorrow."
     assert full_text([]) == ""
+
+
+def _col(text, x, y, w):
+    return OcrLine(text, (x, y, w, 26), 0.9)
+
+
+def test_OCR_14_two_text_columns_are_read_column_by_column():
+    """BUG-123: a two-column page (an article, a PDF paper) came out row by row, the left and
+    right lines interleaved. A gutter no line crosses with wrapped text on both sides is a
+    column boundary: left column top to bottom, then the right one. A title across both columns
+    separates what is above it from what is below."""
+    from capture_tool.core.ocr import reading_order
+    title = _col("보고서 제목 한 줄", 20, 20, 460)
+    left = [_col(f"왼쪽 단 {i}째 줄의 글입니다", 20, 60 + 34 * i, 250 if i < 4 else 170) for i in range(5)]
+    right = [_col(f"오른쪽 단 {i}째 줄의 글입니다", 300, 62 + 34 * i, 250 if i < 4 else 120) for i in range(5)]
+    footer = _col("끝: 두 단에 걸친 맺음말", 20, 240, 500)
+    mixed = [right[3], left[0], footer, right[0], left[4], title, left[2], right[4], left[1], right[1], right[2], left[3]]
+    want = [title.text] + [l.text for l in left] + [l.text for l in right] + [footer.text]
+    assert [l.text for l in reading_order(mixed)] == want
+    assert full_text(mixed) == "\n".join(want)
+
+
+def test_OCR_15_a_label_list_and_short_columns_are_still_read_row_by_row():
+    """A form (label, value) has a gutter too, but its label column is narrow; code with aligned
+    columns has ragged lines: both stay rows."""
+    from capture_tool.core.ocr import reading_order
+    form = []
+    for i, (k, v) in enumerate([("이름", "홍길동"), ("부서", "영업팀"), ("직급", "대리"), ("전화", "010-1234-5678"),
+                                ("주소", "서울시 강남구 테헤란로 1"), ("비고", "없음")]):
+        form += [_col(v, 160, 20 + 34 * i, 12 * len(v)), _col(k, 20, 20 + 34 * i, 50)]
+    assert [l.text for l in reading_order(form)] == [t for i in range(6) for t in (form[2 * i + 1].text, form[2 * i].text)]
+    two = [_col("이름", 20, 20, 50), _col("홍길동", 300, 20, 250), _col("부서", 20, 54, 50), _col("영업팀", 300, 54, 250)]
+    assert [l.text for l in reading_order(two)] == ["이름", "홍길동", "부서", "영업팀"]
+    widths = [250, 90, 180, 60, 250, 120, 40, 200]       # ragged: nothing wraps at a column edge
+    code = [_col(f"left {i}", 20, 20 + 34 * i, widths[i]) for i in range(8)] + \
+           [_col(f"right {i}", 330, 20 + 34 * i, widths[7 - i]) for i in range(8)]
+    assert [l.text for l in reading_order(code)] == [t for i in range(8) for t in (f"left {i}", f"right {i}")]
+
+
+def test_OCR_16_select_text_cuts_at_the_readers_word_boxes():
+    """BUG-124: characters were placed evenly over the line box, so in mixed Korean/Latin text
+    (Korean letters twice as wide) a drag over "hello" picked "ello". The reader's word boxes
+    place every letter; text the fixes changed (a space put back) is aligned to them."""
+    words = (("안녕", (20.0, 22.0, 60.0, 46.0)), ("hello", (65.0, 22.0, 114.0, 46.0)), ("세계", (119.0, 22.0, 154.0, 46.0)))
+    line = OcrLine("안녕 hello 세계", (20, 22, 134, 24), 0.9, words)
+    assert select_text([line], (64, 10, 51, 40)) == "hello"
+    assert select_text([line], (118, 10, 40, 40)) == "세계"
+    assert select_text([line], (20, 10, 41, 40)) == "안녕"
+    assert select_text([line], (100, 10, 30, 40)) == "o 세"
+    plain = OcrLine("안녕 hello 세계", (20, 22, 134, 24), 0.9)       # no word boxes: evenly as before
+    assert select_text([plain], (64, 10, 51, 40)) == "ello"
+    fixed = OcrLine("안녕 hel lo 세계", (20, 22, 134, 24), 0.9, words)   # text no longer equal to the words
+    assert select_text([fixed], (64, 10, 51, 40)) == "hel lo"
+    assert select_text([OcrLine("", (20, 22, 134, 24), 0.9, words)], (0, 0, 500, 500)) == ""
+
+
+def _bar(t, h, w):
+    """A white h x w picture with t rows of black in the middle: letters t px tall."""
+    img = np.full((h, w, 3), 255, np.uint8)
+    top = (h - t) // 2
+    img[top:top + t, 10:w - 10] = 0
+    return img
+
+
+def test_OCR_17_a_big_title_line_gets_a_frame_that_keeps_its_letters_readable():
+    """BUG-122: the reader scales a picture's shorter side up to 736 px before finding text, so a
+    tight crop of one 36 pt title (53 px, letters 34 px) with the 24 px frame became 7x: letters
+    of 250 px that came back as "매 현 호 Q3 2026 L7". When the letters would come out taller
+    than 160 px the frame grows so they land near 128 px; small text (and two lines of normal
+    text in a 98 px crop) keeps the 24 px frame it was tuned with."""
+    from capture_tool.core.ocr import DET_SIDE, TITLE_LETTER_PX, frame_width, text_height
+    assert text_height(_bar(23, 98, 256)) == 23
+    ruled = _bar(23, 98, 256)
+    ruled[5:93, 120:122] = 0                                     # a vertical rule across both lines
+    assert text_height(ruled) == 23 and frame_width(ruled) == 24
+    assert frame_width(_bar(13, 23, 300)) == 24 and frame_width(_bar(15, 26, 300)) == 24
+    assert frame_width(_bar(23, 98, 256)) == 24                  # ST-08: 22 pt mono, two lines
+    assert frame_width(np.full((53, 557, 3), 255, np.uint8)) == 24   # nothing written
+    for t, h in ((19, 31), (23, 37), (34, 53), (45, 68), (60, 90)):
+        m = frame_width(_bar(t, h, 600))
+        assert m > 24 and abs(t * DET_SIDE / (h + 2 * m) - TITLE_LETTER_PX) <= 4, (t, h, m)
+    assert frame_width(_bar(45, 68, 40)) > frame_width(_bar(45, 68, 600))   # the shorter side counts
+    eng = OcrEngine(make_factory([("제목", quad(100, 100, 300, 50), 0.9)]), margin=MARGIN)
+    seen = []
+    eng._run_tile = lambda engine, img, x0, y0: seen.append((img.shape, x0, y0)) or []
+    title = _bar(47, 53, 557)
+    eng.recognize(title)
+    m = frame_width(title)
+    assert m == 109 and seen == [((53 + 2 * m, 557 + 2 * m, 3), -m, -m)]
