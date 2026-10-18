@@ -1,5 +1,5 @@
 """Updating the installed app. Where a newer version comes from: the GitHub Releases of this
-edition's own repository (집용 eun0130/capture-tool, 회사용 eun0130/capture_work), another
+edition's own repository (집용 eun0130/capture_dist - public, installers only -, 회사용 eun0130/capture_work), another
 "owner/name", or a folder a company keeps installers in (a share path works). The installer is
 downloaded next to the settings, its SHA-256 checked against the release's .sha256 file (a
 company folder may omit it), then run silently a few seconds after the app has quit; the
@@ -16,7 +16,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 
-REPOS = {"home": "eun0130/capture-tool", "work": "eun0130/capture_work"}
+REPOS = {"home": "eun0130/capture_dist", "work": "eun0130/capture_work"}
 INSTALLER = {"home": "CaptureTool-Setup-{v}.exe", "work": "CaptureTool-Work-Setup-{v}.exe"}
 _PATTERN = {"home": re.compile(r"^CaptureTool-Setup-(\d+\.\d+\.\d+)\.exe$"),
             "work": re.compile(r"^CaptureTool-Work-Setup-(\d+\.\d+\.\d+)\.exe$")}

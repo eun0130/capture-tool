@@ -145,3 +145,15 @@ def test_CLIP_13_table_cells_never_wrap_in_excel():
     for payload in (text_payload("", table=rows), table_payload(rows), table_payload(rows, style=st)):
         html = payload[HTML].decode("utf-8")
         assert html.count("<td") == 4 and html.count("white-space:nowrap") == 4
+
+
+def test_CLIP_14_dib_from_a_view_matches_the_plain_build():
+    """dib_from_bgr goes through cv2 (3x faster at 4K); the bytes are unchanged, also for a slice."""
+    rng = np.random.default_rng(1)
+    img = rng.integers(0, 255, (9, 13, 3), np.uint8)
+    view = img[2:7, 3:11]
+    h, w = view.shape[:2]
+    bgra = np.concatenate([view, np.full((h, w, 1), 255, np.uint8)], axis=2)
+    assert dib_from_bgr(view, 120)[40:] == np.ascontiguousarray(bgra[::-1]).tobytes()
+    assert dib_from_bgr(np.full((3, 2), 7, np.uint8))[40:] == bytes([7, 7, 7, 255] * 6)
+    assert dib_from_bgr(np.full((1, 2, 4), 9, np.uint8))[40:] == bytes([9] * 8)

@@ -359,11 +359,25 @@ class Controller(QObject):
             ov.activateWindow()
             ov.setFocus()
 
-    def close_overlays(self) -> None:
+    def close_overlays(self, deferred: bool = False) -> None:
+        """deferred: only the active overlay is hidden now; the other monitors' (16-55 ms each) on the
+        next event-loop turn - for the copy path, where nothing waits for them. A capture started
+        before that turn keeps its windows."""
+        later = []
         for ov in self.overlays:
+            if deferred and ov is not self.active_overlay:
+                later.append(ov)
+                continue
             ov.hide()
             ov.release()
         self.overlays = []
+        if later:
+            def hide_rest():
+                for ov in later:
+                    if ov not in self.overlays:         # not reused by a newer capture meanwhile
+                        ov.hide()
+                        ov.release()
+            QTimer.singleShot(0, hide_rest)
         self.active_overlay = None
         if self.editor is not None:
             ed, self.editor = self.editor, None
@@ -1261,15 +1275,19 @@ class Controller(QObject):
         raw = mask_outside(ov.crop(sel), doc.clip if doc else None)
 
         dpi = 96 * ov.scale
+        want_table = getattr(self, "_text_then", None) is None   # 번역/요약 from the capture: text only
 
         def work():
-            self._styled_job = None
+            self._styled_job = self._table_job = None
             try:
                 lines = self._read(raw)
             except OcrUnavailable as e:
                 return [], str(e)
             if self.settings.styled_text:
                 self._styled_job = self._styled(raw, lines, dpi)
+            if lines and want_table:                    # the table search is a second OCR pass: here, not on the GUI thread
+                grid = self._grid_for(raw, lines)
+                self._table_job = (grid, grid or self._table_rows(raw, lines, dpi))
             return lines, None
 
         self._text_ctx = (ov, raw)
@@ -1312,8 +1330,11 @@ class Controller(QObject):
             ov.unsetCursor()
             return
         self._text_styled, self._styled_job = getattr(self, "_styled_job", None), None
-        self._text_lines, self._text_grid = lines, self._grid_for(raw, lines)
-        self._text_table = self._text_grid or self._table_rows(raw, lines, 96 * ov.scale)
+        found, self._table_job = getattr(self, "_table_job", None), None
+        if found is None:                              # lines handed in directly (tests): search here
+            grid = self._grid_for(raw, lines)
+            found = (grid, grid or self._table_rows(raw, lines, 96 * ov.scale))
+        self._text_lines, (self._text_grid, self._text_table) = lines, found
         self._last_text = self._last_raw = ""
         self._copy_text(lines, self._text_grid, drag_hint=True)
         ov.enter_ocr_mode(lines, table=bool(self._text_table))
@@ -1623,7 +1644,7 @@ class Controller(QObject):
             t0 = time.perf_counter()
             self._copy_image(final, dpi)   # clipboard first (what "Enter → copied" means) ...
             t1 = time.perf_counter()
-            self.close_overlays()          # ... then hide the full-screen windows
+            self.close_overlays(deferred=True)   # ... then hide the window in front (the rest right after)
             self.last_copy_ms = ((t1 - t0) * 1000, (time.perf_counter() - t0) * 1000)
         elif action == "save":
             self._save(final)
@@ -1639,7 +1660,7 @@ class Controller(QObject):
     @staticmethod
     def _image_payload(img, dpi: float = 96) -> dict | None:
         """PNG + DIB tagged with the screen's pixels-per-inch, so Office pastes it at on-screen size."""
-        ok, png = cv2.imencode(".png", img, [cv2.IMWRITE_PNG_COMPRESSION, 1])  # fast; size is secondary
+        ok, png = cv2.imencode(".png", img)       # OpenCV's default (RLE) is the fast one; a level makes it 2.7x slower
         if not ok:
             return None
         return image_payload(png_with_dpi(png.tobytes(), dpi), dib_from_bgr(img, dpi))

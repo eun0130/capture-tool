@@ -232,7 +232,7 @@ def _insert(app, item, new_presentation: bool, hook, new_slide: bool = False) ->
         fd, path = tempfile.mkstemp(prefix="capture_", suffix=".png")
         os.close(fd)
         try:
-            ok, buf = cv2.imencode(".png", item.image, [cv2.IMWRITE_PNG_COMPRESSION, 1])   # fast; temp file
+            ok, buf = cv2.imencode(".png", item.image)   # the default encoder is the fast one; temp file
             buf.tofile(path)
             new = slide.Shapes.AddPicture(path, False, True, left, top, pw, ph)
         finally:

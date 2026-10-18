@@ -123,15 +123,13 @@ def _ppm(dpi: float) -> int:
 
 def dib_from_bgr(img: np.ndarray, dpi: float = 96) -> bytes:
     """CF_DIB: BITMAPINFOHEADER + bottom-up 32-bit BGRA pixels, tagged with the screen dpi."""
+    import cv2
     if img.ndim == 2:
-        img = np.stack([img] * 3, axis=-1)
+        img = cv2.cvtColor(img, cv2.COLOR_GRAY2BGR)
     h, w = img.shape[:2]
-    if img.shape[2] == 3:
-        bgra = np.concatenate([img, np.full((h, w, 1), 255, np.uint8)], axis=2)
-    else:
-        bgra = img[:, :, :4]
+    bgra = cv2.cvtColor(img, cv2.COLOR_BGR2BGRA) if img.shape[2] == 3 else np.ascontiguousarray(img[:, :, :4])
     header = struct.pack("<IiiHHIIiiII", 40, w, h, 1, 32, 0, w * h * 4, _ppm(dpi), _ppm(dpi), 0, 0)
-    return header + np.ascontiguousarray(bgra[::-1]).tobytes()
+    return header + cv2.flip(bgra, 0).tobytes()          # bottom-up; cv2 is 2x numpy here
 
 
 def png_with_dpi(png: bytes, dpi: float) -> bytes:

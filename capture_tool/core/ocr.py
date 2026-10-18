@@ -946,19 +946,25 @@ TILE_W = 3800            # tile width (Global.max_side_len is raised to 4000 for
 TILE_OVERLAP = 220       # >= the tallest text line, so every line is whole in the tile owning it
 
 
-def _starts(total: int, size: int) -> list[int]:
+def _split(total: int, size: int) -> tuple[int, list[int]]:
+    """(tile size, tile starts) along one axis: as few tiles as fit under `size`, all the same
+    size and evenly spaced, overlapping by at least TILE_OVERLAP. Even tiles read far less twice:
+    a 4K screen used to be four almost-whole copies (3.3x the pixels), now four quarters (1.2x)."""
     if total <= size:
-        return [0]
-    step = size - TILE_OVERLAP
-    starts = list(range(0, total - size, step))
-    starts.append(total - size)
-    return starts
+        return total, [0]
+    n = -(-(total - TILE_OVERLAP) // (size - TILE_OVERLAP))
+    tile = -(-(total + (n - 1) * TILE_OVERLAP) // n)
+    step = (total - tile) / (n - 1)
+    starts = [round(i * step) for i in range(n)]
+    starts[-1] = total - tile
+    return tile, starts
 
 
 def tiles(w: int, h: int) -> list[tuple[int, int, int, int]]:
     """(x, y, w, h) tiles covering the image, overlapping by at least TILE_OVERLAP."""
-    tw, th = min(w, TILE_W), min(h, TILE_H)
-    return [(x, y, tw, th) for y in _starts(h, th) for x in _starts(w, tw)]
+    tw, xs = _split(w, min(w, TILE_W))
+    th, ys = _split(h, min(h, TILE_H))
+    return [(x, y, tw, th) for y in ys for x in xs]
 
 
 def _bounds(starts: list[int], size: int, total: int) -> list[tuple[float, float]]:
@@ -972,7 +978,8 @@ def _bounds(starts: list[int], size: int, total: int) -> list[tuple[float, float
 
 
 def _owned(x0, y0, tw, th, w, h) -> tuple[float, float, float, float]:
-    xs, ys = _starts(w, tw), _starts(h, th)
+    parts = tiles(w, h)
+    xs, ys = sorted({x for x, _, _, _ in parts}), sorted({y for _, y, _, _ in parts})
     (xl, xh), (yl, yh) = _bounds(xs, tw, w)[xs.index(x0)], _bounds(ys, th, h)[ys.index(y0)]
     return xl, yl, xh, yh
 

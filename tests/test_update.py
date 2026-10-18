@@ -34,7 +34,7 @@ def test_UP_02_check_finds_the_editions_own_installer_on_github():
         return _release("v9.9.9", ["CaptureTool-Setup-9.9.9.exe", "CaptureTool-Setup-9.9.9.exe.sha256",
                                    "CaptureTool-Work-Setup-9.9.9.exe", "CaptureTool-Work-Setup-9.9.9.exe.sha256"])
     u = update.check("0.8.29", "home", fetch=fetch)
-    assert seen == ["https://api.github.com/repos/eun0130/capture-tool/releases/latest"]
+    assert seen == ["https://api.github.com/repos/eun0130/capture_dist/releases/latest"]
     assert u.version == "9.9.9" and u.installer_url.endswith("/CaptureTool-Setup-9.9.9.exe")
     assert u.sums_url.endswith("/CaptureTool-Setup-9.9.9.exe.sha256") and u.notes == "고침 목록" and u.size == 1000
     w = update.check("0.8.29", "work", fetch=fetch)
@@ -117,7 +117,7 @@ def test_UP_07_the_installer_restarts_the_app_after_an_update_and_the_release_sh
     assert "Get-FileHash" in yml and ".sha256" in yml
     ps = (ROOT / "tools" / "publish_work.ps1").read_text(encoding="utf-8")
     assert ".sha256" in ps
-    assert update.REPOS == {"home": "eun0130/capture-tool", "work": "eun0130/capture_work"}
+    assert update.REPOS == {"home": "eun0130/capture_dist", "work": "eun0130/capture_work"}
     assert update.parse_version(__version__) is not None
 
 

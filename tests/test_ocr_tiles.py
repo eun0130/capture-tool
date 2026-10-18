@@ -127,3 +127,26 @@ def test_TILE_08_tile_trimmed_to_its_ink_keeps_coordinates():
     img[4000:4030, 600:800] = 0
     got = tagging_engine(rec).recognize(img)
     assert [(l.text, l.box[:2]) for l in got] == [("가운데", (600, 4000))]
+
+
+# --- v0.8.31: a 4K screen is cut into even tiles, not four almost-whole copies ---------------------
+def test_TILE_09_4k_tiles_are_even_so_little_is_read_twice():
+    from capture_tool.core.ocr import TILE_H, TILE_OVERLAP, TILE_W
+    t = tiles(3840, 2160)
+    assert len(t) == 4 and all(w <= TILE_W and h <= TILE_H for _, _, w, h in t)
+    assert sum(w * h for _, _, w, h in t) <= 3840 * 2160 * 1.3          # was 3.3x
+    xs, ys = sorted({x for x, _, _, _ in t}), sorted({y for _, y, _, _ in t})
+    tw, th = t[0][2], t[0][3]
+    assert xs[0] == 0 and ys[0] == 0 and xs[-1] + tw == 3840 and ys[-1] + th == 2160
+    assert all(a + tw - b >= TILE_OVERLAP for a, b in zip(xs, xs[1:]))
+    assert all(a + th - b >= TILE_OVERLAP for a, b in zip(ys, ys[1:]))
+
+
+def test_TILE_10_every_point_is_owned_by_exactly_one_tile():
+    from capture_tool.core.ocr import _owned
+    w, h = 3840, 2160
+    t = tiles(w, h)
+    for cx, cy in [(0, 0), (1900, 1000), (2000, 1100), (3839, 2159), (1920, 1080), (100, 2000)]:
+        owners = [1 for x0, y0, tw, th in t
+                  if (lambda o: o[0] <= cx < o[2] and o[1] <= cy < o[3])(_owned(x0, y0, tw, th, w, h))]
+        assert len(owners) == 1, (cx, cy)

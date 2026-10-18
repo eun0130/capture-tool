@@ -94,6 +94,27 @@ jobs:
             gh release create $tag installer/Output/CaptureTool-Setup-*.exe installer/Output/CaptureTool-Setup-*.exe.sha256 --title "캡처 도구 $tag" --generate-notes
           }
 
+      - name: Publish the home edition from the public download repository (eun0130/capture_dist)
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: pwsh
+        env:
+          DIST_TOKEN: ${{ secrets.DIST_REPO_TOKEN || secrets.WORK_REPO_TOKEN }}
+        run: |
+          # DIST_REPO_TOKEN (or WORK_REPO_TOKEN with access to both): "repo" on eun0130/capture_dist, the
+          # public repository people and the in-app updater download the 개인용 installer from. Without it:
+          # tools/publish_work.ps1 -Edition home on a developer PC.
+          if (-not $env:DIST_TOKEN) { Write-Host "DIST_REPO_TOKEN not set: run tools/publish_work.ps1 -Edition home on a developer PC"; exit 0 }
+          $env:GH_TOKEN = $env:DIST_TOKEN
+          $tag = "${{ github.ref_name }}"
+          $notes = if (Test-Path "docs/release-notes/$tag.md") { "docs/release-notes/$tag.md" } else { $null }
+          gh release view $tag --repo eun0130/capture_dist 2>$null
+          if ($LASTEXITCODE -eq 0) { Write-Host "dist release $tag already exists"; exit 0 }
+          if ($notes) {
+            gh release create $tag installer/Output/CaptureTool-Setup-*.exe installer/Output/CaptureTool-Setup-*.exe.sha256 --repo eun0130/capture_dist --title "캡처 도구 $tag" --notes-file $notes
+          } else {
+            gh release create $tag installer/Output/CaptureTool-Setup-*.exe installer/Output/CaptureTool-Setup-*.exe.sha256 --repo eun0130/capture_dist --title "캡처 도구 $tag" --notes "개인용 설치 파일"
+          }
+
       - name: Publish the work edition from its own repository (eun0130/capture_work)
         if: startsWith(github.ref, 'refs/tags/')
         shell: pwsh
