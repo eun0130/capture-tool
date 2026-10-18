@@ -136,6 +136,7 @@ class Controller(QObject):
     _ai_dl = Signal(object)
     _share_done = Signal(object)
     _ai_preloaded = Signal(object)
+    _auto_ready = Signal(object)
 
     def __init__(self, screen, clipboard, ocr, settings, settings_path, fallback_dir, sync=False, notify=None):
         super().__init__()
@@ -149,6 +150,7 @@ class Controller(QObject):
         self.overlays: list[OverlayWindow] = []
         self._pool: dict[str, OverlayWindow] = {}
         self._later: list[OverlayWindow] = []            # overlays to hide on the next event-loop turn
+        self._auto_seq = 0                               # live-copy round in flight (older results are dropped)
         self.active_overlay: OverlayWindow | None = None
         self.pins: list[PinWindow] = []
         self.pin_manager = None
@@ -168,6 +170,7 @@ class Controller(QObject):
         self._ai_progress.connect(lambda p: self.ai_window and self.ai_window.show_progress(*p))
         self._ai_dl.connect(lambda r: self._ai_dl_done(r))
         self._share_done.connect(lambda r: self._share_done_cb(r))
+        self._auto_ready.connect(self._on_auto_ready)
         self._ai_idle_timer = QTimer(self)
         self._ai_idle_timer.setSingleShot(True)
         self._ai_idle_timer.setInterval(90_000)      # models leave memory after 90 s unused
@@ -520,7 +523,22 @@ class Controller(QObject):
             return                                        # repaint without a change
         self._auto_sig = sig
         img = compose(ov.crop(sel), doc)
-        payload = self._image_payload(img, 96 * ov.scale)
+        dpi = 96 * ov.scale
+        if self.sync:
+            self._auto_deliver(self._image_payload(img, dpi))
+            return
+        self._auto_seq += 1                  # encoding (50-70 ms for a big area) runs off the GUI thread,
+        seq = self._auto_seq                 # so a stroke never stalls; only the newest round is used
+        QThreadPool.globalInstance().start(_Job(lambda: (seq, self._image_payload(img, dpi)), self._auto_ready))
+
+    def _on_auto_ready(self, result) -> None:
+        if isinstance(result, Exception) or result[0] != self._auto_seq:
+            return                                        # failed, or the picture changed meanwhile
+        if self.session.state is not State.EDITING or self.active_overlay is None or self.mode != "draw":
+            return                                        # the capture ended: what was copied last stays
+        self._auto_deliver(result[1])
+
+    def _auto_deliver(self, payload) -> None:
         if payload and self._set_clipboard(payload) and not getattr(self, "_auto_copied", False):
             self._auto_copied = True
             self.notify("클립보드에 복사했습니다 — 바로 Ctrl+V 하면 됩니다. 그림을 그리면 복사본도 바뀝니다.")

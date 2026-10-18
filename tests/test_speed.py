@@ -3,7 +3,7 @@ import threading
 
 import cv2
 import numpy as np
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QCoreApplication, QThreadPool, Qt
 from PySide6.QtTest import QTest
 
 from capture_tool.core.clipboard_payload import DIB, PNG
@@ -192,3 +192,39 @@ def test_SPD_11_the_photo_check_counts_colours_without_sorting_pixel_rows():
     few = (rng.integers(0, 4, (600, 800, 3)) * 60).astype(np.uint8)
     assert not looks_like_photo(few)                              # 64 colours only: a drawing
     assert not looks_like_photo(cv2.cvtColor(photo, cv2.COLOR_BGR2GRAY))
+
+
+def test_SPD_12_the_live_copy_encodes_off_the_gui_thread_and_only_the_newest_round_lands(make, qt_app):
+    """While drawing, the clipboard copy (PNG + DIB: 50-70 ms for a big area) was built on the GUI
+    thread 300 ms after each stroke. It runs in the worker now; a result from an older round, or
+    one arriving after the capture ended, is dropped."""
+    c = make()
+    c.start_capture()
+    ov = c.overlays[0]
+    drag(ov, (100, 100), (500, 400))                    # sync: the first copy lands at once
+    pngs = lambda: [p[PNG] for p in c.clipboard.payloads if PNG in p]   # noqa: E731
+    n = len(pngs())
+    c.sync = False
+    threads = []
+    real = c._image_payload
+
+    def spy(img, dpi=96):
+        threads.append(threading.current_thread() is threading.main_thread())
+        return real(img, dpi)
+    c._image_payload = spy
+    ov.set_tool("rect")
+    drag(ov, (150, 150), (300, 300))                    # starts the 300 ms timer
+    c._auto_copy()                                       # what the timer calls
+    assert len(pngs()) == n                              # nothing built on the GUI thread
+    assert QThreadPool.globalInstance().waitForDone(10000)
+    QCoreApplication.sendPostedEvents(c)                 # the worker's result, delivered to the controller only
+    assert len(pngs()) == n + 1 and threads == [False]
+    c._on_auto_ready((c._auto_seq - 1, {PNG: b"old"}))  # an older round: the area changed meanwhile
+    assert pngs()[-1] != b"old"
+    seq = c._auto_seq + 1
+    c._auto_seq = seq
+    QTest.keyClick(ov, Qt.Key_Escape)
+    QTest.keyClick(ov, Qt.Key_Escape)                    # the capture ends while a round is in flight
+    c._on_auto_ready((seq, {PNG: b"late"}))
+    assert pngs()[-1] != b"late"
+    c.sync = True
