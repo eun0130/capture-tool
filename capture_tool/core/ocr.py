@@ -5,6 +5,7 @@ from __future__ import annotations
 import importlib.util
 import os
 import re
+import gc
 import threading
 from dataclasses import dataclass
 from pathlib import Path
@@ -650,12 +651,22 @@ class OcrEngine:
 
     def warmup(self) -> threading.Thread:
         """Load the main (Korean/English) model in the background. The Latin model is loaded
-        only the first time a Latin-script line shows up, so it costs nothing until needed."""
+        only the first time a Latin-script line shows up, so it costs nothing until needed.
+
+        The garbage collector is paused while the thread runs (and run once here, on the GUI
+        thread, first): loading the reader allocates enough to trigger collections on the
+        warm-up thread, and a collection there frees Qt windows left in reference cycles -
+        their C++ side must die on the GUI thread, or the process dies (BUG-119)."""
+        gc.collect()
+
         def run():
+            gc.disable()
             try:
                 self._load()
             except OcrUnavailable:
                 pass
+            finally:
+                gc.enable()
         t = threading.Thread(target=run, name="ocr-warmup", daemon=True)
         t.start()
         return t

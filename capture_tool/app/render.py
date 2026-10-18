@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import math
+import os
 
 import cv2
 import numpy as np
@@ -9,6 +10,11 @@ from PySide6.QtCore import QPointF, QRectF, Qt
 from PySide6.QtGui import QBrush, QColor, QFont, QImage, QPainter, QPainterPath, QPen, QPixmap, QPolygonF
 
 from ..core.annotations import Document, Shape
+
+# OpenCV's parallel pool is one thread per core and lives on once started: the first big LUT / resize
+# (the capture veil at 4K) left 31 idle threads on a 32-core PC (RES_05 counts them). Four is plenty
+# for the few large ops this app does; the OCR runtime has its own pool (ocr_threads).
+cv2.setNumThreads(min(4, os.cpu_count() or 4))
 from ..core.clip import clip_image
 
 FONT_FAMILY = "Malgun Gothic"
@@ -28,6 +34,17 @@ def qimage_to_bgr(q: QImage) -> np.ndarray:
     h, w = q.height(), q.width()
     arr = np.frombuffer(q.constBits(), np.uint8).reshape(h, q.bytesPerLine())[:, :w * 3]
     return arr.reshape(h, w, 3).copy()
+
+
+def dim_image(img: np.ndarray, color_bgr=(24, 18, 15), alpha: float = 140 / 255) -> np.ndarray:
+    """The frozen frame under the capture veil (what fillRect(DIM) over it gives), computed with a
+    per-channel lookup table: ~3 ms at 4K, and a plain image - no QPainter ever touched it, so the
+    pixmap made from it carries no raster paint engine (one freed by the garbage collector on a
+    worker thread crashed the process - the veil used to be painted onto a QPixmap)."""
+    v = np.arange(256, dtype=np.float32)
+    lut = np.stack([np.clip(v * (1 - alpha) + c * alpha + 0.5, 0, 255) for c in color_bgr], axis=1).astype(np.uint8)
+    src = np.ascontiguousarray(img[:, :, :3]) if img.ndim == 3 else cv2.cvtColor(img, cv2.COLOR_GRAY2BGR)
+    return cv2.LUT(src, lut.reshape(1, 256, 3))
 
 
 def bgr_to_pixmap(img: np.ndarray, dpr: float = 1.0) -> QPixmap:

@@ -148,6 +148,7 @@ class Controller(QObject):
         self.session = CaptureSession()
         self.overlays: list[OverlayWindow] = []
         self._pool: dict[str, OverlayWindow] = {}
+        self._later: list[OverlayWindow] = []            # overlays to hide on the next event-loop turn
         self.active_overlay: OverlayWindow | None = None
         self.pins: list[PinWindow] = []
         self.pin_manager = None
@@ -372,17 +373,24 @@ class Controller(QObject):
             ov.release()
         self.overlays = []
         if later:
-            def hide_rest():
-                for ov in later:
-                    if ov not in self.overlays:         # not reused by a newer capture meanwhile
-                        ov.hide()
-                        ov.release()
-            QTimer.singleShot(0, hide_rest)
+            self._later.extend(later)
+            QTimer.singleShot(0, self._hide_rest)
         self.active_overlay = None
         if self.editor is not None:
             ed, self.editor = self.editor, None
             ed.close_from_controller()
             ed.deleteLater()
+
+    def _hide_rest(self) -> None:
+        """The other monitors' overlays, a turn after the copy: unless a newer capture reuses one,
+        or close_all already deleted them (the pool is then empty - a deleted window must not be
+        touched)."""
+        later, self._later = self._later, []
+        alive = set(map(id, self._pool.values()))
+        for ov in later:
+            if id(ov) in alive and ov not in self.overlays:
+                ov.hide()
+                ov.release()
 
     def close_all(self) -> None:
         if self.ai_window is not None:
@@ -1503,6 +1511,19 @@ class Controller(QObject):
             self._last_text, self._last_raw = text, raw
             self.notify(f"줄바꿈 없이 한 줄로 복사했습니다.{self._mask_note(raw)}")
 
+    def _copy_code(self) -> None:
+        """Copy the recognized lines as code: no line numbers, no diff gutter, indentation from
+        where the words sit on screen (core/code_copy.py)."""
+        from ..core.code_copy import code_text
+        raw = code_text(self._text_lines)
+        text = mask(raw) if self.settings.redact_pii else raw
+        if text.strip() and self._set_clipboard(text_payload(text)):
+            self._last_text, self._last_raw = text, raw
+            self._text_part = False
+            self.notify(f"코드로 복사했습니다 — 줄 번호·+/- 기호 제외, 들여쓰기 복원.{self._mask_note(raw)}")
+        elif not text.strip():
+            self.notify("복사할 코드를 찾지 못했습니다.")
+
     def _toggle_styled(self) -> None:
         s = self.settings
         s.styled_text = not s.styled_text
@@ -1536,6 +1557,8 @@ class Controller(QObject):
             self._copy_text(self._text_lines, self._text_grid)
         elif name == "oneline":
             self._copy_oneline()
+        elif name == "code":
+            self._copy_code()
         elif name == "styled":
             self._toggle_styled()
         elif name == "table":
