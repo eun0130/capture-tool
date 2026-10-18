@@ -7,7 +7,9 @@ import sys
 import time
 from pathlib import Path
 
-from PySide6.QtCore import QByteArray, Qt, QTimer
+from datetime import datetime, timedelta
+
+from PySide6.QtCore import QByteArray, QObject, QRunnable, Qt, QThreadPool, QTimer, Signal
 from PySide6.QtGui import QAction, QFont, QIcon, QPainter, QPixmap
 from PySide6.QtNetwork import QLocalServer, QLocalSocket
 from PySide6.QtSvg import QSvgRenderer
@@ -15,6 +17,7 @@ from PySide6.QtWidgets import QApplication, QMenu, QMessageBox, QSystemTrayIcon
 
 from .. import __version__
 from ..core import settings as settings_io
+from ..core import update
 from ..core.ocr import OcrEngine
 from . import icons
 from .controller import Controller
@@ -105,9 +108,39 @@ def handle_instance_message(data: bytes, trigger) -> bool:
     return True
 
 
+class _Async(QObject):
+    """A worker-thread job whose result (or exception) and progress come back on the UI thread."""
+    done = Signal(object)
+    progress = Signal(int, int)
+
+    class _Run(QRunnable):
+        def __init__(self, fn, sig):
+            super().__init__()
+            self.fn, self.sig = fn, sig
+
+        def run(self):
+            try:
+                result = self.fn()
+            except Exception as e:  # noqa: BLE001 - reported to the UI thread
+                result = e
+            self.sig.emit(result)
+
+    def start(self, fn, wait: bool = False) -> None:
+        if wait:                                       # tests: the whole thing on this thread
+            try:
+                result = fn()
+            except Exception as e:  # noqa: BLE001
+                result = e
+            self.done.emit(result)
+            return
+        QThreadPool.globalInstance().start(self._Run(fn, self.done))
+
+
 class TrayApp:
     def __init__(self, app: QApplication, selftest: bool = False):
         self._toast = None
+        self.available: update.Update | None = None  # a newer version found (tray menu offers to install it)
+        self._jobs: list[_Async] = []
         self.app = app
         self.settings_path = data_dir() / "settings.json"
         self.settings, warnings = settings_io.load(self.settings_path)
@@ -132,6 +165,7 @@ class TrayApp:
             self.apply_hotkeys(first_run=not self.settings_path.exists())
             # the beginner's guide pops up once (first start, or the first start after updating)
             QTimer.singleShot(1500, self.controller.show_guide_first_time)
+            QTimer.singleShot(20_000, self._auto_check_update)      # once a day, well after start-up
 
     # --- ui ------------------------------------------------------------------------
     def toast(self, msg: str) -> None:
@@ -193,6 +227,13 @@ class TrayApp:
         m.addAction(a)
         a = QAction("고정 이미지 모두 닫기", m)
         a.triggered.connect(self.controller.close_all_pins)
+        m.addAction(a)
+        if self.available is not None:
+            a = QAction(f"새 버전 {self.available.version} 설치…", m)
+            a.triggered.connect(lambda: self.install_update())
+            m.addAction(a)
+        a = QAction("업데이트 확인…", m)
+        a.triggered.connect(lambda: self.check_update(manual=True))
         m.addAction(a)
         a = QAction("설정…", m)
         a.triggered.connect(self.open_settings)
@@ -277,6 +318,107 @@ class TrayApp:
             os.startfile(d)  # noqa: S606 - opening the user's own folder in Explorer
         except (SaveDirError, OSError) as e:
             self.toast(str(e))
+
+    # --- updates ----------------------------------------------------------------------------------
+    def update_due(self) -> bool:
+        """Time for the daily look? (Never when switched off in the settings.)"""
+        if not getattr(self.settings, "update_check", True):
+            return False
+        try:
+            last = datetime.fromisoformat(self.settings.update_last)
+        except (TypeError, ValueError):
+            return True
+        return datetime.now() - last >= timedelta(hours=update.CHECK_EVERY_HOURS)
+
+    def _auto_check_update(self) -> None:
+        if self.update_due():
+            self.check_update(manual=False)
+
+    def _job(self) -> _Async:
+        job = _Async()
+        self._jobs.append(job)
+        job.done.connect(lambda _=None, j=job: self._jobs.remove(j) if j in self._jobs else None)
+        return job
+
+    def _save_settings(self) -> None:
+        try:
+            settings_io.save(self.settings, self.settings_path)
+        except OSError:
+            pass
+
+    def check_update(self, manual: bool = False, wait: bool = False) -> None:
+        """Look for a newer version (GitHub release of this edition, or the folder in the
+        settings) off the UI thread; found: the tray menu gains "새 버전 … 설치"."""
+        from .. import edition
+        current, ed, source = __version__, edition.current(), getattr(self.settings, "update_source", "")
+        job = self._job()
+
+        def done(result):
+            self.settings.update_last = datetime.now().isoformat(timespec="seconds")
+            self._save_settings()
+            if isinstance(result, Exception):
+                logging.warning("update check failed: %s", result)
+                if manual:
+                    self.toast(str(result) if isinstance(result, update.UpdateError)
+                               else "업데이트 확인 실패 — 인터넷 연결을 확인하세요.")
+                return
+            self.available = result
+            self._build_menu()
+            if result is None:
+                if manual:
+                    self.toast(f"최신 버전입니다 ({__version__}).")
+            else:
+                self.toast(f"새 버전 {result.version}이 있습니다 — 트레이 메뉴의 '새 버전 {result.version} 설치'로 받아서 설치합니다.")
+        job.done.connect(done)
+        job.start(lambda: update.check(current, ed, source), wait)
+
+    def _confirm_update(self, u: update.Update) -> bool:
+        notes = (u.notes or "").strip()
+        if len(notes) > 700:
+            notes = notes[:700] + "…"
+        box = QMessageBox(QMessageBox.Question, "새 버전 설치",
+                          f"캡처 도구 {u.version}을 받아서 설치할까요? (지금 {__version__})\n\n"
+                          "받는 동안 계속 쓸 수 있고, 설치할 때 잠깐 종료됐다가 새 버전으로 다시 실행됩니다.",
+                          QMessageBox.Yes | QMessageBox.No)
+        box.button(QMessageBox.Yes).setText("받아서 설치")
+        box.button(QMessageBox.No).setText("나중에")
+        if notes:
+            box.setDetailedText(notes)
+        box.setWindowIcon(app_icon())
+        box.setWindowFlag(Qt.WindowStaysOnTopHint, True)
+        return box.exec() == QMessageBox.Yes
+
+    def install_update(self, wait: bool = False) -> None:
+        """Download the offered installer (checked against its .sha256), run it silently, quit;
+        the installer restarts the app."""
+        u = self.available
+        if u is None or not self._confirm_update(u):
+            return
+        self.toast(f"새 버전 {u.version} 받는 중… (받는 동안 계속 쓸 수 있습니다)")
+        into = data_dir() / "updates"
+        job = self._job()
+        shown = {"q": 0}
+
+        def on_progress(done_bytes: int, total: int) -> None:
+            if total and done_bytes * 4 // total > shown["q"]:
+                shown["q"] = done_bytes * 4 // total
+                if shown["q"] < 4:
+                    self.toast(f"새 버전 받는 중… {done_bytes * 100 // total}%")
+        job.progress.connect(on_progress)
+
+        def done(result):
+            if isinstance(result, Exception):
+                logging.warning("update download failed: %s", result)
+                self.toast(str(result) if isinstance(result, update.UpdateError) else "업데이트 파일을 받지 못했습니다.")
+                return
+            self.toast("설치를 시작합니다. 잠시 뒤 새 버전으로 다시 실행됩니다.")
+            update.launch_installer(result)
+            if wait:
+                self.quit()
+            else:
+                QTimer.singleShot(400, self.quit)
+        job.done.connect(done)
+        job.start(lambda: update.download(u, into, progress=job.progress.emit), wait)
 
     def quit(self) -> None:
         self.hk_window.manager.apply({})

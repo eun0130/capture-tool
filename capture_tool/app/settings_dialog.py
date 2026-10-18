@@ -129,8 +129,14 @@ class SettingsDialog(QDialog):
         self.pdf_one_page.setChecked(getattr(settings, "pdf_one_page", False))
         self.keep_style = QCheckBox("PPT·도형·표로 보낼 때 색·글꼴 모양 그대로 (끄면 기본 모양: 흰 바탕·검은 글자)")
         self.keep_style.setChecked(settings.keep_style)
-        for w in (self.auto_save, self.auto_copy, self.show_recent, self.redact, self.startup, self.ppt_new_slide, self.pdf_one_page, self.keep_style):
+        self.update_check = QCheckBox("새 버전을 하루 한 번 확인해 알려 주기 (트레이 메뉴 '업데이트 확인…'으로 직접 확인도 가능)")
+        self.update_check.setChecked(getattr(settings, "update_check", True))
+        for w in (self.auto_save, self.auto_copy, self.show_recent, self.redact, self.startup, self.ppt_new_slide, self.pdf_one_page, self.keep_style,
+                  self.update_check):
             v.addWidget(w)
+        self.update_source = QLineEdit(getattr(settings, "update_source", ""))
+        self.update_source.setPlaceholderText("업데이트 받을 곳 — 비우면 GitHub. 회사라면 설치 파일을 둔 공유 폴더 경로(\\\\서버\\폴더)도 됩니다")
+        v.addWidget(self.update_source)
         # --- action bar: a favourites row, the rest in groups, one arrangement per place ---------
         from .. import edition
         from ..core import bar_layout as bl
@@ -370,6 +376,8 @@ class SettingsDialog(QDialog):
         self.ppt_new_slide.setChecked(d.ppt_new_slide)
         self.auto_copy.setChecked(d.auto_copy)
         self.show_recent.setChecked(d.show_recent)
+        self.update_check.setChecked(d.update_check)
+        self.update_source.setText(d.update_source)
         self.pdf_one_page.setChecked(d.pdf_one_page)
         self.keep_style.setChecked(d.keep_style)
 
@@ -430,6 +438,8 @@ class SettingsDialog(QDialog):
         s.ppt_new_slide = self.ppt_new_slide.isChecked()
         s.auto_copy = self.auto_copy.isChecked()
         s.show_recent = self.show_recent.isChecked()
+        s.update_check = self.update_check.isChecked()
+        s.update_source = self.update_source.text().strip()
         s.pdf_one_page = self.pdf_one_page.isChecked()
         s.keep_style = self.keep_style.isChecked()
         s.ai_summary_engine = "cloud" if self.ai_cloud.isChecked() else "local"

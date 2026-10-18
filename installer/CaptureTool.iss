@@ -67,11 +67,18 @@ Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: 
 
 [Run]
 Filename: "{app}\{#AppExe}"; Description: "캡처 도구 실행"; Flags: nowait postinstall skipifsilent
+; an update the app started itself (/UPDATE=1, core/update.py): the app comes back by itself
+Filename: "{app}\{#AppExe}"; Flags: nowait; Check: IsUpdate
 
 [UninstallRun]
 Filename: "{sys}\taskkill.exe"; Parameters: "/F /IM {#AppExe}"; Flags: runhidden; RunOnceId: "StopCaptureTool"
 
 [Code]
+function IsUpdate: Boolean;
+begin
+  Result := ExpandConstant('{param:UPDATE|0}') = '1';
+end;
+
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
 begin
   { the app may have registered itself from its own settings even if the task was unchecked }

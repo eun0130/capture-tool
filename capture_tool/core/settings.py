@@ -63,6 +63,9 @@ class Settings:
     ai_cloud_consent: bool = False       # agreed that text is sent to Google
     ai_key: str = ""                     # Gemini key, DPAPI-encrypted (never plain text)
     ai_target_lang: str = ""             # "" = automatic (Korean <-> English)
+    update_check: bool = True            # look for a newer version once a day (tray menu: 업데이트 확인)
+    update_source: str = ""              # "" = this edition's GitHub releases; "owner/repo"; or a folder of installers
+    update_last: str = ""                # when it last looked (ISO date-time)
     share_expiry: str = "24h"            # internet link: deleted by the host after 1h/12h/24h/72h
     share_consent: bool = False          # agreed that internet links upload the picture
     tip_count: int = 0                   # "click a title bar = whole window" tip shown this often

@@ -8,6 +8,7 @@ Windows용 무료 캡처 도구. 단축키 한 번으로 캡처하고, 그 자�
 ## 설치
 
 1. [Releases](../../releases)에서 `CaptureTool-Setup-x.y.z.exe`를 받아 실행합니다.
+   - 설치한 뒤에는 앱이 하루 한 번 새 버전을 확인해 알려 주고, 트레이 메뉴 **새 버전 … 설치**로 받아서 설치합니다(SHA-256 검증).
    - **회사용**(카카오톡·메일 기능이 아예 없는 빌드)은 [capture_work Releases](https://github.com/eun0130/capture_work/releases)의 `CaptureTool-Work-Setup-x.y.z.exe`를 받습니다.
 2. 관리자 권한이 필요 없고, 따로 설치할 것(Python, 런타임, 언어팩)이 없습니다. 인터넷 없이도 동작합니다.
 3. 코드 서명 전이라 "Windows의 PC 보호" 창이 뜨면 **추가 정보 → 실행**을 누르세요.

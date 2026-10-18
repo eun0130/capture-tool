@@ -62,10 +62,20 @@ jobs:
           ./build.ps1 -SkipTests
           ./build.ps1 -SkipTests -Edition work
 
+      - name: Hashes for the in-app updater (<installer>.sha256 beside each installer)
+        shell: pwsh
+        run: |
+          Get-ChildItem installer/Output/*.exe | ForEach-Object {
+            $h = (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower()
+            [IO.File]::WriteAllText("$($_.FullName).sha256", "$h *$($_.Name)`n")
+          }
+
       - uses: actions/upload-artifact@v4
         with:
           name: CaptureTool-Setup
-          path: installer/Output/*.exe
+          path: |
+            installer/Output/*.exe
+            installer/Output/*.sha256
 
       - name: Publish release
         if: startsWith(github.ref, 'refs/tags/')
@@ -79,9 +89,9 @@ jobs:
           if ($LASTEXITCODE -eq 0) {
             Write-Host "Release $tag already exists (uploaded from a developer PC); keeping its installer."
           } elseif ($notes) {
-            gh release create $tag installer/Output/CaptureTool-Setup-*.exe --title "캡처 도구 $tag" --notes-file $notes
+            gh release create $tag installer/Output/CaptureTool-Setup-*.exe installer/Output/CaptureTool-Setup-*.exe.sha256 --title "캡처 도구 $tag" --notes-file $notes
           } else {
-            gh release create $tag installer/Output/CaptureTool-Setup-*.exe --title "캡처 도구 $tag" --generate-notes
+            gh release create $tag installer/Output/CaptureTool-Setup-*.exe installer/Output/CaptureTool-Setup-*.exe.sha256 --title "캡처 도구 $tag" --generate-notes
           }
 
       - name: Publish the work edition from its own repository (eun0130/capture_work)
@@ -99,7 +109,7 @@ jobs:
           gh release view $tag --repo eun0130/capture_work 2>$null
           if ($LASTEXITCODE -eq 0) { Write-Host "work release $tag already exists"; exit 0 }
           if ($notes) {
-            gh release create $tag installer/Output/CaptureTool-Work-Setup-*.exe --repo eun0130/capture_work --title "캡처 도구 (회사용) $tag" --notes-file $notes
+            gh release create $tag installer/Output/CaptureTool-Work-Setup-*.exe installer/Output/CaptureTool-Work-Setup-*.exe.sha256 --repo eun0130/capture_work --title "캡처 도구 (회사용) $tag" --notes-file $notes
           } else {
-            gh release create $tag installer/Output/CaptureTool-Work-Setup-*.exe --repo eun0130/capture_work --title "캡처 도구 (회사용) $tag" --notes "회사용 설치 파일 (카카오톡·메일 기능 없음)"
+            gh release create $tag installer/Output/CaptureTool-Work-Setup-*.exe installer/Output/CaptureTool-Work-Setup-*.exe.sha256 --repo eun0130/capture_work --title "캡처 도구 (회사용) $tag" --notes "회사용 설치 파일 (카카오톡·메일 기능 없음)"
           }

@@ -14,13 +14,18 @@ if (-not $RunId) {
 gh run download $RunId -n CaptureTool-Setup -D $dir
 $exe = Get-ChildItem $dir -Filter "CaptureTool-Work-Setup-$Version.exe" | Select-Object -First 1
 if (-not $exe) { throw "CaptureTool-Work-Setup-$Version.exe not in the artifact of run $RunId" }
+$sha = "$($exe.FullName).sha256"                       # the in-app updater checks the download against it
+if (-not (Test-Path $sha)) {
+    $h = (Get-FileHash $exe.FullName -Algorithm SHA256).Hash.ToLower()
+    [IO.File]::WriteAllText($sha, "$h *$($exe.Name)`n")
+}
 $notes = "docs/release-notes/$tag.md"
 $existing = @(gh release list --repo $Repo --json tagName --jq ".[].tagName")   # no stderr: PS 5.1 would stop on it
 if ($existing -contains $tag) {
-    gh release upload $tag $exe.FullName --repo $Repo --clobber
+    gh release upload $tag $exe.FullName $sha --repo $Repo --clobber
 } elseif (Test-Path $notes) {
-    gh release create $tag $exe.FullName --repo $Repo --title "캡처 도구 (회사용) $tag" --notes-file $notes
+    gh release create $tag $exe.FullName $sha --repo $Repo --title "캡처 도구 (회사용) $tag" --notes-file $notes
 } else {
-    gh release create $tag $exe.FullName --repo $Repo --title "캡처 도구 (회사용) $tag" --notes "회사용 설치 파일 (카카오톡·메일 기능 없음)"
+    gh release create $tag $exe.FullName $sha --repo $Repo --title "캡처 도구 (회사용) $tag" --notes "회사용 설치 파일 (카카오톡·메일 기능 없음)"
 }
 Write-Host "published $($exe.Name) to https://github.com/$Repo/releases/tag/$tag"
