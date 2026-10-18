@@ -138,6 +138,25 @@ def test_TBL_15_filled_header_row_keeps_its_borders():
     assert abs(ys[0] - y0) <= 1 and abs(ys[1] - (y0 + rh)) <= 1
 
 
+def test_TBL_17_filled_header_row_with_its_own_text_keeps_its_borders():
+    """BUG-121: white text on the dark header fill cuts the fill's long runs on the text rows, so the
+    band fell apart into a few thin 'lines' - one of them through the middle of the letters - and
+    the header row (above that line) came out empty. The band is the rows that are mostly inked,
+    text or not; its edges are the lines, and nothing inside it is."""
+    import numpy as np
+    img, (x0, y0, cw, rh) = excel_like(rows=6, cols=5, cw=80, rh=24)
+    img[y0:y0 + rh + 1, x0:x0 + 5 * cw + 1] = (127, 63, 31)              # filled header row
+    for c in range(5):                                                  # a white word in each cell
+        for dy in (6, 7, 8, 9, 11, 12, 13, 14):                            # (row y0+10: its horizontal bar)
+            img[y0 + dy, x0 + c * cw + 6:x0 + c * cw + 40] = 255
+    xs, ys = detect_grid(img)
+    assert len(xs) == 6 and len(ys) == 7, ys
+    assert abs(ys[0] - y0) <= 1 and abs(ys[1] - (y0 + rh)) <= 1
+    assert not [y for y in ys if y0 + 1 < y < y0 + rh - 1]              # no line through the letters
+    grid = grid_from_cells([("품목", x0 + 6, y0 + 6, 34, 9), ("노트북", x0 + 6, y0 + rh + 6, 34, 9)], xs, ys)
+    assert grid[0][0] == "품목" and grid[1][0] == "노트북"
+
+
 def test_TBL_16_filled_band_alone_is_not_a_table():
     import numpy as np
     img = np.full((300, 600, 3), 255, np.uint8)

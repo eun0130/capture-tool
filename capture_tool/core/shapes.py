@@ -21,7 +21,10 @@ LINK_DISTANCE = 14      # px; arrow endpoint to shape edge to count as connected
 MAX_COMPONENTS = 300    # a busy web page can hold thousands of blobs; keep the largest
 TIME_BUDGET = 3.0       # seconds; never keep the CPU busy longer than this
 SAME_COLOR = 30         # outline this close to the fill is just the fill's edge (no outline)
-MAX_REREAD = 8          # coloured shapes whose missed text is read again (one OCR call each)
+MAX_REREAD = 8          # coloured shapes whose missed text is read again (all in one OCR call)
+REREAD_SCALE = 2        # each crop enlarged this much in the mosaic (the reader would enlarge a small
+REREAD_SIDE = 736       # crop to 736 px on its own - 7x for a button - which costs 7x the pixels)
+REREAD_GAP = 32         # px of the shape's own fill around each crop in the mosaic
 # common PowerPoint font sizes; a measured size snaps to the nearest
 FONT_SIZES = (8, 9, 10, 10.5, 11, 12, 14, 16, 18, 20, 22, 24, 26, 28, 32, 36, 40, 44, 48, 54, 60, 66, 72, 80, 96)
 BOLD_STROKE = 0.098     # stroke width / font size above this reads as bold (measured: 0.084 vs 0.113)
@@ -647,10 +650,9 @@ def find_missed_text(img, detected: list[Detected], recognize, skip=()) -> list[
     taken for tiny shapes are removed from `detected`. Returns the new (text, box) lines in
     whole-image coordinates. recognize(crop) -> [(text, (x, y, w, h)), ...]."""
     img = _to_bgr(img)
-    found: list[tuple[str, tuple]] = []
-    tries = 0
+    again: list[Detected] = []
     for d in sorted(detected, key=lambda d: -d.w * d.h):
-        if tries >= MAX_REREAD:
+        if len(again) >= MAX_REREAD:
             break
         if d.kind in ("line", "arrow", "text") or d.text or not d.fill or d.w < 30 or d.h < 20                 or any(d is k for k in skip):
             continue
@@ -659,19 +661,54 @@ def find_missed_text(img, detected: list[Detected], recognize, skip=()) -> list[
         if inner.size == 0:
             continue
         fill = tuple(int(d.fill[k:k + 2], 16) for k in (5, 3, 1))
-        if (_dist(inner, fill) > 60).mean() < 0.01:
+        ink = _dist(inner, fill) > 60
+        ink[ink.mean(axis=1) > 0.6, :] = False          # a line across the shape (a scrollbar's track
+        ink[:, ink.mean(axis=0) > 0.6] = False          # edge, a divider) is not writing
+        if ink.mean() < 0.01:
             continue                                    # nothing written inside
-        tries += 1
-        crop = img[d.y:d.y + d.h, d.x:d.x + d.w]
-        for text, (x, y, w, h) in recognize(crop) or []:
-            if text and text.strip():
-                found.append((text, (d.x + x, d.y + y, w, h)))
+        again.append(d)
+    found = _read_together(img, again, recognize) if again else []
     if found:
         def inside_text(o: Detected) -> bool:
             cx, cy = o.x + o.w / 2, o.y + o.h / 2
             return any(x - 2 <= cx <= x + w + 2 and y - 2 <= cy <= y + h + 2 and o.w * o.h < w * h * 1.5
                        for _, (x, y, w, h) in found)
         detected[:] = [o for o in detected if not inside_text(o)]
+    return found
+
+
+def _read_together(img, shapes: list[Detected], recognize) -> list[tuple[str, tuple]]:
+    """One OCR call for every shape to read again: the crops, enlarged, stacked on bands of their
+    own fill colour (eight calls on small crops cost 1.5-2.3 s; this one costs 0.2-0.3 s and reads
+    the same labels). Returns (text, box) in whole-image coordinates; a line that sits between
+    two bands belongs to neither."""
+    pieces = []
+    for d in shapes:
+        k = min(REREAD_SCALE, max(1.0, REREAD_SIDE / max(1, min(d.w, d.h))))   # big shapes as they are
+        crop = img[d.y:d.y + d.h, d.x:d.x + d.w]
+        big = cv2.resize(crop, None, fx=k, fy=k, interpolation=cv2.INTER_CUBIC) if k != 1.0 else crop
+        pieces.append((d, k, big))
+    width = max(REREAD_SIDE, max(p.shape[1] for _, _, p in pieces) + 2 * REREAD_GAP)
+    height = max(REREAD_SIDE, sum(p.shape[0] + REREAD_GAP for _, _, p in pieces) + REREAD_GAP)
+    canvas = np.full((height, width, 3), 255, np.uint8)
+    bands = []
+    y = REREAD_GAP
+    for d, k, p in pieces:
+        fill = tuple(int(d.fill[i:i + 2], 16) for i in (5, 3, 1))
+        canvas[y - REREAD_GAP // 2:y + p.shape[0] + REREAD_GAP // 2, :] = fill
+        canvas[y:y + p.shape[0], REREAD_GAP:REREAD_GAP + p.shape[1]] = p
+        bands.append((d, k, y, y + p.shape[0]))
+        y += p.shape[0] + REREAD_GAP
+    found = []
+    for text, (x, y, w, h) in recognize(canvas) or []:
+        if not text or not text.strip():
+            continue
+        cy = y + h / 2
+        for d, k, top, bottom in bands:
+            if top <= cy < bottom:
+                found.append((text, (d.x + max(0, int(round((x - REREAD_GAP) / k))), d.y + max(0, int(round((y - top) / k))),
+                              int(round(w / k)), int(round(h / k)))))
+                break
     return found
 
 

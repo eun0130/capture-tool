@@ -166,8 +166,9 @@ def looks_like_photo(img: np.ndarray) -> bool:
     h, w = img.shape[:2]
     k = 400 / max(h, w)
     small = cv2.resize(img[:, :, :3], None, fx=k, fy=k, interpolation=cv2.INTER_AREA) if k < 1 else img[:, :, :3]
-    flat = small.reshape(-1, 3)
-    _, counts = np.unique(flat, axis=0, return_counts=True)
+    flat = small.reshape(-1, 3).astype(np.int32)
+    keys = (flat[:, 0] << 16) | (flat[:, 1] << 8) | flat[:, 2]   # one int per colour: unique sorts ints,
+    _, counts = np.unique(keys, return_counts=True)             # not rows of 3 bytes (50-70 ms -> 5 ms)
     return counts.max() / flat.shape[0] < PHOTO_MODE_SHARE and len(counts) > 2000
 
 
@@ -1000,14 +1001,20 @@ MIN_SIDE = 736           # the detector enlarges anything smaller; keep tiles at
 
 
 def _ink_box(tile: np.ndarray) -> tuple[int, int, int, int] | None:
-    """(x, y, w, h) of the part of a tile that has any detail, padded; None if it is blank."""
-    g = tile[..., :3].max(axis=2).astype(np.int16) if tile.ndim == 3 else tile.astype(np.int16)
-    lo = tile[..., :3].min(axis=2).astype(np.int16) if tile.ndim == 3 else g
-    rows = (g.max(axis=1) - lo.min(axis=1)) > 24
+    """(x, y, w, h) of the part of a tile that has any detail, padded; None if it is blank.
+    A row (column) has detail when its brightest and darkest channel values differ: uint8
+    reductions over the row of channel values (an int16 copy of a 4K tile cost 63 ms)."""
+    if tile.ndim == 3 and tile.shape[2] != 3:
+        tile = cv2.cvtColor(tile, cv2.COLOR_BGRA2BGR) if tile.shape[2] == 4 else np.ascontiguousarray(tile[..., :3])
+    h, w = tile.shape[:2]
+    flat = np.ascontiguousarray(tile).reshape(h, -1)            # (h, w * channels)
+    row_hi, row_lo = flat.max(axis=1).astype(np.int16), flat.min(axis=1).astype(np.int16)
+    rows = (row_hi - row_lo) > 24
     if not rows.any():
         return None
-    cols = (g.max(axis=0) - lo.min(axis=0)) > 24
-    h, w = rows.shape[0], cols.shape[0]
+    col = cv2.reduce(flat, 0, cv2.REDUCE_MAX).reshape(w, -1).max(axis=1).astype(np.int16)
+    col -= cv2.reduce(flat, 0, cv2.REDUCE_MIN).reshape(w, -1).min(axis=1)
+    cols = col > 24
 
     def span(mask, size):
         idx = np.nonzero(mask)[0]

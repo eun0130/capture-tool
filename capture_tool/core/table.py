@@ -151,12 +151,16 @@ MIN_FILL = 0.25       # share of cells that must hold text
 
 
 MAX_BAND = 120        # px; a filled run up to this tall is a coloured row (header fill)
+BAND_FILL = 0.5       # share of a row (column) inked, MIN_CELL..MAX_BAND rows in a run: a filled band,
+                      # whether or not its own text cuts the long runs on some of its rows
 
 
-def _line_positions(profile: np.ndarray, min_len: int) -> list[int]:
+def _line_positions(profile: np.ndarray, min_len: int, filled: np.ndarray | None = None) -> list[int]:
     """Centers of thin runs where a long line runs. A filled band (coloured header row) hides
     the lines at its edges, so its two edges count too - but only next to real thin lines;
-    other thick runs (title bars, dark panels) are skipped."""
+    other thick runs (title bars, dark panels) are skipped. filled: the share of each row
+    (column) that is inked - a band whose own text cuts its long runs is still a band (its
+    rows stay mostly inked), and a 'line' inside such a band is a stroke of its letters."""
     out: list[int] = []
     edges: list[int] = []
     start = None
@@ -170,6 +174,22 @@ def _line_positions(profile: np.ndarray, min_len: int) -> list[int]:
             elif MIN_CELL <= i - start <= MAX_BAND:
                 edges += [start, i - 1]
             start = None
+    if filled is not None:
+        bands = []
+        start = None
+        for i, v in enumerate(list(filled) + [0.0]):
+            if v >= BAND_FILL:
+                if start is None:
+                    start = i
+            elif start is not None:
+                if MIN_CELL <= i - start <= MAX_BAND:
+                    bands.append((start, i - 1))
+                    edges += [start, i - 1]
+                start = None
+        def inside(p: int) -> bool:                # a stroke of the band's own letters, or the
+            return any(a + MAX_LINE_THICK < p < b - MAX_LINE_THICK for a, b in bands)   # run below them
+        out = [p for p in out if not inside(p)]
+        edges = [e for e in edges if not inside(e)]
     if len(out) >= 2 and edges:
         for e in edges:
             if all(abs(e - p) > MAX_LINE_THICK for p in out):
@@ -196,8 +216,8 @@ def detect_grid(img: np.ndarray) -> tuple[list[int], list[int]] | None:
     h, w = dark.shape
     horiz = cv2.morphologyEx(dark, cv2.MORPH_OPEN, np.ones((1, max(20, w // 4)), np.uint8))
     vert = cv2.morphologyEx(dark, cv2.MORPH_OPEN, np.ones((max(12, h // 4), 1), np.uint8))
-    ys = _line_positions(horiz.sum(axis=1), max(20, int(w * 0.25)))
-    xs = _line_positions(vert.sum(axis=0), max(12, int(h * 0.25)))
+    ys = _line_positions(horiz.sum(axis=1), max(20, int(w * 0.25)), dark.mean(axis=1))
+    xs = _line_positions(vert.sum(axis=0), max(12, int(h * 0.25)), dark.mean(axis=0))
     # at least 2 columns and 2 rows of cells, evenly readable, not absurdly many
     if not (_regular(xs, MAX_COLS) and _regular(ys, MAX_ROWS)):
         return None

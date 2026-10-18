@@ -7,8 +7,8 @@ from PySide6.QtCore import QRect, Qt
 from PySide6.QtGui import QColor, QFont, QImage, QPainter
 
 from capture_tool.core.drawingml import DShape, drawing_xml
-from capture_tool.core.shapes import (Detected, attach_text, detect, find_missed_text, text_boxes_for, text_style,
-                                      to_drawing)
+from capture_tool.core.shapes import (REREAD_GAP, Detected, attach_text, detect, find_missed_text, text_boxes_for,
+                                      text_style, to_drawing)
 from tests.render import _font
 
 DPI = 144                                       # 150 % screen: 2 px per point
@@ -183,8 +183,7 @@ def test_STY_08_text_missed_inside_a_coloured_shape_is_read_again(qt_app):
 
     def recognize(crop):
         calls.append(crop.shape)
-        h, w = crop.shape[:2]
-        return [("승인", (w // 2 - 50, h // 2 - 30, 100, 60))]
+        return [("승인", (REREAD_GAP + 200, REREAD_GAP + 140, 200, 120))]   # inside the first crop's band
     found = find_missed_text(a, det, recognize)
     assert len(calls) == 1 and found and found[0][0] == "승인"
     tx, ty, tw, th = found[0][1]
@@ -200,11 +199,12 @@ def test_STY_09_missed_text_pass_is_bounded(qt_app):
     img = np.full((100, 1900, 3), 255, np.uint8)
     for d in det:
         img[d.y:d.y + d.h, d.x:d.x + d.w] = (209, 95, 31)
-        img[d.y + 20:d.y + 30, d.x + 10:d.x + 40] = 0          # some ink inside each
+        img[d.y + 20:d.y + 30, d.x + 14:d.x + 30] = 0          # some ink inside each (not a full-width line)
     calls = []
-    find_missed_text(img, det, lambda c: calls.append(1) or [])
-    from capture_tool.core.shapes import MAX_REREAD
-    assert len(calls) <= MAX_REREAD
+    find_missed_text(img, det, lambda c: calls.append(c.shape) or [])
+    from capture_tool.core.shapes import MAX_REREAD, REREAD_SCALE
+    assert len(calls) == 1                                       # all of them in one call
+    assert calls[0][0] <= MAX_REREAD * (50 * REREAD_SCALE + REREAD_GAP) + REREAD_GAP
 
 
 def test_STY_10_blank_coloured_shape_is_not_read_again(qt_app):
@@ -270,3 +270,49 @@ def test_STY_14_light_free_text_keeps_its_dark_background_so_it_stays_visible(qt
     text(img2, "밝은 화면 글자", 30, 100, 32, "#202020")
     b = arr(img2)
     assert text_boxes_for([("밝은 화면 글자", ink_box(b, (0, 0, 600, 200)))], b, DPI)[0].fill is None
+
+
+def test_STY_13_all_shapes_to_read_again_go_to_the_reader_in_one_mosaic(qt_app):
+    """Eight OCR calls on small crops cost 1.5-2.3 s (the reader enlarges each to 736 px); one call
+    on a mosaic of the crops, each enlarged twice on a band of its own fill, costs 0.2-0.3 s and
+    reads the same labels. Lines come back in whole-image coordinates; a line between bands is noise."""
+    from capture_tool.core.shapes import REREAD_SCALE
+    img = np.full((400, 600, 3), 255, np.uint8)
+    det = [Detected("rect", 50, 40, 200, 60, fill="#1F5FD1"), Detected("rect", 50, 200, 300, 100, fill="#D93025")]
+    for d in det:
+        img[d.y:d.y + d.h, d.x:d.x + d.w] = tuple(int(d.fill[k:k + 2], 16) for k in (5, 3, 1))
+        img[d.y + d.h // 2 - 5:d.y + d.h // 2 + 5, d.x + d.w // 2 - 25:d.x + d.w // 2 + 25] = 0   # ink in the middle
+    seen = []
+
+    def recognize(m):
+        seen.append(m)
+        k = REREAD_SCALE
+        top = REREAD_GAP                                             # the first band: the bigger shape first
+        second = top + 100 * k + REREAD_GAP
+        return [("둘째", (REREAD_GAP + 20 * k, top + 20 * k, 50 * k, 10 * k)),
+                ("첫째", (REREAD_GAP + 10 * k, second + 20 * k, 50 * k, 10 * k)),
+                ("사이", (REREAD_GAP, top + 100 * k + 4, 30, 10)),   # in the gap between bands
+                ("  ", (REREAD_GAP, top, 30, 10))]
+    found = find_missed_text(img, det, recognize)
+    assert len(seen) == 1
+    m = seen[0]
+    assert m.shape[0] >= 736 and m.shape[1] >= 736                  # never enlarged again by the reader
+    assert tuple(m[REREAD_GAP + 5, REREAD_GAP + 5]) == (37, 48, 217)      # band 1: the red shape, enlarged
+    assert tuple(m[REREAD_GAP + 50, REREAD_GAP + 300 * REREAD_SCALE + 5]) == (37, 48, 217)  # its fill past the crop
+    assert (m[REREAD_GAP + 50 * REREAD_SCALE, REREAD_GAP + 150 * REREAD_SCALE] < 8).all()   # its ink, enlarged
+    assert sorted(found) == [("둘째", (70, 220, 50, 10)), ("첫째", (60, 60, 50, 10))]
+
+
+def test_STY_14_a_bar_with_only_lines_inside_is_not_read_again(qt_app):
+    """A scrollbar (its track's edge lines run the whole width) is not a button with a label: read
+    again, its arrow came back as "4" or "1" and stuck to the bar as text."""
+    img = np.full((60, 1500, 3), 255, np.uint8)
+    img[20:40, 10:1452] = (139, 139, 139)
+    img[20, 10:1452] = img[39, 10:1452] = (240, 240, 240)       # the track's edge lines
+    det = [Detected("rect", 10, 20, 1442, 20, fill="#8B8B8B")]
+    calls = []
+    find_missed_text(img, det, lambda c: calls.append(1) or [])
+    assert calls == []
+    img[27:33, 700:740] = 0                                      # a real label in the middle
+    find_missed_text(img, det, lambda c: calls.append(1) or [])
+    assert calls == [1]

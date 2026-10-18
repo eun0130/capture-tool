@@ -157,3 +157,38 @@ def test_SPD_09_the_ocr_warm_up_thread_never_runs_a_garbage_collection():
         gc.callbacks.remove(note)
     assert "ocr-warmup" not in seen
     assert gc.isenabled()
+
+
+def test_SPD_10_the_ink_box_of_a_tile_is_found_without_a_16_bit_copy():
+    """Row and column ranges straight from uint8 reductions: the same box as the old int16
+    per-channel version (63 ms per 4K tile), for 3-channel, 4-channel and grey tiles."""
+    from capture_tool.core.ocr import _ink_box
+    tile = np.full((1500, 1500, 3), 250, np.uint8)
+    assert _ink_box(tile) is None                                 # blank paper
+    tile[400:421, 700:711] = (20, 30, 40)                         # one word's worth of ink
+    assert _ink_box(tile) == (338, 43, 736, 736)                  # padded, grown to the detector's minimum
+    bgra = cv2.cvtColor(tile, cv2.COLOR_BGR2BGRA)                 # alpha 255 everywhere is not ink
+    assert _ink_box(bgra) == (338, 43, 736, 736)
+    grey = cv2.cvtColor(tile, cv2.COLOR_BGR2GRAY)
+    assert _ink_box(grey) == (338, 43, 736, 736)
+    faint = np.full((800, 800, 3), 250, np.uint8)
+    faint[100:200, 100:200] = 230                                 # contrast 20 < 24: still blank
+    assert _ink_box(faint) is None
+    big = np.full((1000, 2000, 3), 255, np.uint8)
+    big[10:990, 10:1990, 1] = 0                                   # ink everywhere: the whole tile
+    assert _ink_box(big) == (0, 0, 2000, 1000)
+
+
+def test_SPD_11_the_photo_check_counts_colours_without_sorting_pixel_rows():
+    """np.unique over rows of 3 bytes costs 50-70 ms per recognize; the same verdict comes from
+    packed 24-bit keys."""
+    from capture_tool.core.ocr import looks_like_photo
+    rng = np.random.default_rng(3)
+    shot = np.full((1080, 1920, 3), 255, np.uint8)
+    shot[100:900, 200:1700] = rng.integers(0, 255, (800, 1500, 3), np.uint8)
+    assert not looks_like_photo(shot)                             # white covers > 12 %
+    photo = rng.integers(0, 255, (1200, 1600, 3), np.uint8)
+    assert looks_like_photo(photo)
+    few = (rng.integers(0, 4, (600, 800, 3)) * 60).astype(np.uint8)
+    assert not looks_like_photo(few)                              # 64 colours only: a drawing
+    assert not looks_like_photo(cv2.cvtColor(photo, cv2.COLOR_BGR2GRAY))
