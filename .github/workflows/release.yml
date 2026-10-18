@@ -39,7 +39,7 @@ jobs:
           QT_QPA_PLATFORM: offscreen
         shell: pwsh
         run: |
-          python -m pytest -q -m "not windows and not slow" 2>&1 | Tee-Object pytest.log
+          python -m pytest -q -m "not windows and not slow and not timing" 2>&1 | Tee-Object pytest.log
           # Qt/onnxruntime can abort on interpreter teardown after a clean run; trust pytest's own
           # verdict (fail only if it reported failures/errors or never reached a pass summary).
           if (Select-String -Path pytest.log -Pattern "( failed|error during collection| errors)" -Quiet) { exit 1 }

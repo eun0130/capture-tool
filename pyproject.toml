@@ -35,5 +35,6 @@ pythonpath = ["."]
 addopts = "--basetemp=.pytest_tmp -p no:cacheprovider"
 markers = [
     "slow: long-running evaluation tests",
+    "timing: wall-clock bounds measured on a developer PC; not run on shared CI runners (BUG-118)",
     "windows: needs real Windows APIs",
 ]
