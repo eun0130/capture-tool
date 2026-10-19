@@ -184,3 +184,53 @@ def test_CAPP_06_process_name_of_a_real_window():
         pytest.skip("no taskbar window on this desktop")
     assert process_name(tray) == "explorer"
     assert process_name(0) == "" and process_name(123456789) == ""
+
+
+class FakeShapeService:
+    def __init__(self, present=False):
+        self.present, self.unloaded = present, 0
+
+    def available(self):
+        return self.present
+
+    def missing(self):
+        return [] if self.present else ["clip-vit-b32-ml"]
+
+    def image_blob(self, img):
+        return b"\x00" * 1024
+
+    def unload(self):
+        self.unloaded += 1
+
+
+def test_CAPP_11_shape_search_is_wired_through_the_controller(make, tmp_path, monkeypatch):
+    from capture_tool.app.indexer import Indexer
+    from capture_tool.core import model_store as ms
+    from capture_tool.core.catalog import Catalog
+    c = make(settings=Settings(auto_save=True, save_dir=str(tmp_path / "shots")))
+    c.catalog = Catalog(tmp_path / "catalog.db")
+    c.indexer = Indexer(c.catalog, None, lambda: str(tmp_path / "shots"), sync=True)
+    fake = FakeShapeService(present=False)
+    c.shape = fake
+    assert c.indexer.embedder is None                                   # no pack: no vectors
+    w = c.open_search()
+    assert w.shape is fake and w.get_packs == c.get_shape_packs and not w.shape_btn.isHidden()
+    got, prog, done = [], [], []
+
+    def download(pack, root, progress=None, cancel=None):
+        got.append((pack.id, root))
+        progress(10 * 2**20, 227 * 2**20)
+        fake.present = True
+        return root / pack.id
+    monkeypatch.setattr(ms, "download", download)
+    c.get_shape_packs(["clip-vit-b32-ml"], done.append, lambda g, t: prog.append((g, t)))
+    assert got[0][0] == "clip-vit-b32-ml" and got[0][1] == ms.user_root() and prog == [(10 * 2**20, 227 * 2**20)]
+    assert done == [True] and c.indexer.embedder == fake.image_blob     # wired the moment it arrived
+    monkeypatch.setattr(ms, "download", lambda *a, **k: (_ for _ in ()).throw(ms.DownloadError("no net")))
+    done.clear()
+    c.get_shape_packs(["clip-vit-b32-ml"], done.append, lambda g, t: None)
+    assert done == [False] and "no net" in c.messages[-1]               # no AI window: said as a toast
+    c.ai_idle()
+    assert fake.unloaded == 1
+    c.search_window.close()
+    c.catalog.close()

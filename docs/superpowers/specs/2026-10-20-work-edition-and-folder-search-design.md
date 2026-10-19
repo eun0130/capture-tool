@@ -113,7 +113,7 @@ class CompanyLLMError(Exception): kind in key/quota/network/server/blocked/model
   `onnx/model_quint8_avx2.onnx`(DistilBERT 다국어, 135 MB, 입력 `input_ids`·`attention_mask`, 출력
   `last_hidden_state` 768) + `vocab.txt`(WordPiece, cased) + `2_Dense/model.safetensors`(768→512, bias 없음).
   글 벡터 = 평균 풀링 → Dense → 정규화. 한국어·영어 질의가 같은 공간에 들어간다(번역 팩 불필요).
-- **`core/clip.py`**(Qt 없음): WordPiece 토크나이저(BERT basic tokenizer: NFC, 제어문자 제거, 한자 낱자 분리,
+- **`core/shape.py`**(Qt 없음): WordPiece 토크나이저(BERT basic tokenizer: NFC, 제어문자 제거, 한자 낱자 분리,
   구두점 분리, 대소문자 유지), `preprocess(img)`(짧은 변 224로 축소 → 가운데 224 자르기 → RGB → CLIP
   mean/std → 1×3×224×224 float32), `load_safetensors`(numpy만), `ClipModel(pack_dir)` `embed_image(img)`·
   `embed_text(text)`(둘 다 정규화된 float32[512]), `to_blob/from_blob`(float16 1024바이트),
@@ -134,11 +134,11 @@ class CompanyLLMError(Exception): kind in key/quota/network/server/blocked/model
   AI 창이 없어도 동작(진행률은 `_pack_progress` 시그널로 전달), 인덱서에 `embedder` 연결은 `main.py`에서
   팩이 이미 있을 때, 또는 받은 직후. `ai_idle()`이 CLIP도 내린다.
 - **에디션**: 두 에디션 모두. 회사용의 모델 내려받기는 기존 번역·요약 팩과 같은 길(사내 미러는 브리프 과제 C).
-- **테스트**: `tests/test_clip.py`(토크나이저가 알려진 토큰을 내는지, safetensors 읽기, 전처리 모양·값,
+- **테스트**: `tests/test_shape.py`(토크나이저가 알려진 토큰을 내는지, safetensors 읽기, 전처리 모양·값,
   가짜 세션으로 `ClipModel`, blob 왕복, `ShapeSearch`), `tests/test_catalog.py` CAT-11~12(embed 저장·대기·
   nearest·필터·점수), `tests/test_indexer.py` IDX-05, `tests/test_search_window.py` SW-07~08,
   `tests/test_catalog_app.py` CAPP-11, `tests/test_model_store.py` MS-12, 실제 팩이 설치돼 있을 때만 도는
-  측정 테스트(`tests/test_clip_real.py`: 한국어 질의 4개가 맞는 합성 그림을 1위로).
+  측정 테스트(`tests/test_shape_real.py`: 한국어 질의 4개가 맞는 합성 그림을 1위로).
 
 ### 3.7 테스트
 - `tests/test_catalog.py`: 추가·검색(3글자 FTS, 2글자 LIKE, 한국어 부분 일치, 대소문자), 필터, similar(해밍),

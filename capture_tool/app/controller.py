@@ -134,6 +134,7 @@ class Controller(QObject):
     _ai_partial = Signal(str)
     _ai_progress = Signal(object)
     _ai_dl = Signal(object)
+    _pack_progress = Signal(object)
     _share_done = Signal(object)
     _ai_preloaded = Signal(object)
     _auto_ready = Signal(object)
@@ -169,6 +170,8 @@ class Controller(QObject):
         self._ai_partial.connect(lambda t: self.ai_window and self.ai_window.set_partial(t))
         self._ai_progress.connect(lambda p: self.ai_window and self.ai_window.show_progress(*p))
         self._ai_dl.connect(lambda r: self._ai_dl_done(r))
+        self._pack_progress.connect(lambda p: self._pack_sink and self._pack_sink(*p))
+        self._pack_sink = None
         self._share_done.connect(lambda r: self._share_done_cb(r))
         self._auto_ready.connect(self._on_auto_ready)
         self._ai_idle_timer = QTimer(self)
@@ -205,6 +208,7 @@ class Controller(QObject):
         self.indexer = None                 # catalogue indexer (캡처 찾기); None in simple tests
         self.catalog = None
         self.search_window = None
+        self._shape = None                  # core.clip.ShapeSearch, made on first use
         self._picked_window = None          # the window the capture was taken from (app, title)
         self._capture_kind = "area"         # area / window / fullscreen / scroll / pin / file
         self.scroll_limits: dict = {}   # tests: max_height / max_pixels / max_steps
@@ -1946,6 +1950,7 @@ class Controller(QObject):
             ix.add(path, img, meta, ahead=ahead)
         except Exception:  # noqa: BLE001 - the catalogue never breaks a save
             log.exception("catalogue add failed")
+        self._ai_idle_timer.start()                                 # the shape model leaves memory when unused
 
     def catalog_busy(self) -> bool:
         """The indexer reads text only while nothing is being captured or edited."""
@@ -1969,13 +1974,48 @@ class Controller(QObject):
         if self.search_window is None:
             from .search_window import SearchWindow
             self.search_window = SearchWindow(self.catalog, self.indexer, open_path=self.open_image_file,
-                                              reveal=self.reveal_file, sync=self.sync)
+                                              reveal=self.reveal_file, sync=self.sync, shape=self.shape,
+                                              get_packs=self.get_shape_packs)
         w = self.search_window
         w.refresh()
         w.show()
         w.raise_()
         w.activateWindow()
+        self._ai_idle_timer.start()
         return w
+
+    # --- shape search (the optional CLIP pack) -------------------------------------------------
+    @property
+    def shape(self):
+        """core.clip.ShapeSearch: knows whether the pack is installed, makes vectors on first use."""
+        if self._shape is None:
+            from ..core.shape import ShapeSearch
+            self._shape = ShapeSearch()
+        return self._shape
+
+    @shape.setter
+    def shape(self, service) -> None:
+        self._shape = service
+        if self.indexer is not None:
+            self.indexer.set_embedder(service.image_blob if service is not None and service.available() else None)
+
+    def shape_ready(self, backlog: bool = False) -> None:
+        """The pack is there: the indexer gives every picture its vector from now on (and, when
+        asked, the ones already catalogued, when idle)."""
+        ix = self.indexer
+        if ix is None or not self.shape.available():
+            return
+        ix.set_embedder(self.shape.image_blob)
+        if backlog:
+            ix.run_backlog()
+
+    def get_shape_packs(self, packs: list[str], done, on_progress=None) -> None:
+        """The search window asks for the shape pack: download, then wire the indexer."""
+        def finished(ok: bool) -> None:
+            if ok:
+                self.shape_ready(backlog=True)
+            done(ok)
+        self.download_packs(packs, finished, on_progress)
 
     def search_similar(self) -> None:
         """Saved captures that look like the one being edited (the capture stays open)."""
@@ -2663,26 +2703,40 @@ class Controller(QObject):
         elif name in ("copy", "ppt"):
             win.set_status("넣을 결과가 없습니다.")
 
-    def _download_packs(self, packs: list[str], done) -> None:
-        """Download model packs in the background with progress in the result window."""
+    def _download_packs(self, packs: list[str], done, on_progress=None) -> None:
+        """Download model packs in the background; progress goes to the AI window, or to
+        `on_progress(got, total)` (the search window) when given."""
         from ..core import model_store as ms
         win = self.ai_window
+        self._pack_sink = on_progress
+        signal = self._pack_progress if on_progress is not None else self._ai_progress
 
         def work():
             for pid in packs:
                 ms.download(ms.CATALOG[pid], ms.user_root(),
-                            progress=lambda d, t: self._ai_progress.emit((d, t)),
+                            progress=lambda d, t: signal.emit((d, t)),
                             cancel=lambda: self._ai_cancel)
             return True
 
         def finished(result):
+            self._pack_sink = None
             if isinstance(result, Exception):
-                win.set_status(str(result))
+                if win is not None and on_progress is None:
+                    win.set_status(str(result))
+                else:
+                    self.notify(str(result))
                 done(False)
             else:
                 done(True)
         self._ai_cancel = False
         self._ai_dl_done = finished
+        if self.sync:
+            try:
+                result = work()
+            except Exception as e:  # noqa: BLE001 - reported like the threaded path
+                result = e
+            finished(result)
+            return
         QThreadPool.globalInstance().start(_Job(work, self._ai_dl))
 
     @staticmethod
@@ -2698,6 +2752,8 @@ class Controller(QObject):
         """Free the AI models' memory after a while without use."""
         if self._ai is not None:
             self._ai.unload()
+        if self._shape is not None:
+            self._shape.unload()
 
     # --- PowerPoint -----------------------------------------------------------------
     def _send_item_to_ppt(self, item, what: str, on_done=None) -> None:

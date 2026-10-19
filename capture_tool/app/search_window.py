@@ -19,7 +19,7 @@ from PySide6.QtWidgets import (QComboBox, QHBoxLayout, QLabel, QLineEdit, QListW
 
 from ..core import tagging
 from ..core.catalog import Catalog, Hit
-from ..core.clip import MIN_SCORE, SAME_SCORE, ModelMissing
+from ..core.shape import MIN_SCORE, SAME_SCORE, ModelMissing
 from ..core.tagging import COLOURS, CONTENT, KINDS
 
 ICON = QSize(176, 112)

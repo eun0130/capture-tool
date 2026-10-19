@@ -258,7 +258,7 @@ def test_SPD_14_nearest_by_shape_answers_in_under_60_ms_at_ten_thousand_rows(tmp
     """v0.9.1: 모양으로 찾기 - every stored vector is read and dotted with the query in numpy."""
     import time
     from capture_tool.core.catalog import Catalog
-    from capture_tool.core.clip import to_blob
+    from capture_tool.core.shape import to_blob
     cat = Catalog(tmp_path / "catalog.db")
     rng = np.random.default_rng(0)
     vecs = rng.standard_normal((10_000, 512)).astype(np.float32)

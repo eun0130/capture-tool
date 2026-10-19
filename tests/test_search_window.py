@@ -178,7 +178,7 @@ class FakeShape:
         return [] if self.present else ["clip-vit-b32-ml"]
 
     def text_vector(self, words):
-        from capture_tool.core.clip import ModelMissing
+        from capture_tool.core.shape import ModelMissing
         self.calls.append(words)
         if not self.present:
             raise ModelMissing(self.missing())
@@ -191,7 +191,7 @@ class FakeShape:
 
 def shaped(filled, present=True, get_packs=None):
     w, cat, folder, ids, opened = filled
-    from capture_tool.core.clip import to_blob
+    from capture_tool.core.shape import to_blob
     cat.set_embed(ids["a.png"], to_blob(vec(0)))
     cat.set_embed(ids["b.png"], to_blob(vec(1)))                          # c has no vector
     fs = FakeShape(present)

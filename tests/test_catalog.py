@@ -168,7 +168,7 @@ def vec(i: int):
 
 
 def test_CAT_11_embeddings_are_stored_later_and_pending_until_then(cat):
-    from capture_tool.core.clip import to_blob
+    from capture_tool.core.shape import to_blob
     a, b, c = fill(cat)
     assert cat.embed_count() == 0 and [i for i, _ in cat.pending_embed()] == [a, b, c]
     cat.set_embed(a, to_blob(vec(0)))
@@ -184,7 +184,7 @@ def test_CAT_11_embeddings_are_stored_later_and_pending_until_then(cat):
 
 def test_CAT_12_nearest_by_cosine_with_filters_and_a_floor(cat):
     import numpy as np
-    from capture_tool.core.clip import to_blob
+    from capture_tool.core.shape import to_blob
     a, b, c = fill(cat)
     cat.set_embed(a, to_blob(vec(0)))
     cat.set_embed(b, to_blob(vec(1)))

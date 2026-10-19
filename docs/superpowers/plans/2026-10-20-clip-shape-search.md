@@ -4,7 +4,7 @@
 
 **Goal:** v0.9.1 — 캡처 찾기 gains "모양으로": a Korean or English phrase ("막대 그래프", "확인 취소 버튼 대화 상자") finds the saved captures that look like it, entirely offline, through an optional model pack.
 
-**Architecture:** One Qt-free module `core/clip.py` (tokenizer, preprocessing, ONNX sessions, `ShapeSearch`), the catalogue gains an `embed` API and `nearest()`, the indexer fills embeddings off the GUI thread, the search window gets a toggle and a pack-download flow through the controller. Spec: `docs/superpowers/specs/2026-10-20-work-edition-and-folder-search-design.md` §3.6.
+**Architecture:** One Qt-free module `core/shape.py` (tokenizer, preprocessing, ONNX sessions, `ShapeSearch`), the catalogue gains an `embed` API and `nearest()`, the indexer fills embeddings off the GUI thread, the search window gets a toggle and a pack-download flow through the controller. Spec: `docs/superpowers/specs/2026-10-20-work-edition-and-folder-search-design.md` §3.6.
 
 **Tech Stack:** onnxruntime (already bundled), numpy, OpenCV, sqlite; model files from Hugging Face pinned by revision + SHA-256 in `core/model_store.py`.
 
@@ -17,7 +17,7 @@ Test command: `.venv\Scripts\python -X utf8 -m pytest tests/<file> -q`. Every ta
 | File | Responsibility |
 |---|---|
 | `capture_tool/core/model_store.py` | `CLIP_PACK = "clip-vit-b32-ml"`, 4 pinned files, kind "clip"; `clip_files(pack_dir) -> (vision, text, vocab, dense)` |
-| `capture_tool/core/clip.py` (new) | `WordPiece`, `preprocess`, `load_safetensors`, `ClipModel`, `to_blob/from_blob`, `find_clip()`, `ShapeSearch` |
+| `capture_tool/core/shape.py` (new) | `WordPiece`, `preprocess`, `load_safetensors`, `ClipModel`, `to_blob/from_blob`, `find_clip()`, `ShapeSearch` |
 | `capture_tool/core/catalog.py` | `Hit.score`, `set_embed`, `pending_embed`, `embed_count`, `nearest`, `_filter_sql` |
 | `capture_tool/app/indexer.py` | `embedder` param, `set_embedder`, embed on add + in the backlog |
 | `capture_tool/app/search_window.py` | `shape` + `get_packs` params, 모양으로 toggle, nearest results, CLIP neighbours in look-alikes |
@@ -30,10 +30,10 @@ Test command: `.venv\Scripts\python -X utf8 -m pytest tests/<file> -q`. Every ta
 - [ ] code: `CLIP_PACK`, `_CLIP` table, `clip_files`.
 - [ ] commit `feat: CLIP shape-search pack pinned in the model store`
 
-## Task 2: `core/clip.py`
-- [ ] tests (tests/test_clip.py): CLIP-01 WordPiece on a tiny vocab (`[CLS]`/`[SEP]`, `##` pieces, `[UNK]`, 한자 split, punctuation split, 128 cap); CLIP-02 `preprocess` → (1,3,224,224) float32, centre crop of a wide image, value of a white pixel = (1-mean)/std; CLIP-03 `load_safetensors` on a file written by the test; CLIP-04 `ClipModel` with fake sessions returns unit vectors and feeds mask/ids; CLIP-05 blob round trip float16; CLIP-06 `ShapeSearch`: `available()` false without pack, `missing()`, lazy one-time load under lock, `unload()`.
+## Task 2: `core/shape.py`
+- [ ] tests (tests/test_shape.py): CLIP-01 WordPiece on a tiny vocab (`[CLS]`/`[SEP]`, `##` pieces, `[UNK]`, 한자 split, punctuation split, 128 cap); CLIP-02 `preprocess` → (1,3,224,224) float32, centre crop of a wide image, value of a white pixel = (1-mean)/std; CLIP-03 `load_safetensors` on a file written by the test; CLIP-04 `ClipModel` with fake sessions returns unit vectors and feeds mask/ids; CLIP-05 blob round trip float16; CLIP-06 `ShapeSearch`: `available()` false without pack, `missing()`, lazy one-time load under lock, `unload()`.
 - [ ] code.
-- [ ] commit `feat: core/clip.py - multilingual CLIP text/image embeddings, Qt-free`
+- [ ] commit `feat: core/shape.py - multilingual CLIP text/image embeddings, Qt-free`
 
 ## Task 3: catalogue embeddings
 - [ ] tests CAT-11 (set_embed, pending_embed, embed_count, b"" means failed-not-pending), CAT-12 (nearest order by cosine, min_score, filters, Hit.score, rows without embed skipped), SPD-14 (10k rows nearest < 60 ms).
@@ -56,6 +56,6 @@ Test command: `.venv\Scripts\python -X utf8 -m pytest tests/<file> -q`. Every ta
 - [ ] commit `feat: shape search wired - pack download from the search window, idle unload`
 
 ## Task 7: real-model measurement, docs, release
-- [ ] `tests/test_clip_real.py` (skips without the pack): 4 Korean queries rank the matching synthetic picture first; timings recorded in test-cases.md.
+- [ ] `tests/test_shape_real.py` (skips without the pack): 4 Korean queries rank the matching synthetic picture first; timings recorded in test-cases.md.
 - [ ] guide 9장 (home + work) one step; USER_GUIDE; `python tools/make_quick_start.py`; docs/test-cases.md v0.9.1; docs/release-notes/v0.9.1.md; work-llm-brief mirror row mentions the clip pack; `__version__ = "0.9.1"`.
 - [ ] full suite, selftest both editions, commit, tag v0.9.1, publish home + work.

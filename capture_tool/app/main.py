@@ -159,6 +159,7 @@ class TrayApp:
         self.indexer = Indexer(self.catalog, self.ocr.recognize, self._save_folder, busy=self.controller.catalog_busy,
                                text_enabled=lambda: self.settings.catalog_text)
         self.controller.catalog, self.controller.indexer = self.catalog, self.indexer
+        self.controller.shape_ready()                      # the shape pack, when installed (backlog at the rescan)
         self.controller.prewarm()
         app.screenAdded.connect(lambda *_: self.controller.prewarm())
         self._build_menu()

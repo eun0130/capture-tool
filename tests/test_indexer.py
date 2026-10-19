@@ -128,7 +128,7 @@ def test_IDX_04_the_thread_mode_runs_jobs_in_order_and_signals_on_the_gui_thread
 
 
 def test_IDX_05_shape_vectors_come_with_the_picture_or_later_when_the_pack_arrives(cat, tmp_path, qt_app):
-    from capture_tool.core.clip import to_blob
+    from capture_tool.core.shape import to_blob
     folder = tmp_path / "shots"
     folder.mkdir()
     for name in ("a.png", "b.png"):
