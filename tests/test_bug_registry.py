@@ -26,6 +26,15 @@ def test_REG_01_every_bug_has_six_columns_and_a_unique_id_in_order():
     assert all(len(cells) == 6 and all(cells) for _, cells in rs)
 
 
+def test_REG_03_office_flows_reap_their_own_excel():
+    """BUG-125: every Excel the office flows start is remembered and reaped when the flow ends."""
+    src = (ROOT / "tests" / "office_flows.py").read_text(encoding="utf-8")
+    assert 'DispatchEx("Excel.Application")' not in src.replace('xl = win32com.client.DispatchEx("Excel.Application")\n'
+                                                                '    pid = wt.DWORD()', "")
+    assert src.count("_own_excel()") >= 4 and "_reap()" in src
+    assert "def pytest_sessionfinish" in (ROOT / "tests" / "conftest.py").read_text(encoding="utf-8")
+
+
 def test_REG_02_every_bug_names_regression_tests_that_exist():
     missing = []
     for bug, cells in rows():

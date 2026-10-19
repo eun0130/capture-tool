@@ -27,7 +27,7 @@ def excel_table(opts: str) -> None:
     from capture_tool.core.table import detect_grid, grid_from_cells, to_grid
     opts = set(opts.split())
     pythoncom.CoInitialize()
-    xl = win32com.client.DispatchEx("Excel.Application")
+    xl = _own_excel()
     xl.Visible = True
     xl.ErrorCheckingOptions.NumberAsText = False
     wb = xl.Workbooks.Add()
@@ -87,7 +87,7 @@ def excel_paste() -> None:
             ["긴 칸", "다음 행동 안내, 증거 미리보기, 신고·검토 UI", "Jira·GitHub·CI·메신저 이벤트 연결"]]
     win_clipboard.set_formats(text_payload("", table=grid), retries=10, delay=0.05)
     pythoncom.CoInitialize()
-    xl = win32com.client.DispatchEx("Excel.Application")
+    xl = _own_excel()
     xl.Visible = False
     wb = xl.Workbooks.Add()
     ws = wb.Worksheets(1)
@@ -362,7 +362,7 @@ def excel_box_table(src_png: str) -> None:
     t = find_box_table(cv2.imread(src_png), OcrEngine().read_words, 96)
     win_clipboard.set_formats(table_payload(t.rows, style=t.style, runs=t.runs), retries=10, delay=0.05)
     pythoncom.CoInitialize()
-    xl = win32com.client.DispatchEx("Excel.Application")
+    xl = _own_excel()
     try:
         wb = xl.Workbooks.Add()
         ws = wb.Worksheets(1)
@@ -454,7 +454,7 @@ def styled_excel(src_png: str) -> None:
     from capture_tool.platform import win_clipboard
     st = _styled_on_clipboard(src_png)
     pythoncom.CoInitialize()
-    xl = win32com.client.DispatchEx("Excel.Application")
+    xl = _own_excel()
     try:
         wb = xl.Workbooks.Add()
         ws = wb.Worksheets(1)
@@ -547,6 +547,51 @@ def styled_ppt(src_png: str, out_png: str = "") -> None:
     print("RESULT done")
 
 
+_OWN: list[int] = []        # process ids of the Excel instances this flow started
+
+
+def _own_excel():
+    """A separate Excel of our own, its process id remembered so _reap can make sure it is gone."""
+    import ctypes
+    import ctypes.wintypes as wt
+    import win32com.client
+    xl = win32com.client.DispatchEx("Excel.Application")
+    pid = wt.DWORD()
+    ctypes.windll.user32.GetWindowThreadProcessId(wt.HWND(xl.Hwnd), ctypes.byref(pid))
+    _OWN.append(pid.value)
+    return xl
+
+
+def _reap() -> None:
+    """Our own Office instances must be gone when the flow ends. An invisible Excel that was
+    pasted into survives Quit() and the end of this process (BUG-125): it then answers every
+    clipboard change on the PC (UI Automation queries, WM_MSO_BROADCASTCHANGE) and the suite
+    leaves such instances behind by the dozen, stalling the app's live copy for 60-150 ms."""
+    import ctypes
+    import gc
+    import time
+    gc.collect()                                     # drop every COM reference first
+    k32 = ctypes.windll.kernel32
+    for pid in _OWN:
+        for _ in range(15):                          # up to 3 s for Excel's own exit
+            h = k32.OpenProcess(0x1001, False, pid)  # PROCESS_TERMINATE | SYNCHRONIZE
+            if not h:
+                break
+            if k32.WaitForSingleObject(h, 200) == 0:  # exited
+                k32.CloseHandle(h)
+                break
+            k32.CloseHandle(h)
+        else:
+            h = k32.OpenProcess(0x1001, False, pid)
+            if h:
+                k32.TerminateProcess(h, 1)
+                k32.CloseHandle(h)
+                print(f"REAPED Excel {pid} (survived Quit)")
+
+
 if __name__ == "__main__":
     sys.stdout.reconfigure(encoding="utf-8")
-    globals()[sys.argv[1]](*sys.argv[2:])
+    try:
+        globals()[sys.argv[1]](*sys.argv[2:])
+    finally:
+        _reap()

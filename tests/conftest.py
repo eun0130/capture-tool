@@ -24,6 +24,31 @@ def run_on_desktop(code: str, ok, attempts: int = 3, timeout: int = 180) -> str:
     return out
 
 
+def _windowless_excel() -> set[int]:
+    """Process ids of Excel instances without a window (COM automation servers)."""
+    import subprocess
+    try:
+        out = subprocess.run(["tasklist", "/FI", "IMAGENAME eq EXCEL.EXE", "/FI", "WINDOWTITLE eq N/A", "/FO", "CSV",
+                              "/NH"], capture_output=True, text=True, encoding="utf-8", errors="replace",
+                             timeout=10).stdout or ""       # console code page: only the ASCII rows matter
+    except (OSError, subprocess.SubprocessError, ValueError):
+        return set()
+    return {int(line.split('","')[1]) for line in out.splitlines() if line.startswith('"EXCEL.EXE"')}
+
+
+def pytest_sessionstart(session):
+    session.config._excel_before = _windowless_excel()
+
+
+def pytest_sessionfinish(session, exitstatus):
+    """BUG-125: an Excel a flow started and did not get rid of stays for hours and slows every
+    clipboard change on the PC. Name them here so a leak is seen on the run that caused it."""
+    new = _windowless_excel() - getattr(session.config, "_excel_before", set())
+    if new:
+        print(f"\nWARNING: {len(new)} windowless EXCEL.EXE appeared during this session (pids {sorted(new)}): "
+              f"a test left Excel behind - see BUG-125")
+
+
 @pytest.fixture(scope="session")
 def qt_app():
     from PySide6.QtWidgets import QApplication
