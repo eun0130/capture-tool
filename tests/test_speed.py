@@ -11,6 +11,30 @@ from capture_tool.core.ocr import OcrLine
 from tests.test_app import MON_A, MON_B, FakeOcr, FakeScreen, drag, make  # noqa: F401 (fixture)
 
 
+def test_SPD_13_the_catalogue_answers_in_under_50_ms_at_two_thousand_rows(tmp_path):
+    """v0.9.0: 캡처 찾기 - FTS5 trigram for 3+ letters, LIKE for shorter, both over the one body column."""
+    import time
+    from capture_tool.core.catalog import Catalog, _colors_text
+    cat = Catalog(tmp_path / "catalog.db")
+    words = ["매출", "현황", "보고서", "분기", "회의", "설계", "sales", "report", "login", "excel"]
+    with cat.db:
+        for i in range(2000):
+            text = " ".join(words[(i + k) % len(words)] for k in range(8)) + f" 항목{i}"
+            cat.db.execute("INSERT INTO files (path, folder, name, kind, app, title, taken, phash, colors, content, text, text_done) "
+                           "VALUES (?, 'D:/s', ?, 'area', 'excel', ?, ?, ?, ?, 'text', ?, 1)",
+                           (f"D:/s/{i}.png", f"{i}.png", f"창 {i}", f"2026-{1 + i % 12:02d}-01T10:00:00", i, _colors_text(("흰색",)), text))
+            cat.db.execute("INSERT INTO fts (rowid, body) VALUES (?, ?)", (i + 1, f"{i}.png excel 창 {i} " + text))
+    for q in ("매출", "보고서 분기", "sales", "항목777", ""):
+        t0 = time.perf_counter()
+        hits = cat.search(q, limit=200)
+        ms = (time.perf_counter() - t0) * 1000
+        assert hits and ms < 50, (q, ms)
+    t0 = time.perf_counter()
+    cat.similar(12345)
+    assert (time.perf_counter() - t0) * 1000 < 50
+    cat.close()
+
+
 def test_SPD_01_png_is_encoded_with_opencv_defaults(monkeypatch):
     """A compression parameter makes imencode 2.7x slower at 4K (the default already is level 1 + RLE)."""
     from capture_tool.app import controller as mod

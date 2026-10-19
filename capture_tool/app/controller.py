@@ -1938,13 +1938,12 @@ class Controller(QObject):
             title = getattr(win, "title", "") or ""
             app = self._screen("process_name", getattr(win, "hwnd", 0), default="") or ""
         meta = CaptureMeta(kind or self._capture_kind, app, title, self.now().isoformat(timespec="seconds"))
-        lines = None
+        ahead = None
         slot = getattr(self, "_ahead", None)
-        if slot is not None and slot["done"].is_set() and not isinstance(slot["result"], Exception) \
-                and slot["key"] == self._read_key(img):
-            lines = list(slot["result"])
+        if slot is not None and slot["done"].is_set() and not isinstance(slot["result"], Exception):
+            ahead = (slot["key"], list(slot["result"]))        # (pixels read, their lines): compared off-thread
         try:
-            ix.add(path, img, meta, lines)
+            ix.add(path, img, meta, ahead=ahead)
         except Exception:  # noqa: BLE001 - the catalogue never breaks a save
             log.exception("catalogue add failed")
 

@@ -50,9 +50,14 @@ def test_IDX_01_a_saved_capture_is_described_at_once_and_read_with_the_read_ahea
     assert cat.thumb(hit.id) and "창" in hit.tags and "excel" in hit.tags and "읽어" in hit.tags
     p2 = folder / "two.png"
     cv2.imwrite(str(p2), picture("Other"))
-    ix.add(p2, picture("Other"), CaptureMeta("area"), None)                     # no read-ahead: read now (idle)
-    assert reader.calls == [(200, 400, 3)] and cat.search("보고서")[0].path == str(p2)
-    assert cat.get(cat.search("보고서")[0].id).text_done == 1 and "매출" in cat.get(2).tags
+    same = picture("Other")
+    ix.add(p2, same, CaptureMeta("area"), None, ahead=(Indexer.pixel_key(same), lines))   # the read-ahead's pixels
+    assert reader.calls == [] and cat.search("읽어")[1].path == str(p2)
+    p3 = folder / "three.png"
+    cv2.imwrite(str(p3), picture("Third"))
+    ix.add(p3, picture("Third"), CaptureMeta("area"), None, ahead=(Indexer.pixel_key(same), lines))  # other pixels
+    assert reader.calls == [(200, 400, 3)] and cat.search("보고서")[0].path == str(p3)
+    assert cat.get(cat.search("보고서")[0].id).text_done == 1 and "매출" in cat.get(3).tags
 
 
 def test_IDX_02_rescan_catalogues_the_folder_backlog_and_waits_while_capturing(cat, tmp_path, qt_app):

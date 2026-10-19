@@ -56,10 +56,11 @@ class Indexer(QObject):
         self.ocr_calls = 0
 
     # --- what the app asks ---------------------------------------------------------------------
-    def add(self, path: str | Path, img: np.ndarray, meta: CaptureMeta, lines: list | None = None) -> None:
+    def add(self, path: str | Path, img: np.ndarray, meta: CaptureMeta, lines: list | None = None,
+            ahead: tuple | None = None) -> None:
         """A capture was just saved. Described now (ms); its text now if `lines` were read
-        already, else later when idle."""
-        self._run(lambda: self._add(str(path), img, meta, lines))
+        already - or if `ahead` = (key, lines) read these very pixels - else later when idle."""
+        self._run(lambda: self._add(str(path), img, meta, lines, ahead))
 
     def rescan(self) -> None:
         """Compare the catalogue with the save folder: new pictures are added (text later),
@@ -106,7 +107,15 @@ class Indexer(QObject):
             return None
         return "\n".join(l.text for l in lines if getattr(l, "text", "").strip())
 
-    def _add(self, path: str, img: np.ndarray, meta: CaptureMeta, lines: list | None) -> None:
+    @staticmethod
+    def pixel_key(img: np.ndarray):
+        """The same key the controller's read-ahead uses for 'these pixels'."""
+        import hashlib
+        return img.shape, hashlib.blake2b(np.ascontiguousarray(img).tobytes(), digest_size=16).digest()
+
+    def _add(self, path: str, img: np.ndarray, meta: CaptureMeta, lines: list | None, ahead: tuple | None = None) -> None:
+        if lines is None and ahead is not None and ahead[0] == self.pixel_key(img):
+            lines = ahead[1]
         d = tagging.describe(img, lines)
         want_text = self.text_enabled() and self.read_text is not None
         text = self._text_of(lines) if want_text else ""

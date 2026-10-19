@@ -18,7 +18,11 @@ class RecIndexer:
     def __init__(self):
         self.calls = []
 
-    def add(self, path, img, meta, lines=None):
+    def add(self, path, img, meta, lines=None, ahead=None):
+        if lines is None and ahead is not None:
+            from capture_tool.app.indexer import Indexer
+            if ahead[0] == Indexer.pixel_key(img):
+                lines = ahead[1]
         self.calls.append((path, img.shape, meta, lines))
 
 
@@ -61,6 +65,18 @@ def test_CAPP_02_the_read_ahead_text_is_reused_not_read_twice(make):
     drag(ov2, (150, 150), (250, 250))                        # drawn on: the pixels differ from what was read
     c.on_toolbar_action("save")
     assert c.indexer.calls[-1][3] is None
+
+
+def test_CAPP_02b_the_gui_thread_never_hashes_the_picture(make, monkeypatch):
+    """Comparing the saved pixels with the read-ahead's (31 ms at 4K) happens on the indexer."""
+    from capture_tool.app.controller import Controller
+    c = _with_indexer(make, ocr=FakeOcr(LINES))
+    c.read_ahead_mode = "inline"
+    c.start_capture()
+    drag(c.overlays[0], (100, 100), (500, 400))
+    monkeypatch.setattr(Controller, "_read_key", staticmethod(lambda raw: (_ for _ in ()).throw(AssertionError("hashed on the GUI thread"))))
+    c.on_toolbar_action("save")
+    assert c.indexer.calls and c.indexer.calls[-1][3] is not None
 
 
 def test_CAPP_03_each_kind_of_capture_is_named(make):
