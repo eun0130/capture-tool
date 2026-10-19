@@ -6,6 +6,8 @@ import json
 import re
 from typing import Callable
 
+from .cloud_error import CloudError
+
 BASE = "https://generativelanguage.googleapis.com/v1beta/models/{}:generateContent"
 MODELS = ["gemini-2.5-flash-lite", "gemini-2.5-flash", "gemini-flash-lite-latest"]
 KEY_PAGE = "https://aistudio.google.com/apikey"
@@ -23,10 +25,8 @@ MESSAGES = {
 }
 
 
-class GeminiError(Exception):
-    def __init__(self, kind: str, message: str | None = None):
-        super().__init__(message or MESSAGES.get(kind, MESSAGES["other"]))
-        self.kind = kind
+class GeminiError(CloudError):
+    MESSAGES = MESSAGES
 
 
 def find_key(text: str) -> str | None:

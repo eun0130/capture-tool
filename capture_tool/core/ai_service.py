@@ -11,7 +11,7 @@ from typing import Callable
 
 from .ai_local import Busy
 from .ai_text import default_target, detect_lang, summary_prompt, translate_prompt
-from .gemini import GeminiError
+from .cloud_error import CloudError
 from .redact import mask
 
 MAX_INPUT = 20000
@@ -108,7 +108,7 @@ class AiService:
                     try:
                         out = cloud.generate(translate_prompt(mask(text), src, tgt))
                         return self._remember(key, AiResult(out, "cloud", src, tgt, note))
-                    except GeminiError as e:
+                    except CloudError as e:
                         why = _FALLBACK.get(e.kind, str(e) + " 오프라인으로 처리했습니다.")
                 note = self._join(note, why)
                 out = self.translator.translate(text, src, tgt, cancel=cancel)
@@ -131,7 +131,7 @@ class AiService:
                     try:
                         return self._remember(key, AiResult(cloud.generate(summary_prompt(mask(text), lang)),
                                                             "cloud", tgt=lang, note=note))
-                    except GeminiError as e:
+                    except CloudError as e:
                         why = _FALLBACK.get(e.kind, str(e) + " 오프라인으로 처리했습니다.")
                 note = self._join(note, why)
                 out = self.summarizer.summarize(text, lang, on_text=on_text, cancel=cancel)
