@@ -252,3 +252,27 @@ def test_SPD_12_the_live_copy_encodes_off_the_gui_thread_and_only_the_newest_rou
     c._on_auto_ready((seq, {PNG: b"late"}))
     assert pngs()[-1] != b"late"
     c.sync = True
+
+
+def test_SPD_14_nearest_by_shape_answers_in_under_60_ms_at_ten_thousand_rows(tmp_path):
+    """v0.9.1: 모양으로 찾기 - every stored vector is read and dotted with the query in numpy."""
+    import time
+    from capture_tool.core.catalog import Catalog
+    from capture_tool.core.clip import to_blob
+    cat = Catalog(tmp_path / "catalog.db")
+    rng = np.random.default_rng(0)
+    vecs = rng.standard_normal((10_000, 512)).astype(np.float32)
+    vecs /= np.linalg.norm(vecs, axis=1, keepdims=True)
+    with cat.db:
+        for i in range(10_000):
+            cat.db.execute("INSERT INTO files (path, folder, name, kind, taken, embed) VALUES (?, 'D:/s', ?, 'area', ?, ?)",
+                           (f"D:/s/{i}.png", f"{i}.png", "2026-10-01T10:00:00", to_blob(vecs[i])))
+    q = vecs[1234]
+    t0 = time.perf_counter()
+    hits = cat.nearest(q, limit=60, min_score=0.17)
+    ms = (time.perf_counter() - t0) * 1000
+    assert hits and hits[0].id == 1235 and hits[0].score > 0.99 and ms < 60, ms
+    t0 = time.perf_counter()
+    cat.nearest(q, limit=60, min_score=0.17, kind="area", since="2026-09-01")
+    assert (time.perf_counter() - t0) * 1000 < 80
+    cat.close()

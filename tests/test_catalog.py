@@ -158,3 +158,45 @@ def test_CAT_09_reopening_keeps_everything(tmp_path):
 def test_CAT_10_bad_folder_scan_is_empty_not_an_error(cat, tmp_path):
     assert cat.reconcile(str(tmp_path / "missing")) == ([], 0, 0)
     assert cat.search("x") == [] and cat.similar(1) == []
+
+
+def vec(i: int):
+    import numpy as np
+    v = np.zeros(512, np.float32)
+    v[i] = 1.0
+    return v
+
+
+def test_CAT_11_embeddings_are_stored_later_and_pending_until_then(cat):
+    from capture_tool.core.clip import to_blob
+    a, b, c = fill(cat)
+    assert cat.embed_count() == 0 and [i for i, _ in cat.pending_embed()] == [a, b, c]
+    cat.set_embed(a, to_blob(vec(0)))
+    cat.set_embed(b, b"")                                            # could not be embedded: never asked again
+    assert cat.embed_count() == 1 and [i for i, _ in cat.pending_embed()] == [c]
+    assert cat.pending_embed(limit=0) == []
+    cat.add(os.path.join(str(Path("D:/shots")), "a.png"), desc(), meta("area"))  # re-added (changed on disk): embed again
+    assert [i for i, _ in cat.pending_embed()] == [a, c]
+    cat.set_embed(c, to_blob(vec(1)))
+    cat.remove(c)
+    assert cat.embed_count() == 0 and cat.pending_embed() == [(a, os.path.join(str(Path("D:/shots")), "a.png"))]
+
+
+def test_CAT_12_nearest_by_cosine_with_filters_and_a_floor(cat):
+    import numpy as np
+    from capture_tool.core.clip import to_blob
+    a, b, c = fill(cat)
+    cat.set_embed(a, to_blob(vec(0)))
+    cat.set_embed(b, to_blob(vec(1)))
+    q = np.zeros(512, np.float32)
+    q[0], q[1] = 0.8, 0.6                                            # closer to a than to b; c has no vector
+    hits = cat.nearest(q)
+    assert [h.id for h in hits] == [a, b] and abs(hits[0].score - 0.8) < 1e-3 and abs(hits[1].score - 0.6) < 1e-3
+    assert cat.nearest(q, min_score=0.7) == hits[:1] and cat.nearest(q, limit=1) == hits[:1]
+    assert [h.id for h in cat.nearest(q, content="code")] == [b]
+    assert [h.id for h in cat.nearest(q, since="2026-10-19")] == [b]
+    assert [h.id for h in cat.nearest(q, colour="빨강")] == [a]
+    assert cat.nearest(q, app="chrome") == [] and cat.nearest(q, kind="window", content="code") == []
+    assert Hit.__dataclass_fields__["score"].default == -1.0 and cat.search("")[0].score == -1.0
+    cat.set_embed(a, b"")
+    assert [h.id for h in cat.nearest(q)] == [b]                        # a failed blob is skipped

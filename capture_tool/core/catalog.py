@@ -12,6 +12,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable
 
+import numpy as np
+
 from .redact import mask
 from .tagging import CaptureMeta, Described
 
@@ -19,6 +21,7 @@ IMAGE_SUFFIXES = (".png", ".jpg", ".jpeg", ".bmp", ".gif", ".webp", ".tif", ".ti
 SNIPPET = 100
 FTS_MIN = 3                 # trigram index: shorter words are searched with LIKE
 SIMILAR_DISTANCE = 16       # hamming distance of two 64-bit hashes still called "similar"
+EMBED_BYTES = 1024          # 512 float16: a CLIP vector (core/clip.py); b"" = could not be embedded
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS files (
@@ -53,6 +56,7 @@ class Hit:
     phash: int
     text_done: int
     distance: int = -1          # similar(): hamming distance to the asked hash
+    score: float = -1.0         # nearest(): cosine to the asked vector
 
 
 def _signed(phash: int) -> int:
@@ -122,7 +126,7 @@ class Catalog:
                           w=described.w, h=described.h, kind=meta.kind, app=meta.app, title=meta.title,
                           taken=meta.taken, phash=_signed(described.phash), colors=_colors_text(described.colors),
                           content=described.content, size_class=described.size_class, text=masked,
-                          text_done=1 if text is not None else 0, thumb=thumb)
+                          text_done=1 if text is not None else 0, thumb=thumb, embed=None)
             if fid is None:
                 cols = ", ".join(values)
                 fid = self.db.execute(f"INSERT INTO files ({cols}) VALUES ({', '.join(':' + c for c in values)})",
@@ -149,6 +153,11 @@ class Catalog:
     def mark_failed(self, file_id: int) -> None:
         with self._lock, self.db:
             self.db.execute("UPDATE files SET text_done = -1 WHERE id = ?", (file_id,))
+
+    def set_embed(self, file_id: int, blob: bytes) -> None:
+        """The picture's shape vector (b"" when it could not be made: it is not asked again)."""
+        with self._lock, self.db:
+            self.db.execute("UPDATE files SET embed = ? WHERE id = ?", (bytes(blob), file_id))
 
     def set_user_tags(self, file_id: int, tags: Iterable[str]) -> None:
         with self._lock, self.db:
@@ -203,7 +212,7 @@ class Catalog:
         self.db.execute("INSERT INTO fts (rowid, body) VALUES (?, ?)", (file_id, body))
 
     # --- reading ---------------------------------------------------------------------------------
-    def _hit(self, row, query_words: list[str] = (), distance: int = -1) -> Hit:
+    def _hit(self, row, query_words: list[str] = (), distance: int = -1, score: float = -1.0) -> Hit:
         text = row["text"] or ""
         snippet = text[:SNIPPET]
         for w in query_words:
@@ -215,7 +224,7 @@ class Catalog:
         colors = tuple(c for c in (row["colors"] or "").split(",") if c)
         return Hit(int(row["id"]), row["path"], row["name"], row["folder"], row["taken"] or "", row["kind"] or "",
                    row["app"] or "", row["title"] or "", row["content"] or "", colors, tuple(self._tags(row["id"])),
-                   " ".join(snippet.split()), _unsigned(row["phash"]), int(row["text_done"]), distance)
+                   " ".join(snippet.split()), _unsigned(row["phash"]), int(row["text_done"]), distance, score)
 
     def get(self, file_id: int) -> Hit | None:
         with self._lock:
@@ -235,6 +244,16 @@ class Catalog:
         with self._lock:
             rows = self.db.execute("SELECT id, path FROM files WHERE text_done = 0 ORDER BY id LIMIT ?", (limit,))
             return [(int(r["id"]), r["path"]) for r in rows]
+
+    def pending_embed(self, limit: int = 50) -> list[tuple[int, str]]:
+        """Pictures without a shape vector yet (oldest row first)."""
+        with self._lock:
+            rows = self.db.execute("SELECT id, path FROM files WHERE embed IS NULL ORDER BY id LIMIT ?", (limit,))
+            return [(int(r["id"]), r["path"]) for r in rows]
+
+    def embed_count(self) -> int:
+        with self._lock:
+            return int(self.db.execute("SELECT COUNT(*) FROM files WHERE length(embed) = ?", (EMBED_BYTES,)).fetchone()[0])
 
     def apps(self) -> list[str]:
         with self._lock:
@@ -274,16 +293,9 @@ class Catalog:
         for w in short_words:
             where.append("fts.body LIKE ? ESCAPE '\\'")
             args.append("%" + w.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%")
-        for col, val in (("kind", kind), ("content", content), ("app", app), ("folder", folder)):
-            if val:
-                where.append(f"f.{col} = ?")
-                args.append(val)
-        if since:
-            where.append("f.taken >= ?")
-            args.append(since)
-        if colour:
-            where.append("f.colors LIKE ?")
-            args.append(f"%,{colour},%")
+        w, a = self._filter_sql(kind, content, app, since, colour, folder)
+        where += w
+        args += a
         sql = "SELECT f.* FROM files f" + joins + (" WHERE " + " AND ".join(where) if where else "")
         sql += (" ORDER BY bm25(fts), f.taken DESC, f.id DESC" if long_words else " ORDER BY f.taken DESC, f.id DESC")
         sql += " LIMIT ?"
@@ -294,6 +306,48 @@ class Catalog:
             except sqlite3.OperationalError:
                 return []
             return [self._hit(r, words) for r in rows]
+
+    @staticmethod
+    def _filter_sql(kind=None, content=None, app=None, since=None, colour=None, folder=None) -> tuple[list, list]:
+        where, args = [], []
+        for col, val in (("kind", kind), ("content", content), ("app", app), ("folder", folder)):
+            if val:
+                where.append(f"f.{col} = ?")
+                args.append(val)
+        if since:
+            where.append("f.taken >= ?")
+            args.append(since)
+        if colour:
+            where.append("f.colors LIKE ?")
+            args.append(f"%,{colour},%")
+        return where, args
+
+    def nearest(self, vec, limit: int = 60, min_score: float = 0.0, kind: str | None = None,
+                content: str | None = None, app: str | None = None, since: str | None = None,
+                colour: str | None = None, folder: str | None = None) -> list[Hit]:
+        """Pictures whose shape vector is closest to `vec` (cosine, best first), at least
+        `min_score`, narrowed by the same filters as search(). Rows without a vector are skipped."""
+        q = np.asarray(vec, np.float32).reshape(-1)
+        with self._lock:
+            where, args = self._filter_sql(kind, content, app, since, colour, folder)
+            where.append("length(f.embed) = ?")
+            args.append(EMBED_BYTES)
+            rows = self.db.execute("SELECT f.id, f.embed FROM files f WHERE " + " AND ".join(where), args).fetchall()
+            if not rows:
+                return []
+            ids = np.fromiter((r["id"] for r in rows), np.int64, len(rows))
+            mat = np.frombuffer(b"".join(bytes(r["embed"]) for r in rows), dtype=np.float16).reshape(len(rows), -1)
+            scores = mat.astype(np.float32) @ q
+            keep = np.flatnonzero(scores >= min_score)
+            if keep.size == 0:
+                return []
+            top = keep[np.argsort(-scores[keep], kind="stable")][:limit]
+            out = []
+            for i in top:
+                row = self.db.execute("SELECT * FROM files WHERE id = ?", (int(ids[i]),)).fetchone()
+                if row:
+                    out.append(self._hit(row, score=float(scores[i])))
+            return out
 
     def similar(self, phash: int, limit: int = 50, max_distance: int = SIMILAR_DISTANCE) -> list[Hit]:
         """Pictures whose hash is within `max_distance` bits, nearest first."""
