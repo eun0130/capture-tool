@@ -103,10 +103,42 @@ class CompanyLLMError(Exception): kind in key/quota/network/server/blocked/model
 `catalog_text: bool = True`(글자 색인), `catalog_enabled: bool = True`, 단축키 `search`. 설정 창 "검색" 묶음.
 `show_recent`의 recent strip은 카탈로그 썸네일이 있으면 그것을 쓴다(없으면 지금처럼 파일에서).
 
-### 3.6 모양 검색 2단계 (v0.9.1, 별도 작업)
-model_store 팩 "clip"(ViT-B/32 int8 ONNX, 이미지·텍스트 인코더). 설치돼 있으면 카탈로그에 `embed BLOB`
-(512 float16)를 채우고, 검색칸의 질의를 오프라인 ko→en 번역기로 영어로 바꿔 텍스트 임베딩과 코사인 유사도로
-"모양으로 찾기" 탭에 보여 준다. 없으면 탭이 숨겨진다. 이 문서는 자리만 잡아 둔다(`embed` 열은 v0.9.0에 미리 둠).
+### 3.6 모양 검색 2단계 (v0.9.1) — "말로 모양 찾기"
+탐침(2026-10-20) 결과로 v0.9.0 때 적어 둔 "ko→en 번역 + CLIP 텍스트 인코더" 안은 버린다: Argos ko→en은
+짧은 질의를 못 옮긴다("표"→"Ticketing", "지도"→"About Us"). 대신 **다국어 CLIP 텍스트 인코더**를 쓴다.
+
+- **팩** `clip-vit-b32-ml`(model_store, kind "clip", 약 227 MB, 고정 리비전·SHA-256): 그림 인코더
+  `Xenova/clip-vit-base-patch32` `onnx/vision_model_quantized.onnx`(int8, 89 MB, 입력 `pixel_values`
+  1×3×224×224, 출력 `image_embeds` 512) + 글 인코더 `sentence-transformers/clip-ViT-B-32-multilingual-v1`
+  `onnx/model_quint8_avx2.onnx`(DistilBERT 다국어, 135 MB, 입력 `input_ids`·`attention_mask`, 출력
+  `last_hidden_state` 768) + `vocab.txt`(WordPiece, cased) + `2_Dense/model.safetensors`(768→512, bias 없음).
+  글 벡터 = 평균 풀링 → Dense → 정규화. 한국어·영어 질의가 같은 공간에 들어간다(번역 팩 불필요).
+- **`core/clip.py`**(Qt 없음): WordPiece 토크나이저(BERT basic tokenizer: NFC, 제어문자 제거, 한자 낱자 분리,
+  구두점 분리, 대소문자 유지), `preprocess(img)`(짧은 변 224로 축소 → 가운데 224 자르기 → RGB → CLIP
+  mean/std → 1×3×224×224 float32), `load_safetensors`(numpy만), `ClipModel(pack_dir)` `embed_image(img)`·
+  `embed_text(text)`(둘 다 정규화된 float32[512]), `to_blob/from_blob`(float16 1024바이트),
+  `ShapeSearch(find, loader)`: 팩 유무 `available()`, 느린 첫 로드는 잠금 안에서 한 번, `text_vector(q)`,
+  `image_blob(img)`, `unload()`.
+- **카탈로그**: `files.embed`(float16 512)를 채운다. `set_embed(id, blob)`, `pending_embed(limit)`(embed IS NULL),
+  `embed_count()`, `nearest(vec, limit, min_score, 필터…)` — 모든 embed를 읽어 코사인(내적) 계산, 점수순,
+  필터는 같은 SQL 조각(`_filter_sql`)으로. `Hit.score`(float, 기본 -1). 1만 행 10 ms급.
+- **인덱서**: `embedder`(그림→blob, 없으면 None)를 받아 저장 직후 `describe` 뒤에 임베딩(4K 30 ms, 워커
+  스레드), 백로그에서는 글자 읽기 뒤 `pending_embed`를 한가할 때 채운다. 팩을 나중에 받으면
+  `set_embedder()` 뒤 `run_backlog()`로 기존 그림도 채운다. 실패한 그림은 빈 blob(`b""`)으로 표시해 재시도하지 않는다.
+- **검색 창**: 검색칸 옆 **모양으로** 토글(QPushButton checkable). 켜면 입력이 질의 → `shape.text_vector` →
+  `catalog.nearest(limit 60, min_score 0.17)`, 칩은 그대로 적용, 상태줄 "n개 (모양이 비슷한 순)". 팩이 없으면
+  토글을 켤 때 받기 확인(크기 표시) → `get_packs(ids, done)`(컨트롤러의 `download_packs`) → 받은 뒤
+  `indexer.set_embedder` + 백로그 + 검색. 거절하면 토글이 꺼진다. 받는 동안 상태줄에 진행률.
+  **비슷한 그림 찾기**는 팩이 있으면 해시 결과 뒤에 CLIP 이웃(코사인 ≥ 0.75)을 덧붙인다.
+- **컨트롤러**: `shape` 속성(ShapeSearch, 지연 생성), `_download_packs(packs, done, on_progress=None)` —
+  AI 창이 없어도 동작(진행률은 `_pack_progress` 시그널로 전달), 인덱서에 `embedder` 연결은 `main.py`에서
+  팩이 이미 있을 때, 또는 받은 직후. `ai_idle()`이 CLIP도 내린다.
+- **에디션**: 두 에디션 모두. 회사용의 모델 내려받기는 기존 번역·요약 팩과 같은 길(사내 미러는 브리프 과제 C).
+- **테스트**: `tests/test_clip.py`(토크나이저가 알려진 토큰을 내는지, safetensors 읽기, 전처리 모양·값,
+  가짜 세션으로 `ClipModel`, blob 왕복, `ShapeSearch`), `tests/test_catalog.py` CAT-11~12(embed 저장·대기·
+  nearest·필터·점수), `tests/test_indexer.py` IDX-05, `tests/test_search_window.py` SW-07~08,
+  `tests/test_catalog_app.py` CAPP-11, `tests/test_model_store.py` MS-12, 실제 팩이 설치돼 있을 때만 도는
+  측정 테스트(`tests/test_clip_real.py`: 한국어 질의 4개가 맞는 합성 그림을 1위로).
 
 ### 3.7 테스트
 - `tests/test_catalog.py`: 추가·검색(3글자 FTS, 2글자 LIKE, 한국어 부분 일치, 대소문자), 필터, similar(해밍),

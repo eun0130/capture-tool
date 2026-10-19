@@ -49,6 +49,7 @@ def mt_pack_id(src: str, tgt: str) -> str:
 
 
 LLM_PACK = "llm-qwen3-1.7b"
+CLIP_PACK = "clip-vit-b32-ml"
 _ARGOS = "https://argos-net.com/v1/translate-{}.argosmodel"
 _HF = "https://huggingface.co/hb-dev/Qwen3-1.7B-ONNX-GenAI/resolve/f9a79b179d34383b3e6afc95ae4882767067ba31/{}"
 # (pair, version, size, sha256) — Argos Translate packages (OPUS data, MIT/CC-BY), pinned by hash
@@ -75,6 +76,21 @@ _LLM = [
     ("tokenizer.json", 11422648, "979d160e081df25a1bf7f4e2e8f4c441b5dfdc9a8e84aec9f32e80445e1b59b8"),
     ("model.onnx", 1408943689, "9fddc5a0a7f9c51132c376db8fe44774b17a8e42d721c4d289ade16af87da0bd"),
 ]
+# shape search (v0.9.1): CLIP ViT-B/32 picture encoder (OpenAI weights, MIT; int8 ONNX by Xenova) and the
+# multilingual text encoder aligned to it (sentence-transformers clip-ViT-B-32-multilingual-v1, Apache-2.0:
+# DistilBERT -> mean pooling -> dense 768->512), both pinned to one revision
+_CLIP_VISION = "https://huggingface.co/Xenova/clip-vit-base-patch32/resolve/d15189d7028b43f1d3e65039190477f6af591c2a/{}"
+_CLIP_TEXT = ("https://huggingface.co/sentence-transformers/clip-ViT-B-32-multilingual-v1/resolve/"
+              "58edf8cada9e398793dca955574a48cbb7f18be2/{}")
+_CLIP = [
+    (_CLIP_VISION, "onnx/vision_model_quantized.onnx", "vision.onnx", 89117001,
+     "583fd1110a514667812fee7d684952aaf82a99b959760c8d7dca7e0ab9839299"),
+    (_CLIP_TEXT, "onnx/model_quint8_avx2.onnx", "text.onnx", 135377779,
+     "fbc8fbeaa5237d96bd1bf430057c70d34de8334a463e933a5faa305f6caeed9c"),
+    (_CLIP_TEXT, "vocab.txt", "vocab.txt", 995526, "fe0fda7c425b48c516fc8f160d594c8022a0808447475c1a7c6d6479763f310c"),
+    (_CLIP_TEXT, "2_Dense/model.safetensors", "dense.safetensors", 1572984,
+     "d12568dc7300970a4d3dbb49068ad16cd89b99840b74b026f8e48071e9414f74"),
+]
 _NAMES = {"ko": "한국어", "en": "영어", "ja": "일본어", "zh": "중국어", "fr": "프랑스어", "es": "스페인어", "de": "독일어"}
 
 
@@ -86,6 +102,8 @@ def _catalog() -> dict[str, Pack]:
         out[mt_pack_id(src, tgt)] = Pack(mt_pack_id(src, tgt), f"번역 {_NAMES[src]}→{_NAMES[tgt]}", "mt", (f,))
     files = tuple(ModelFile(_HF.format(name), sha, size, name) for name, size, sha in _LLM)
     out[LLM_PACK] = Pack(LLM_PACK, "오프라인 요약 모델 (Qwen3 1.7B)", "llm", files)
+    files = tuple(ModelFile(base.format(remote), sha, size, name) for base, remote, name, size, sha in _CLIP)
+    out[CLIP_PACK] = Pack(CLIP_PACK, "모양으로 찾기 모델 (CLIP)", "clip", files)
     return out
 
 
@@ -224,3 +242,13 @@ def mt_files(pack_dir: Path) -> tuple[Path, Path]:
             if tok.exists():
                 return model_dir, tok
     raise FileNotFoundError(f"translation model files missing in {pack_dir}")
+
+
+def clip_files(pack_dir: Path) -> tuple[Path, Path, Path, Path]:
+    """(picture encoder, text encoder, WordPiece vocabulary, dense projection) inside the CLIP pack."""
+    d = Path(pack_dir)
+    paths = tuple(d / name for name in ("vision.onnx", "text.onnx", "vocab.txt", "dense.safetensors"))
+    missing = [p.name for p in paths if not p.exists()]
+    if missing:
+        raise FileNotFoundError(f"shape-search model files missing in {d}: {', '.join(missing)}")
+    return paths

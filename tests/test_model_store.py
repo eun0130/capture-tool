@@ -132,3 +132,18 @@ def test_MS_11_bpe_pack_model_dir(tmp_path):
     d = ms.download(pack_of(web.blobs, unzip=True), tmp_path, fetch=web)
     model_dir, tok = ms.mt_files(d)
     assert tok.name == "bpe.model"
+
+
+def test_MS_12_clip_pack_is_pinned_and_its_files_are_found(tmp_path):
+    """v0.9.1: the shape-search pack - CLIP picture encoder + multilingual text encoder, four files."""
+    p = ms.CATALOG[ms.CLIP_PACK]
+    assert p.kind == "clip" and len(p.files) == 4 and 200 * 2**20 < ms.pack_size(p) < 260 * 2**20
+    assert {f.name for f in p.files} == {"vision.onnx", "text.onnx", "vocab.txt", "dense.safetensors"}
+    for f in p.files:
+        assert f.url.startswith("https://huggingface.co/") and "/resolve/main/" not in f.url and not f.unzip
+    with pytest.raises(FileNotFoundError):
+        ms.clip_files(tmp_path)
+    for f in p.files:
+        (tmp_path / f.name).write_bytes(b"x")
+    vision, text, vocab, dense = ms.clip_files(tmp_path)
+    assert (vision.name, text.name, vocab.name, dense.name) == ("vision.onnx", "text.onnx", "vocab.txt", "dense.safetensors")
