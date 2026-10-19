@@ -162,12 +162,50 @@ def recent_shot():
     return img
 
 
+def search_shot():
+    """The 캡처 찾기 window over a small made-up catalogue (crops of the made-up screen)."""
+    import tempfile
+    from capture_tool.app.search_window import SearchWindow
+    from capture_tool.core import tagging
+    from capture_tool.core.catalog import Catalog
+    from capture_tool.core.tagging import CaptureMeta
+    folder = Path(tempfile.mkdtemp())
+    cat = Catalog(folder / "catalog.db")
+    screen = fake_screen()
+    rows = [((96, 60, 520, 560), "window", "excel", "3분기 판매 현황 - Excel", "2026-10-20T09:12:00",
+             "3분기 판매 현황 제품 수량 매출 비고 노트북 120 1억 5천만 영업팀 모니터 300 9,600만"),
+            ((150, 90, 260, 820), "area", "excel", "3분기 판매 현황 - Excel", "2026-10-19T16:40:00",
+             "제품 수량 매출 비고 노트북 모니터 키보드 마우스"),
+            ((0, 0, 48, 1100), "area", "chrome", "주간 업무 보고 - Chrome", "2026-10-19T10:05:00", "주간 업무 보고"),
+            ((400, 60, 200, 700), "scroll", "chrome", "주간 업무 보고 - Chrome", "2026-10-18T14:30:00",
+             "다음 주 계획: 신제품 출시 준비, 거래처 방문 3곳"),
+            ((80, 60, 560, 980), "fullscreen", "", "", "2026-10-17T11:00:00", "주간 업무 보고 3분기 판매 현황")]
+    for k, ((y, x, h, w), kind, app_, title, taken, text) in enumerate(rows):
+        img = screen[y:y + h, x:x + w]
+        path = folder / f"2610{20 - k:02d}_0{9 + k}1200.png"
+        cv2.imwrite(str(path), img)
+        d = tagging.describe(img)
+        meta = CaptureMeta(kind, app_, title, taken)
+        cat.add(path, d, meta, text=text, tags=tagging.auto_tags(meta, d), thumb=tagging.thumbnail(img))
+    cat.set_user_tags(1, ["중요"])
+    w = SearchWindow(cat, None, sync=True)
+    w.resize(900, 520)
+    w.query.setText("판매")
+    w.show()
+    app.processEvents()
+    img = grab(w)
+    w.close()
+    cat.close()
+    return img
+
+
 def main() -> None:
     full = capture_shot(False)
     save("capture.png", full[96:560, 60:1060])
     wide = capture_shot(True, dragging="translate")
     save("bar_full.png", wide[388:548, :])          # the grouped 전체 rows are wide: whole width, shrunk
     save("recent.png", recent_shot())
+    save("search.png", search_shot())
 
     import subprocess
     env = {k: v for k, v in os.environ.items() if k != "QT_QPA_PLATFORM"}     # real windows for these

@@ -37,7 +37,7 @@ def _since(days: int | None, now: datetime) -> str | None:
 
 
 def _label(hit: Hit) -> str:
-    when = hit.taken[:16].replace("T", " ") if hit.taken else ""
+    when = hit.taken[2:16].replace("T", " ") if hit.taken else ""     # "26-10-20 09:12": fits beside app + kind
     kind = KINDS.get(hit.kind, hit.kind)
     extra = " · ".join(x for x in (when, hit.app, kind) if x)
     return hit.name + ("\n" + extra if extra else "")
@@ -172,7 +172,7 @@ class SearchWindow(QWidget):
             it = QListWidgetItem(_label(h))
             it.setData(Qt.UserRole, h.id)
             it.setToolTip(self._tooltip(h))
-            it.setSizeHint(QSize(ICON.width() + 24, ICON.height() + 52))
+            it.setSizeHint(QSize(ICON.width() + 44, ICON.height() + 56))
             thumb = self.catalog.thumb(h.id)
             if thumb:
                 pm = QPixmap()

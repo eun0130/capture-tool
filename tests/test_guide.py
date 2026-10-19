@@ -80,7 +80,7 @@ DOC_IMG = ROOT / "docs" / "images" / "guide"
 
 def test_GUIDE_08_a_few_pages_have_a_picture_in_app_and_document():
     with_img = [p for p in guide.PAGES if p.image]
-    assert 3 <= len(with_img) <= 6                                   # helpful, not overdone
+    assert 3 <= len(with_img) <= 7                                   # helpful, not overdone
     for p in with_img:
         a, b = PKG_IMG / p.image, DOC_IMG / p.image
         assert a.is_file() and b.is_file() and a.read_bytes() == b.read_bytes(), p.image

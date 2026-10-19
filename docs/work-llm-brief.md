@@ -1,7 +1,12 @@
 # 회사용 캡처 도구 — 회사 AI·저장소 연동 작업 지시서
 
 회사 안의 Claude Code(또는 다른 코딩 에이전트)에게 그대로 넘기는 문서입니다. 이 저장소를 받은 뒤 아래 과제를 순서대로 하면 됩니다.
-작성 기준: v0.8.30 (2026-10-18).
+작성 기준: v0.8.30 (2026-10-18). **v0.9.0(2026-10-20)에서 바뀐 것**:
+
+- 과제 A(인터넷 공유 링크 → 회사 저장소)는 **하지 않기로 했습니다.** 회사용에는 인터넷 공유 링크 자체가 없고(`edition.EXCLUDED_AT_WORK`의 `link_web`), 링크 버튼은 파일 링크만 복사합니다. 회사 저장소 업로드가 꼭 필요하면 아래 2장을 참고해 `core/share_company.py`를 새로 만들고 `edition.has_share()` 분기를 다시 여세요.
+- 과제 B(Gemini → 회사 LLM)는 **이미 구현돼 있습니다**: `core/company_llm.py`(OpenAI 호환 `POST {endpoint}/v1/chat/completions`, `Authorization: Bearer`), 설정 `ai_endpoint`·`ai_model`·`ai_key`(DPAPI), 설정 창·동의 창·키 창의 회사용 문구, `tests/test_company_llm.py`. 회사용 빌드에는 `core/gemini.py`가 들어가지 않습니다. 회사 API가 OpenAI 호환이 아니면 `company_llm.py`의 `generate`/`_parse`만 회사 규격에 맞게 고치면 됩니다(인터페이스는 `generate(prompt) -> str`, `check()`, `CompanyLLMError(kind)`).
+- 과제 C의 "검색"은 회사용에서 **웹 검색 전부 제거**(구글 렌즈·구글·네이버·파파고, `search_web`)됐고, 대신 두 에디션 모두 저장 폴더 안을 찾는 **캡처 찾기**(`core/catalog.py`, `core/tagging.py`, `app/indexer.py`, `app/search_window.py`; sqlite+FTS5, 전부 PC 안)가 있습니다. 모델 미러(과제 C의 첫 항목)는 그대로 남은 과제입니다.
+- 아래 2·3장은 v0.8.30 기준 설명으로 남겨 둡니다(구조 이해용).
 
 ## 0. 배경과 목표
 
