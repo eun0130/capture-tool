@@ -36,8 +36,9 @@ def image_paths(urls) -> list[str]:
 class RecentStrip(QWidget):
     open_path = Signal(str)
 
-    def __init__(self, parent, sync: bool = False):
+    def __init__(self, parent, sync: bool = False, thumb_source=None):
         super().__init__(parent)
+        self.thumb_source = thumb_source          # path -> small JPEG bytes (the catalogue), or None
         self.setObjectName("recent")
         self.setAttribute(Qt.WA_StyledBackground, True)
         self.setStyleSheet(STYLE)
@@ -91,6 +92,15 @@ class RecentStrip(QWidget):
 
     def _load_thumbs(self) -> None:
         for b, p in zip(list(self.buttons), self.paths):
+            data = self.thumb_source(p) if self.thumb_source is not None else None
+            if data:
+                pm = QPixmap()
+                if pm.loadFromData(data):
+                    try:
+                        b.setIcon(QIcon(pm.scaled(THUMB, Qt.KeepAspectRatio, Qt.SmoothTransformation)))
+                    except RuntimeError:
+                        return
+                    continue
             r = QImageReader(str(p))
             size = r.size()
             if size.isValid() and size.width() > 0 and size.height() > 0:

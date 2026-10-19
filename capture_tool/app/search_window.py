@@ -114,7 +114,7 @@ class SearchWindow(QWidget):
         self._timer = QTimer(self)
         self._timer.setSingleShot(True)
         self._timer.timeout.connect(self.run_search)
-        if indexer is not None:
+        if indexer is not None and hasattr(indexer, "changed"):
             indexer.changed.connect(self._changed)
             indexer.progress_changed.connect(self._progress)
         self._left = 0

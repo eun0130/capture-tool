@@ -12,7 +12,7 @@ from ..core.hotkey import HotkeyError, find_duplicates, is_reserved, known_confl
 from ..core.settings import Settings
 
 ACTIONS = [("capture", "캡처 + 그리기"), ("ocr", "텍스트 바로 복사"), ("shapes", "도형 바로 복사 (PPT)"),
-           ("fullscreen", "전체 화면 캡처"), ("scroll", "스크롤 캡처")]
+           ("fullscreen", "전체 화면 캡처"), ("scroll", "스크롤 캡처"), ("search", "캡처 찾기")]
 _KEYNAMES = {Qt.Key_QuoteLeft: "`", Qt.Key_AsciiTilde: "`", Qt.Key_Print: "PrintScreen", Qt.Key_Space: "Space",
              Qt.Key_Tab: "Tab", Qt.Key_Insert: "Insert", Qt.Key_Delete: "Delete", Qt.Key_Home: "Home",
              Qt.Key_End: "End", Qt.Key_PageUp: "PageUp", Qt.Key_PageDown: "PageDown", Qt.Key_Left: "Left",
@@ -134,6 +134,15 @@ class SettingsDialog(QDialog):
         for w in (self.auto_save, self.auto_copy, self.show_recent, self.redact, self.startup, self.ppt_new_slide, self.pdf_one_page, self.keep_style,
                   self.update_check):
             v.addWidget(w)
+        v.addWidget(QLabel("<b>캡처 찾기</b> — 저장한 캡처를 글자·태그·모양으로 찾기 (검색 버튼 · 트레이 메뉴). 모두 PC 안에서만 처리합니다."))
+        self.catalog_enabled = QCheckBox("저장하는 캡처를 색인하기 (출처 앱 · 종류 · 색 · 썸네일)")
+        self.catalog_enabled.setChecked(getattr(settings, "catalog_enabled", True))
+        self.catalog_text = QCheckBox("캡처 속 글자도 색인하기 (개인정보는 가린 뒤 저장; 끄면 글자로는 못 찾음)")
+        self.catalog_text.setChecked(getattr(settings, "catalog_text", True))
+        self.catalog_enabled.toggled.connect(self.catalog_text.setEnabled)
+        self.catalog_text.setEnabled(self.catalog_enabled.isChecked())
+        v.addWidget(self.catalog_enabled)
+        v.addWidget(self.catalog_text)
         self.update_source = QLineEdit(getattr(settings, "update_source", ""))
         self.update_source.setPlaceholderText("업데이트 받을 곳 — 비우면 GitHub. 회사라면 설치 파일을 둔 공유 폴더 경로(\\\\서버\\폴더)도 됩니다")
         v.addWidget(self.update_source)
@@ -395,6 +404,8 @@ class SettingsDialog(QDialog):
         self.ppt_new_slide.setChecked(d.ppt_new_slide)
         self.auto_copy.setChecked(d.auto_copy)
         self.show_recent.setChecked(d.show_recent)
+        self.catalog_enabled.setChecked(d.catalog_enabled)
+        self.catalog_text.setChecked(d.catalog_text)
         self.update_check.setChecked(d.update_check)
         self.update_source.setText(d.update_source)
         self.pdf_one_page.setChecked(d.pdf_one_page)
@@ -457,6 +468,8 @@ class SettingsDialog(QDialog):
         s.ppt_new_slide = self.ppt_new_slide.isChecked()
         s.auto_copy = self.auto_copy.isChecked()
         s.show_recent = self.show_recent.isChecked()
+        s.catalog_enabled = self.catalog_enabled.isChecked()
+        s.catalog_text = self.catalog_text.isChecked()
         s.update_check = self.update_check.isChecked()
         s.update_source = self.update_source.text().strip()
         s.pdf_one_page = self.pdf_one_page.isChecked()

@@ -656,6 +656,8 @@ class SideBar(QWidget):
         m = QMenu(self)
         a = m.addAction("내 캡처에서 찾기 — 저장 폴더의 캡처를 글자·태그·모양으로")
         a.triggered.connect(lambda _=False: self.action.emit("search_local"))
+        b = m.addAction("이 캡처와 비슷한 내 캡처 찾기")
+        b.triggered.connect(lambda _=False: self.action.emit("search_similar"))
         m.addSeparator()
         head = m.addAction("그림으로 찾기 — 캡처가 저절로 붙습니다")
         head.setEnabled(False)

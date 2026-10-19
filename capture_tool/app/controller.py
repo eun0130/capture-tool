@@ -623,6 +623,10 @@ class Controller(QObject):
             self._pin_from_capture(name)
         elif name == "pin_manager":
             self.show_pin_manager()
+        elif name == "search_local":
+            self.open_search()
+        elif name == "search_similar":
+            self.search_similar()
         elif name.startswith(("search_img:", "search_text:")):
             if edition.has_web_search():
                 self._web_search(name)
@@ -1947,6 +1951,44 @@ class Controller(QObject):
     def catalog_busy(self) -> bool:
         """The indexer reads text only while nothing is being captured or edited."""
         return self.session.state is not State.IDLE or self.scrolling or bool(self.overlays)
+
+    def thumb_for(self, path) -> bytes | None:
+        """The catalogue's thumbnail of a saved picture (the recent strip shows it without
+        decoding the file)."""
+        if self.catalog is None:
+            return None
+        try:
+            return self.catalog.thumb_for(path)
+        except Exception:  # noqa: BLE001
+            return None
+
+    def open_search(self):
+        """캡처 찾기: the saved captures by words, tags or look."""
+        if self.catalog is None:
+            self.notify("캡처 찾기를 쓸 수 없습니다: 색인이 준비되지 않았습니다.")
+            return None
+        if self.search_window is None:
+            from .search_window import SearchWindow
+            self.search_window = SearchWindow(self.catalog, self.indexer, open_path=self.open_image_file,
+                                              reveal=self.reveal_file, sync=self.sync)
+        w = self.search_window
+        w.refresh()
+        w.show()
+        w.raise_()
+        w.activateWindow()
+        return w
+
+    def search_similar(self) -> None:
+        """Saved captures that look like the one being edited (the capture stays open)."""
+        if self.session.state is not State.EDITING or self.active_overlay is None:
+            return
+        ov, sel = self.active_overlay, self.session.selection
+        if sel is None:
+            return
+        raw = np.ascontiguousarray(ov.crop(sel)[:, :, :3])
+        w = self.open_search()
+        if w is not None:
+            w.show_similar(raw)
 
     def _write_image(self, img, path: Path) -> bool:
         suffix = path.suffix.lower()

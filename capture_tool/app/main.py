@@ -234,6 +234,10 @@ class TrayApp:
         a = QAction("이미지 열기… (캡처처럼 표·텍스트·PPT 사용)", m)
         a.triggered.connect(self.open_image)
         m.addAction(a)
+        key = hk.get("search") or ""
+        a = QAction("캡처 찾기… (저장한 캡처를 글자·태그·모양으로)" + (f"\t{key}" if key else ""), m)
+        a.triggered.connect(lambda: self.controller.open_search())
+        m.addAction(a)
         a = QAction("사용 설명서 (따라하기)", m)
         a.triggered.connect(lambda: self.controller.show_guide())
         m.addAction(a)
@@ -283,6 +287,9 @@ class TrayApp:
     def on_hotkey(self, action: str) -> None:
         if action.startswith("open:"):                  # a picture sent from a second launch
             self.controller.open_image_file(action[len("open:"):])
+            return
+        if action == "search":
+            self.controller.open_search()
             return
         mode = {"capture": "draw", "ocr": "text", "shapes": "shapes", "fullscreen": "fullscreen",
                 "scroll": "scroll"}[action]

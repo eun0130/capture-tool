@@ -1,5 +1,7 @@
 """Saving a capture hands it to the catalogue with where it came from and what kind of capture
 it was; the read-ahead's text is reused; the search window opens from the bar and the tray."""
+from pathlib import Path
+
 import numpy as np
 import pytest
 from PySide6.QtCore import QPoint
@@ -101,6 +103,61 @@ def test_CAPP_05_a_broken_indexer_never_breaks_a_save(make):
     drag(c.overlays[0], (100, 100), (300, 250))
     c.on_toolbar_action("save")
     assert any("저장했습니다" in m for m in c.messages)
+
+
+def test_CAPP_07_the_search_button_opens_the_search_window_and_finds_look_alikes(make, tmp_path):
+    from capture_tool.core.catalog import Catalog
+    c = _with_indexer(make)
+    c.catalog = Catalog(tmp_path / "catalog.db")
+    c.start_capture()
+    ov = c.overlays[0]
+    drag(ov, (100, 100), (300, 250))
+    c.on_toolbar_action("search_local")
+    w = c.search_window
+    assert w is not None and w.isVisible() and w.list.count() == 0
+    assert c.session.state.name == "EDITING"                 # the capture stays open
+    c.on_toolbar_action("search_similar")
+    assert w._similar is not None and "비슷한" in w.status.text()
+    c.cancel()
+    c.catalog.close()
+
+
+def test_CAPP_08_without_a_catalogue_the_search_says_so(make):
+    c = make()
+    c.start_capture()
+    drag(c.overlays[0], (100, 100), (300, 250))
+    c.on_toolbar_action("search_local")
+    assert c.search_window is None and "캡처 찾기" in c.messages[-1]
+
+
+def test_CAPP_09_settings_and_hotkey_for_the_search(qt_app):
+    from capture_tool.app.hotkeys import IDS
+    from capture_tool.app.settings_dialog import ACTIONS, SettingsDialog
+    assert "search" in IDS and ("search", "캡처 찾기") in ACTIONS
+    d = SettingsDialog(Settings(catalog_text=False))
+    assert d.catalog_enabled.isChecked() and not d.catalog_text.isChecked()
+    d.catalog_enabled.setChecked(False)
+    assert not d.catalog_text.isEnabled()
+    s = d.result_settings()
+    assert s.catalog_enabled is False and s.catalog_text is False
+
+
+def test_CAPP_10_the_recent_strip_takes_thumbnails_from_the_catalogue(qt_app, tmp_path):
+    from capture_tool.app.recent_strip import RecentStrip
+    from capture_tool.core import tagging
+    from PySide6.QtWidgets import QWidget
+    img = np.full((120, 200, 3), 90, np.uint8)
+    thumb = tagging.thumbnail(img)
+    asked = []
+
+    def source(p):
+        asked.append(Path(p).name)
+        return thumb if Path(p).name == "a.png" else None
+    host = QWidget()
+    strip = RecentStrip(host, sync=True, thumb_source=source)
+    strip.set_paths([tmp_path / "a.png", tmp_path / "missing.png"])        # neither file exists
+    assert asked == ["a.png", "missing.png"]
+    assert not strip.buttons[0].icon().isNull() and strip.buttons[1].icon().isNull()
 
 
 def test_CAPP_06_process_name_of_a_real_window():

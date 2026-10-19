@@ -146,7 +146,7 @@ class EditorWindow(QWidget):
     def show_recent(self, paths) -> None:
         from .recent_strip import RecentStrip
         if self.recent is None:
-            self.recent = RecentStrip(self, sync=self.c.sync)
+            self.recent = RecentStrip(self, sync=self.c.sync, thumb_source=getattr(self.c, "thumb_for", None))
             self.recent.open_path.connect(self.c.open_image_file)
             self.layout().addWidget(self.recent, 0, Qt.AlignHCenter)
         self.recent.set_paths(paths)

@@ -440,7 +440,7 @@ class OverlayWindow(QWidget):
     def show_recent(self, paths) -> None:
         from .recent_strip import RecentStrip
         if self.recent is None:
-            self.recent = RecentStrip(self, sync=self.c.sync)
+            self.recent = RecentStrip(self, sync=self.c.sync, thumb_source=getattr(self.c, "thumb_for", None))
             self.recent.open_path.connect(self.c.open_image_file)
         self.recent.set_paths(paths)
         self.recent.place(self.mapFromGlobal(QCursor.pos()))
