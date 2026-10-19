@@ -32,16 +32,22 @@ class ConsentNeeded(Exception):
 
 
 _FALLBACK = {
-    "quota": "Gemini 무료 한도를 다 써서 오프라인으로 처리했습니다.",
-    "key": "Gemini 키가 올바르지 않아 오프라인으로 처리했습니다. 설정 → AI에서 키를 확인해 주세요.",
-    "network": "Gemini에 연결되지 않아 오프라인으로 처리했습니다.",
+    "quota": "{name} 사용 한도를 다 써서 오프라인으로 처리했습니다.",
+    "key": "{name} 키가 올바르지 않아 오프라인으로 처리했습니다. 설정 → AI에서 키를 확인해 주세요.",
+    "network": "{name}에 연결되지 않아 오프라인으로 처리했습니다.",
 }
+
+
+def _fallback(name: str, e: CloudError) -> str:
+    text = _FALLBACK.get(e.kind)
+    return text.format(name=name) if text else str(e) + " 오프라인으로 처리했습니다."
 
 
 class AiService:
     def __init__(self, settings, translator, summarizer, cloud_factory: Callable | None = None,
-                 get_key: Callable[[], str | None] | None = None):
+                 get_key: Callable[[], str | None] | None = None, cloud_name: str = "Gemini"):
         self.settings = settings
+        self.cloud_name = cloud_name
         self.translator, self.summarizer = translator, summarizer
         self.cloud_factory = cloud_factory
         self.get_key = get_key or (lambda: None)
@@ -84,7 +90,7 @@ class AiService:
     def _cloud(self):
         key = self.get_key()
         if not key or self.cloud_factory is None:
-            return None, "Gemini 키가 설정되지 않아 오프라인으로 처리했습니다. (설정 → AI에서 키를 넣을 수 있습니다)"
+            return None, f"{self.cloud_name} 키가 설정되지 않아 오프라인으로 처리했습니다. (설정 → AI에서 키를 넣을 수 있습니다)"
         if not self.settings.ai_cloud_consent:
             raise ConsentNeeded()
         return self.cloud_factory(key), ""
@@ -109,7 +115,7 @@ class AiService:
                         out = cloud.generate(translate_prompt(mask(text), src, tgt))
                         return self._remember(key, AiResult(out, "cloud", src, tgt, note))
                     except CloudError as e:
-                        why = _FALLBACK.get(e.kind, str(e) + " 오프라인으로 처리했습니다.")
+                        why = _fallback(self.cloud_name, e)
                 note = self._join(note, why)
                 out = self.translator.translate(text, src, tgt, cancel=cancel)
                 return AiResult(out, "local", src, tgt, note)         # fallback: try the cloud again next time
@@ -132,7 +138,7 @@ class AiService:
                         return self._remember(key, AiResult(cloud.generate(summary_prompt(mask(text), lang)),
                                                             "cloud", tgt=lang, note=note))
                     except CloudError as e:
-                        why = _FALLBACK.get(e.kind, str(e) + " 오프라인으로 처리했습니다.")
+                        why = _fallback(self.cloud_name, e)
                 note = self._join(note, why)
                 out = self.summarizer.summarize(text, lang, on_text=on_text, cancel=cancel)
                 return AiResult(out, "local", tgt=lang, note=note)

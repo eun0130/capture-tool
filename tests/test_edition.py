@@ -111,6 +111,36 @@ def test_ED_08b_the_home_edition_keeps_them(monkeypatch):
     assert edition.has_web_search() and edition.has_share() and edition.has_gemini()
 
 
+def test_ED_09_the_work_controller_ignores_web_search_and_the_share_link(make, work):
+    c = make()
+    c.uploader = lambda *a, **k: pytest.fail("the capture was uploaded")
+    c.ask_share_consent = lambda: pytest.fail("the share consent dialog opened")
+    c._open_search = lambda *a, **k: pytest.fail("a web search page was opened")
+    c.start_capture()
+    ov = c.overlays[0]
+    drag(ov, (100, 100), (500, 400))
+    for action in ("search_img:google", "search_text:google", "search_text:naver", "search_text:papago", "link_web"):
+        c.on_toolbar_action(action)
+        assert "회사용" in c.messages[-1]
+    assert c.session.state.name == "EDITING"                   # the capture stays open
+    assert c.settings.share_consent is False
+
+
+def test_ED_09b_the_work_controller_summarises_with_the_company_llm(make, work):
+    from capture_tool.core.company_llm import CompanyLLM, CompanyLLMError
+    from capture_tool.core.settings import Settings
+    c = make(settings=Settings(ai_endpoint="https://llm.corp.local", ai_model="corp-chat"))
+    svc = c.ai
+    assert svc.cloud_name == "회사 AI"
+    engine = svc.cloud_factory("k")
+    assert isinstance(engine, CompanyLLM) and engine.endpoint == "https://llm.corp.local" and engine.model == "corp-chat"
+    assert "Gemini" not in svc._cloud()[1]                     # no key: the note names the company AI
+    c2 = make()                                                # no server address yet: nothing is sent
+    with pytest.raises(CompanyLLMError) as e:
+        c2.ai.cloud_factory("k").generate("x")
+    assert e.value.kind == "config"
+
+
 def test_ED_05_the_work_edition_is_always_at_work(make, work):
     from capture_tool.core.settings import Settings
     c = make(settings=Settings(workplace="home"))

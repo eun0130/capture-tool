@@ -592,7 +592,9 @@ class Controller(QObject):
             return
         if name not in ("undo", "redo"):
             self._acted = True
-        if name in ("link_file", "link_web"):
+        if name == "link_web" and not edition.has_share():
+            self.notify("회사용에서는 인터넷 공유 링크를 만들지 않습니다. 링크 버튼은 저장한 파일의 위치 링크를 복사합니다.")
+        elif name in ("link_file", "link_web"):
             self._link_from_capture(name)
         elif name.startswith("kakao"):
             if self.kakao is not None:
@@ -605,7 +607,10 @@ class Controller(QObject):
         elif name == "pin_manager":
             self.show_pin_manager()
         elif name.startswith(("search_img:", "search_text:")):
-            self._web_search(name)
+            if edition.has_web_search():
+                self._web_search(name)
+            else:
+                self.notify("회사용에서는 인터넷 검색을 쓰지 않습니다. 검색 버튼은 저장한 내 캡처를 찾습니다.")
         elif name in ("copy", "save", "save_as", "pin"):
             self.finish(name)
         elif name == "cancel":
@@ -2399,9 +2404,18 @@ class Controller(QObject):
         if self._ai is None:
             from ..core.ai_local import LocalSummarizer, LocalTranslator
             from ..core.ai_service import AiService
-            from ..core.gemini import Gemini
+            if edition.has_gemini():
+                from ..core.gemini import Gemini
+                factory, name = Gemini, "Gemini"
+            else:                                         # work: the company's own LLM server, nothing else
+                from ..core.company_llm import CompanyLLM
+                s = self.settings
+
+                def factory(key):
+                    return CompanyLLM(key, s.ai_endpoint, s.ai_model)
+                name = "회사 AI"
             self._ai = AiService(self.settings, LocalTranslator(), LocalSummarizer(),
-                                 cloud_factory=Gemini, get_key=self._ai_key)
+                                 cloud_factory=factory, get_key=self._ai_key, cloud_name=name)
         return self._ai
 
     @ai.setter
