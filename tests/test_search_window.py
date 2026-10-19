@@ -155,3 +155,104 @@ def test_SW_06_escape_closes_and_the_indexer_refreshes_it(tmp_path, qt_app):
     QTest.keyClick(w, Qt.Key_Escape)
     assert not w.isVisible()
     cat.close()
+
+
+def vec(i: int):
+    v = np.zeros(512, np.float32)
+    v[i] = 1.0
+    return v
+
+
+class FakeShape:
+    """The shape service: a few phrases map to vectors near a (0) or b (1)."""
+    WORDS = {"막대 그래프": (0.9, 0.4), "코드": (0.3, 0.95), "고양이": (0.1, 0.1)}
+
+    def __init__(self, present=True):
+        self.present = present
+        self.calls = []
+
+    def available(self):
+        return self.present
+
+    def missing(self):
+        return [] if self.present else ["clip-vit-b32-ml"]
+
+    def text_vector(self, words):
+        from capture_tool.core.clip import ModelMissing
+        self.calls.append(words)
+        if not self.present:
+            raise ModelMissing(self.missing())
+        a, b = self.WORDS.get(words, (0.0, 0.0))
+        return a * vec(0) + b * vec(1)
+
+    def image_vector(self, img):
+        return 0.8 * vec(0) + 0.6 * vec(1)                               # looks like a, somewhat like b
+
+
+def shaped(filled, present=True, get_packs=None):
+    w, cat, folder, ids, opened = filled
+    from capture_tool.core.clip import to_blob
+    cat.set_embed(ids["a.png"], to_blob(vec(0)))
+    cat.set_embed(ids["b.png"], to_blob(vec(1)))                          # c has no vector
+    fs = FakeShape(present)
+    w2 = SearchWindow(cat, None, open_path=opened.append, sync=True, shape=fs, get_packs=get_packs)
+    w2.now = w.now
+    return w2, fs
+
+
+def test_SW_07_shape_mode_finds_by_what_the_words_describe(filled):
+    w, cat, folder, ids, opened = filled
+    assert w.shape_btn.isHidden()                                          # no shape service: no button
+    w2, fs = shaped(filled)
+    assert not w2.shape_btn.isHidden() and not w2.shape_btn.isChecked()
+    w2.shape_btn.setChecked(True)
+    w2.query.setText("막대 그래프")
+    assert names(w2) == ["a.png", "b.png"] and "모양" in w2.status.text() and fs.calls[-1] == "막대 그래프"
+    assert w2.results()[0].score > w2.results()[1].score > 0 and "모양 점수" in w2._tooltip(w2.results()[0])
+    w2.query.setText("코드")
+    assert names(w2) == ["b.png", "a.png"]
+    w2.query.setText("고양이")
+    assert names(w2) == []                                                # below the floor: nothing looks like it
+    w2.query.setText("막대 그래프")
+    w2.content.setCurrentIndex(w2.content.findData("code"))              # chips still narrow
+    assert names(w2) == ["b.png"]
+    w2.content.setCurrentIndex(0)
+    w2.query.setText("")
+    assert len(names(w2)) == 3 and "새것부터" in w2.status.text()        # nothing typed: the newest, as always
+    w2.query.setText("막대 그래프")
+    w2.shape_btn.setChecked(False)                                        # off: the words are words again
+    assert names(w2) == [] and "모양" not in w2.status.text()
+    w2.close()
+
+
+def test_SW_08_without_the_pack_the_toggle_offers_the_download(filled):
+    got = []
+
+    def get_packs(ids, done, on_progress):
+        got.append(ids)
+        on_progress(50 * 2**20, 227 * 2**20)
+        got.append(w2.status.text())
+        fs.present = True
+        done(True)
+    w2, fs = shaped(filled, present=False, get_packs=get_packs)
+    asked = []
+    w2.ask_yes_no = lambda t, m: (asked.append(m), False)[1]
+    w2.shape_btn.setChecked(True)
+    assert asked and "MB" in asked[0] and not w2.shape_btn.isChecked() and got == []
+    w2.ask_yes_no = lambda t, m: True
+    w2.query.setText("막대 그래프")
+    w2.shape_btn.setChecked(True)
+    assert got[0] == ["clip-vit-b32-ml"] and "50 / 227" in got[1]
+    assert w2.shape_btn.isChecked() and names(w2) == ["a.png", "b.png"] and "받았습니다" in w2.status.text()
+    w2.close()
+
+
+def test_SW_09_look_alikes_add_pictures_of_the_same_thing_with_the_pack(filled):
+    w2, fs = shaped(filled)
+    w2.show_similar(pic(2))                                                # b's picture: hash finds b
+    assert names(w2) == ["b.png", "a.png"]                                # ... and the vector adds a
+    assert w2.results()[0].distance == 0 and w2.results()[1].score > 0.75
+    fs.present = False
+    w2.show_similar(pic(2))
+    assert names(w2) == ["b.png"]
+    w2.close()
