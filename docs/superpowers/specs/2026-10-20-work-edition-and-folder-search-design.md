@@ -122,8 +122,8 @@ class CompanyLLMError(Exception): kind in key/quota/network/server/blocked/model
 - **카탈로그**: `files.embed`(float16 512)를 채운다. `set_embed(id, blob)`, `pending_embed(limit)`(embed IS NULL),
   `embed_count()`, `nearest(vec, limit, min_score, 필터…)` — 모든 embed를 읽어 코사인(내적) 계산, 점수순,
   필터는 같은 SQL 조각(`_filter_sql`)으로. `Hit.score`(float, 기본 -1). 1만 행 10 ms급.
-- **인덱서**: `embedder`(그림→blob, 없으면 None)를 받아 저장 직후 `describe` 뒤에 임베딩(4K 30 ms, 워커
-  스레드), 백로그에서는 글자 읽기 뒤 `pending_embed`를 한가할 때 채운다. 팩을 나중에 받으면
+- **인덱서**: `embedder`(그림→blob, 없으면 None)를 받아 `pending_embed`를 **한가할 때만** 채운다(새 캡처도 저장 직후
+  한가해지면; 모델 로드 0.4 s가 GIL을 잡아 복사 중에 돌면 클립보드가 266 ms 멈췄다). 4K 30 ms, 워커 스레드. 팩을 나중에 받으면
   `set_embedder()` 뒤 `run_backlog()`로 기존 그림도 채운다. 실패한 그림은 빈 blob(`b""`)으로 표시해 재시도하지 않는다.
 - **검색 창**: 검색칸 옆 **모양으로** 토글(QPushButton checkable). 켜면 입력이 질의 → `shape.text_vector` →
   `catalog.nearest(limit 60, min_score 0.17)`, 칩은 그대로 적용, 상태줄 "n개 (모양이 비슷한 순)". 팩이 없으면

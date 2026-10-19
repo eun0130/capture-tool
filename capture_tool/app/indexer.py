@@ -2,8 +2,8 @@
 (hash, colours, kind, tags, thumbnail) the moment it is saved, its text comes from the read-ahead
 when that already read the same pixels, else it is read later when the app is idle - as is the
 backlog of pictures that were in the save folder before. With the shape-search pack installed every
-picture also gets its CLIP vector (at once for a new capture, when idle for the backlog). One
-worker thread, one queue."""
+picture also gets its CLIP vector - only while the app is idle, because loading the model holds
+the GIL for ~0.4 s and must never land on a copy. One worker thread, one queue."""
 from __future__ import annotations
 
 import logging
@@ -129,11 +129,11 @@ class Indexer(QObject):
         want_text = self.text_enabled() and self.read_text is not None
         text = self._text_of(lines) if want_text else ""
         tags = tagging.auto_tags(meta, d, lines)
-        fid = self.catalog.add(path, d, meta, text=text, tags=tags, thumb=tagging.thumbnail(img))
-        self._embed_one(fid, img)
+        self.catalog.add(path, d, meta, text=text, tags=tags, thumb=tagging.thumbnail(img))
         self.changed.emit()
         if want_text and lines is None:
-            self._backlog()
+            self._text_backlog()
+        self._embed_backlog()                  # waits until the app is idle (the copy must not feel it)
 
     def _rescan(self) -> None:
         folder = self.folder()

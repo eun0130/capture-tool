@@ -154,7 +154,7 @@ def test_IDX_05_shape_vectors_come_with_the_picture_or_later_when_the_pack_arriv
     assert progress[0] == (1, 2) and progress[-1] == (0, 2) and changes == [1]
     p = folder / "c.png"
     cv2.imwrite(str(p), picture("c"))
-    ix.add(p, picture("c"), CaptureMeta("area"), [])                      # a new capture: vector at once
+    ix.add(p, picture("c"), CaptureMeta("area"), [])                      # a new capture: vector once idle (sync: now)
     assert cat.embed_count() == 3 and len(calls) == 3
     bad = folder / "d.png"
     cv2.imwrite(str(bad), np.zeros((10, 10, 3), np.uint8))
