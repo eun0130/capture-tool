@@ -18,7 +18,7 @@
 |---|---|---|
 | 전체 → 링크 → **인터넷 공유 링크** | litterbox.catbox.moe (익명 임시 호스트, 올린 뒤 삭제 불가) | **회사 파일 저장소/드라이브 API**로 올리고 회사 링크 반환 |
 | 번역·요약의 **클라우드 엔진** | Google Gemini (사용자 개인 키) | **회사 LLM API** (OpenAI 호환 엔드포인트 권장) |
-| 오프라인 AI 모델 내려받기 | huggingface.co, argos-net.com | 사내 미러 주소 설정 (선택) |
+| 오프라인 AI 모델 내려받기 (번역·요약·v0.9.1 모양으로 찾기 팩) | huggingface.co, argos-net.com | 사내 미러 주소 설정 (선택) |
 | 새 버전 확인·받기 | GitHub Releases (capture_work) | 설정 `update_source`에 사내 공유 폴더 경로 — **코드 수정 없음** |
 
 지켜야 할 원칙(바꾸지 말 것): 오프라인이 기본, 외부 전송 전 **동의 창**, 텍스트 복사 전 **개인정보 가림**(`core/redact.py`), 인식한 글은 **로그에 남기지 않음**, 비밀값은 **DPAPI**(`platform/secret.py` `protect/unprotect`)로만 저장.

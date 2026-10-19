@@ -1,8 +1,11 @@
 """Shape search behind 캡처 찾기 (v0.9.1): a CLIP ViT-B/32 picture encoder and the multilingual text
 encoder aligned to it (DistilBERT -> mean pooling -> dense 768->512), both int8 ONNX files of the
 optional "clip-vit-b32-ml" model pack. A Korean or English phrase and a picture land in the same
-512-dimensional space, so their cosine says how much the picture looks like the words. Qt-free;
-the ONNX sessions are injected (tests use fakes)."""
+512-dimensional space, so their cosine says how much the picture looks like the words. Raw CLIP
+scores suffer from "hubs" (one bland picture is close to every phrase): both sides are centred -
+a phrase vector minus the mean of a fixed bank of phrases, a picture vector minus the mean of
+the catalogue's pictures (see Catalog.nearest). Qt-free; the ONNX sessions are injected (tests
+use fakes)."""
 from __future__ import annotations
 
 import json
@@ -23,8 +26,13 @@ MAX_TOKENS = 128             # the text encoder was trained with this sequence l
 SIDE = 224
 MEAN = np.array([0.48145466, 0.4578275, 0.40821073], np.float32)
 STD = np.array([0.26862954, 0.26130258, 0.27577711], np.float32)
-MIN_SCORE = 0.17             # words -> picture: below this nothing looks like the words
-SAME_SCORE = 0.75            # picture -> picture: above this they show the same thing
+MIN_SCORE = 0.08             # words -> picture (centred scores): below this nothing looks like the words
+SAME_SCORE = 0.75            # picture -> picture (raw cosine): above this they show the same thing
+MIN_CENTRE = 8               # pictures needed before their mean is worth subtracting
+# the phrase bank whose mean is the "modality centre" of the text encoder (what every phrase shares)
+BANK = ["표", "그래프", "설정 창", "대화 상자", "소스 코드", "사진", "지도", "웹 페이지", "메뉴", "채팅", "문서", "로그인 화면",
+        "아이콘", "버튼", "글자", "파일 목록", "달력", "이메일", "동영상", "검은 바탕", "흰 바탕", "a screenshot", "a photo",
+        "text", "a window"]
 THREADS = max(1, min(4, (os.cpu_count() or 4) // 2))
 
 
@@ -151,6 +159,7 @@ class ClipModel:
         self.tok = WordPiece.from_file(vocab)
         w = next(iter(load_safetensors(dense).values()))
         self.dense = np.ascontiguousarray(w.astype(np.float32).T)         # (768, 512)
+        self._centre: np.ndarray | None = None
 
     @staticmethod
     def _unit(v: np.ndarray) -> np.ndarray:
@@ -162,11 +171,21 @@ class ClipModel:
         out = self.vision.run(None, {"pixel_values": preprocess(img)})[0]
         return self._unit(out[0])
 
-    def embed_text(self, text: str) -> np.ndarray:
+    def _raw_text(self, text: str) -> np.ndarray:
         ids = np.array([self.tok.ids(text)], np.int64)
         hidden = self.text.run(None, {"input_ids": ids, "attention_mask": np.ones_like(ids)})[0][0]
         pooled = np.asarray(hidden, np.float32).mean(axis=0)
         return self._unit(pooled @ self.dense)
+
+    def text_centre(self) -> np.ndarray:
+        if self._centre is None:
+            self._centre = np.mean([self._raw_text(p) for p in BANK], axis=0).astype(np.float32)
+        return self._centre
+
+    def embed_text(self, text: str, centre: bool = True) -> np.ndarray:
+        """The phrase's vector; centred (the bank's mean subtracted) unless asked raw."""
+        v = self._raw_text(text)
+        return self._unit(v - self.text_centre()) if centre else v
 
 
 # --- storing a vector ---------------------------------------------------------------------------------
@@ -214,8 +233,8 @@ class ShapeSearch:
                 self._model = self.loader(d)
             return self._model
 
-    def text_vector(self, text: str) -> np.ndarray:
-        return self._get().embed_text(text)
+    def text_vector(self, text: str, centre: bool = True) -> np.ndarray:
+        return self._get().embed_text(text, centre)
 
     def image_vector(self, img: np.ndarray) -> np.ndarray:
         return self._get().embed_image(img)

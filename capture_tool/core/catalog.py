@@ -21,7 +21,8 @@ IMAGE_SUFFIXES = (".png", ".jpg", ".jpeg", ".bmp", ".gif", ".webp", ".tif", ".ti
 SNIPPET = 100
 FTS_MIN = 3                 # trigram index: shorter words are searched with LIKE
 SIMILAR_DISTANCE = 16       # hamming distance of two 64-bit hashes still called "similar"
-EMBED_BYTES = 1024          # 512 float16: a CLIP vector (core/clip.py); b"" = could not be embedded
+EMBED_BYTES = 1024          # 512 float16: a CLIP vector (core/shape.py); b"" = could not be embedded
+MIN_CENTRE = 8              # nearest(centre=True) subtracts the pictures' mean once there are this many
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS files (
@@ -324,9 +325,11 @@ class Catalog:
 
     def nearest(self, vec, limit: int = 60, min_score: float = 0.0, kind: str | None = None,
                 content: str | None = None, app: str | None = None, since: str | None = None,
-                colour: str | None = None, folder: str | None = None) -> list[Hit]:
+                colour: str | None = None, folder: str | None = None, centre: bool = False) -> list[Hit]:
         """Pictures whose shape vector is closest to `vec` (cosine, best first), at least
-        `min_score`, narrowed by the same filters as search(). Rows without a vector are skipped."""
+        `min_score`, narrowed by the same filters as search(). Rows without a vector are skipped.
+        centre=True (a phrase query): the pictures' mean is subtracted first, so no bland picture
+        is close to everything."""
         q = np.asarray(vec, np.float32).reshape(-1)
         with self._lock:
             where, args = self._filter_sql(kind, content, app, since, colour, folder)
@@ -337,7 +340,12 @@ class Catalog:
                 return []
             ids = np.fromiter((r["id"] for r in rows), np.int64, len(rows))
             mat = np.frombuffer(b"".join(bytes(r["embed"]) for r in rows), dtype=np.float16).reshape(len(rows), -1)
-            scores = mat.astype(np.float32) @ q
+            mat = mat.astype(np.float32)
+            if centre and len(rows) >= MIN_CENTRE:
+                mat -= mat.mean(axis=0)
+                norms = np.linalg.norm(mat, axis=1, keepdims=True)
+                np.divide(mat, norms, out=mat, where=norms > 0)
+            scores = mat @ q
             keep = np.flatnonzero(scores >= min_score)
             if keep.size == 0:
                 return []

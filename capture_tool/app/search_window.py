@@ -240,7 +240,7 @@ class SearchWindow(QWidget):
         hits = self._narrow(self.catalog.similar(self._similar, limit=100, max_distance=SIMILAR_DISTANCE))
         if self.shape is not None and self._similar_img is not None and self.shape.available():
             try:
-                vec = self.shape.image_vector(self._similar_img)
+                vec = self.shape.image_vector(self._similar_img)                 # raw: picture vs picture
             except Exception:  # noqa: BLE001 - the hash list still stands
                 return hits
             seen = {h.id for h in hits}
@@ -255,7 +255,8 @@ class SearchWindow(QWidget):
             return [], "모델이 없어 모양으로는 못 찾습니다"
         except Exception as e:  # noqa: BLE001 - said in the status line, never a crash
             return [], f"모양으로 찾지 못했습니다: {e}"
-        return self.catalog.nearest(vec, limit=SHAPE_LIMIT, min_score=MIN_SCORE, **self.filters()), "모양이 비슷한 순"
+        return (self.catalog.nearest(vec, limit=SHAPE_LIMIT, min_score=MIN_SCORE, centre=True, **self.filters()),
+                "모양이 비슷한 순")
 
     def run_search(self) -> None:
         words = self.query.text().strip()

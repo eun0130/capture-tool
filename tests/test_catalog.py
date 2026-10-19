@@ -200,3 +200,31 @@ def test_CAT_12_nearest_by_cosine_with_filters_and_a_floor(cat):
     assert Hit.__dataclass_fields__["score"].default == -1.0 and cat.search("")[0].score == -1.0
     cat.set_embed(a, b"")
     assert [h.id for h in cat.nearest(q)] == [b]                        # a failed blob is skipped
+
+
+def test_CAT_13_centred_nearest_takes_the_bland_hub_out(cat):
+    import numpy as np
+    from capture_tool.core.shape import to_blob
+    common = np.zeros(512, np.float32)
+    common[0] = 1.0                                                     # what every screenshot shares
+    ids = []
+    for i in range(10):
+        own = np.zeros(512, np.float32)
+        own[10 + i] = 1.0
+        v = common + 0.5 * own                                          # each picture: the common part + its own
+        if i == 0:
+            v = common                                                  # the hub: nothing but the common part
+        ids.append(cat.add(f"D:/s/{i}.png", desc(), meta()))
+        cat.set_embed(ids[-1], to_blob(v / np.linalg.norm(v)))
+    q = 0.2 * common + np.eye(512, dtype=np.float32)[13]                # a (centred) phrase about picture 3
+    q /= np.linalg.norm(q)
+    raw = cat.nearest(q, min_score=0.08)
+    assert raw[0].id == ids[3] and ids[0] in [h.id for h in raw]        # raw: the hub still shows up
+    hits = cat.nearest(q, centre=True, min_score=0.08)
+    assert hits[0].id == ids[3] and hits[0].score > 0.9 and ids[0] not in [h.id for h in hits]
+    low = cat.nearest(q, centre=True, min_score=-1.0)
+    assert low[-1].id == ids[0] and low[-1].score < 0 and len(low) == 10
+    assert cat.nearest(q, centre=True, limit=2)[0].id == ids[3]
+    for fid in ids[3:]:
+        cat.remove(fid)
+    assert cat.nearest(q, centre=True, min_score=0.08)[0].id == ids[0]   # fewer than 8 pictures: raw again, hub first

@@ -273,6 +273,6 @@ def test_SPD_14_nearest_by_shape_answers_in_under_60_ms_at_ten_thousand_rows(tmp
     ms = (time.perf_counter() - t0) * 1000
     assert hits and hits[0].id == 1235 and hits[0].score > 0.99 and ms < 60, ms
     t0 = time.perf_counter()
-    cat.nearest(q, limit=60, min_score=0.17, kind="area", since="2026-09-01")
-    assert (time.perf_counter() - t0) * 1000 < 80
+    hits = cat.nearest(q, limit=60, min_score=0.08, kind="area", since="2026-09-01", centre=True)
+    assert hits[0].id == 1235 and (time.perf_counter() - t0) * 1000 < 100
     cat.close()

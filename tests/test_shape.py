@@ -115,7 +115,7 @@ def test_CLIP_04_the_model_embeds_pictures_and_words_as_unit_vectors(pack):
     v = m.embed_image(np.full((50, 80, 3), 255, np.uint8))
     assert v.shape == (512,) and v.dtype == np.float32 and abs(np.linalg.norm(v) - 1) < 1e-5
     assert sessions["vision.onnx"].fed[0]["pixel_values"].shape == (1, 3, 224, 224)
-    t = m.embed_text("a bar chart")
+    t = m.embed_text("a bar chart", centre=False)
     assert abs(np.linalg.norm(t) - 1) < 1e-5
     ids = sessions["text.onnx"].fed[0]["input_ids"]
     assert ids.tolist() == [[2, 4, 5, 6, 3]] and ids.dtype == np.int64
@@ -123,7 +123,12 @@ def test_CLIP_04_the_model_embeds_pictures_and_words_as_unit_vectors(pack):
     for i in (2, 4, 5, 6, 3):
         expect[i] = 1 / 5                                               # mean pooling, then the identity dense
     assert np.allclose(t, expect / np.linalg.norm(expect), atol=1e-6)
-    assert m.embed_text("") .shape == (512,)                            # empty words: still a vector, no crash
+    assert len(sessions["text.onnx"].fed) == 1
+    assert m.embed_text("", centre=False).shape == (512,)                # empty words: still a vector, no crash
+    c = m.embed_text("a bar chart")                                     # centred: the bank's mean taken out
+    assert abs(np.linalg.norm(c) - 1) < 1e-5 and not np.allclose(c, t)
+    assert m.text_centre() is m.text_centre() and len(sessions["text.onnx"].fed) == 3 + len(shape.BANK)
+    assert np.allclose(m.embed_text("a bar chart"), c)                  # the bank is embedded once
 
 
 def test_CLIP_05_blob_round_trip_is_float16():

@@ -977,6 +977,21 @@
 | 측정 | M | 1만 행: 추가 3.4ms/행, 검색 13~30ms, 필터 포함 26ms, 비슷한 그림 12ms, DB 9.7MB. 4K 설명 92ms(해시 25·색 7·내용 58)·썸네일 20ms·픽셀 키 31ms — 전부 인덱서 스레드. 실제 저장 폴더 최신 20장(960×540) 실제 인식기: 장당 0.2~3.8초, 총 24.6초; "표"·"설정"·"excel" 검색이 해당 캡처를 찾음 | 기록 |
 | 수동 | M | `run_capture.py --selftest` 카탈로그 생성 포함 OK (overlay 57ms, copy 61ms) | 기록 |
 
+## v0.9.1 추가 — 말로 모양 찾기 (CLIP 팩)
+
+| ID | 분류 | 내용 | 기대 결과 |
+|---|---|---|---|
+| MS-12 | U | 모델 팩 `clip-vit-b32-ml`(kind clip, 4파일 약 227MB, 고정 리비전·SHA-256, 압축 아님); `clip_files()`가 네 파일을 찾고 없으면 FileNotFoundError | 정확 |
+| CLIP-01~06 | U | `core/shape.py`: WordPiece(BERT basic: `##` 조각, [UNK], 한자 낱자, 구두점 분리, 대소문자 유지, 탭·줄바꿈 공백, [CLS]…[SEP], 128 제한); 전처리(짧은 변 224·가운데 자르기·RGB·mean/std, 작은 그림 확대); safetensors를 numpy만으로; 가짜 세션으로 그림·글 벡터(정규화, input_ids·attention_mask int64, 평균 풀링 → Dense); 글 벡터는 기준 문구 25개(`BANK`)의 평균을 뺀 중심화 벡터(묶음은 한 번만 임베딩, `centre=False`면 원본); blob 왕복 float16 1024바이트(빈/짧은 blob은 None); `ShapeSearch`(팩 없으면 `missing()`·ModelMissing, 4스레드가 동시에 불러도 한 번만 로드, `unload()`) | 정확 |
+| CAT-11~13 | U | `set_embed`·`pending_embed`(embed IS NULL, b""는 실패 표시로 대기 아님)·`embed_count`; 재추가하면 다시 대기; `nearest`(코사인순·`min_score`·limit·종류/내용/앱/기간/색 필터·`Hit.score`, 벡터 없는 행 제외); `centre=True`면 그림 평균을 빼고 다시 정규화해 '모든 질의에 가까운 밋밋한 그림'(허브)이 바닥 아래로 내려감, 8장 미만이면 그대로 | 정확 |
+| IDX-05 | U | 팩 없이 rescan → 벡터 0·대기 2; `set_embedder` 뒤 `run_backlog` → 전부 채움·`embed_progress` (1,2)→(0,2)·changed 1회; 새 캡처 `add`는 즉시 벡터; 임베딩 예외는 b""로 표시하고 재시도 없음 | 정확 |
+| SW-07~09 | U | 검색 창: shape 없으면 버튼 숨김; **모양으로** 켜고 "막대 그래프" → a, b 점수순·상태줄 "모양"·툴팁 "모양 점수"; "고양이"는 바닥(0.17) 아래라 0개; 칩이 좁힘; 빈 입력은 최신순; 끄면 낱말 검색; 팩 없으면 켤 때 받기 확인(MB 표시) → 거절하면 꺼짐, 수락하면 `get_packs(ids, done, progress)`·진행률 "50 / 227"·받은 뒤 결과·"받았습니다"; 비슷한 그림 찾기는 해시 결과 뒤에 CLIP 이웃(≥0.75) 덧붙임, 팩 없으면 해시만 | 정확 |
+| CAPP-11 | U | 컨트롤러 `shape` 속성(setter가 인덱서 embedder 연결/해제), `open_search`가 shape·`get_shape_packs` 전달; `get_shape_packs` → `model_store.download(user_root)`·진행률 콜백·받은 즉시 `indexer.set_embedder`·done(True); 실패는 AI 창 없이 토스트·done(False); `ai_idle()`이 CLIP도 내림; main은 팩이 있으면 시작 때 `shape_ready()` | 정확 |
+| SPD-14 | M | 1만 행 `nearest` 60ms 미만(필터 포함 80ms) — 측정 10ms | 정확 |
+| SHR-01 | M | 실제 팩(설치돼 있을 때만): 한국어 3·영어 3 질의가 맞는 합성 그림(표/코드/막대그래프/대화상자)을 1위로; 그림→그림 ≥0.75로 같은 그림 1위. 로드 431ms, 그림 600×400 17ms·4K 30ms, 글 2.6ms | 정확 |
+| 측정 | M | Argos ko→en은 짧은 질의를 못 옮김("표"→"Ticketing", "지도"→"About Us", "사진"→"swarovskij") → 번역 대신 다국어 텍스트 인코더 채택. 원본 코사인은 실제 저장 폴더(80장)에서 빈 흰 화면 한 장이 14개 질의 중 9개의 1위(허브, 점수 전부 0.24~0.26) → 글·그림 중심화 뒤 허브 최대 3회, "소스 코드"→코드 화면 3장(.22/.18/.18), "사진"→웹캠 사진(.13), "웹 페이지"→민원 웹페이지(.16), "글이 많은 문서"→빽빽한 글(.19), 없는 것("대화 상자")은 바닥 0.08 아래라 0개; 한 낱말("표", "지도")은 여전히 약함 | 기록 |
+| 수동 | M | `run_capture.py --selftest` OK (아래 수동 체크리스트 참고) | 기록 |
+
 ## v0.8.35 추가 — 글자 모드 품질: 두 단 순서·큰 제목 크롭·드래그 선택 위치
 
 | ID | 분류 | 내용 | 기대 결과 |

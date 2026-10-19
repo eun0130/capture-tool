@@ -165,7 +165,7 @@ def vec(i: int):
 
 class FakeShape:
     """The shape service: a few phrases map to vectors near a (0) or b (1)."""
-    WORDS = {"막대 그래프": (0.9, 0.4), "코드": (0.3, 0.95), "고양이": (0.1, 0.1)}
+    WORDS = {"막대 그래프": (0.9, 0.4), "코드": (0.3, 0.95), "고양이": (0.05, 0.05)}
 
     def __init__(self, present=True):
         self.present = present
@@ -177,7 +177,7 @@ class FakeShape:
     def missing(self):
         return [] if self.present else ["clip-vit-b32-ml"]
 
-    def text_vector(self, words):
+    def text_vector(self, words, centre=True):
         from capture_tool.core.shape import ModelMissing
         self.calls.append(words)
         if not self.present:
