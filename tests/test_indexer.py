@@ -125,3 +125,40 @@ def test_IDX_04_the_thread_mode_runs_jobs_in_order_and_signals_on_the_gui_thread
     QTest.qWait(50)
     assert got                                                                        # queued signal delivered here
     ix.stop()
+
+
+def test_IDX_05_shape_vectors_come_with_the_picture_or_later_when_the_pack_arrives(cat, tmp_path, qt_app):
+    from capture_tool.core.clip import to_blob
+    folder = tmp_path / "shots"
+    folder.mkdir()
+    for name in ("a.png", "b.png"):
+        cv2.imwrite(str(folder / name), picture(name))
+    calls = []
+
+    def embed(img):
+        calls.append(img.shape)
+        if img.shape[1] == 10:                                            # the "bad" picture below
+            raise RuntimeError("no vector")
+        v = np.zeros(512, np.float32)
+        v[len(calls)] = 1
+        return to_blob(v)
+    ix = Indexer(cat, FakeReader(), lambda: str(folder), sync=True)       # no pack yet
+    ix.rescan()
+    assert cat.count() == 2 and cat.embed_count() == 0 and len(cat.pending_embed()) == 2
+    progress, changes = [], []
+    ix.embed_progress.connect(lambda left, total: progress.append((left, total)))
+    ix.changed.connect(lambda: changes.append(1))
+    ix.set_embedder(embed)                                                # the pack was just downloaded
+    ix.run_backlog()
+    assert cat.embed_count() == 2 and cat.pending_embed() == [] and len(calls) == 2
+    assert progress[0] == (1, 2) and progress[-1] == (0, 2) and changes == [1]
+    p = folder / "c.png"
+    cv2.imwrite(str(p), picture("c"))
+    ix.add(p, picture("c"), CaptureMeta("area"), [])                      # a new capture: vector at once
+    assert cat.embed_count() == 3 and len(calls) == 3
+    bad = folder / "d.png"
+    cv2.imwrite(str(bad), np.zeros((10, 10, 3), np.uint8))
+    ix.add(bad, np.zeros((10, 10, 3), np.uint8), CaptureMeta("area"), [])
+    assert cat.embed_count() == 3 and cat.pending_embed() == []           # failed once: marked, not retried
+    ix.run_backlog()
+    assert len(calls) == 4

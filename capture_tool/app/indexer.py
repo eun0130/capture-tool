@@ -1,7 +1,9 @@
 """Fills the catalogue behind 캡처 찾기 off the GUI thread: every saved capture is described
 (hash, colours, kind, tags, thumbnail) the moment it is saved, its text comes from the read-ahead
 when that already read the same pixels, else it is read later when the app is idle - as is the
-backlog of pictures that were in the save folder before. One worker thread, one queue."""
+backlog of pictures that were in the save folder before. With the shape-search pack installed every
+picture also gets its CLIP vector (at once for a new capture, when idle for the backlog). One
+worker thread, one queue."""
 from __future__ import annotations
 
 import logging
@@ -38,16 +40,19 @@ def _load(path: str) -> np.ndarray | None:
 class Indexer(QObject):
     changed = Signal()                     # the catalogue's content changed (a search window refreshes)
     progress_changed = Signal(int, int)    # (left to read, total pending at the start of this run)
+    embed_progress = Signal(int, int)      # (left to embed, total pending at the start of this run)
 
     def __init__(self, catalog: Catalog, read_text: Callable[[np.ndarray], list] | None,
                  folder: Callable[[], str | None], busy: Callable[[], bool] = lambda: False,
-                 text_enabled: Callable[[], bool] = lambda: True, sync: bool = False, parent=None):
+                 text_enabled: Callable[[], bool] = lambda: True, sync: bool = False, parent=None,
+                 embedder: Callable[[np.ndarray], bytes] | None = None):
         super().__init__(parent)
         self.catalog = catalog
         self.read_text = read_text
         self.folder = folder
         self.busy = busy
         self.text_enabled = text_enabled
+        self.embedder = embedder           # picture -> shape vector blob; None until the pack is installed
         self.sync = sync
         self._queue: queue.Queue = queue.Queue()
         self._thread: threading.Thread | None = None
@@ -68,8 +73,12 @@ class Indexer(QObject):
         self._run(self._rescan)
 
     def run_backlog(self) -> None:
-        """Read the text of catalogued pictures that haven't got it yet (sync: all of it now)."""
+        """Read the text (and make the shape vector) of catalogued pictures that lack it (sync: now)."""
         self._run(self._backlog)
+
+    def set_embedder(self, embedder: Callable[[np.ndarray], bytes] | None) -> None:
+        """The shape-search pack arrived (or went): from now on pictures get their vector."""
+        self.embedder = embedder
 
     def stop(self) -> None:
         self._stop = True
@@ -120,7 +129,8 @@ class Indexer(QObject):
         want_text = self.text_enabled() and self.read_text is not None
         text = self._text_of(lines) if want_text else ""
         tags = tagging.auto_tags(meta, d, lines)
-        self.catalog.add(path, d, meta, text=text, tags=tags, thumb=tagging.thumbnail(img))
+        fid = self.catalog.add(path, d, meta, text=text, tags=tags, thumb=tagging.thumbnail(img))
+        self._embed_one(fid, img)
         self.changed.emit()
         if want_text and lines is None:
             self._backlog()
@@ -139,12 +149,55 @@ class Indexer(QObject):
             taken = time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime(Path(path).stat().st_mtime))
             meta = CaptureMeta("file", "", "", taken)
             d = tagging.describe(img)
-            self.catalog.add(path, d, meta, text=None, tags=tagging.auto_tags(meta, d), thumb=tagging.thumbnail(img))
+            fid = self.catalog.add(path, d, meta, text=None, tags=tagging.auto_tags(meta, d), thumb=tagging.thumbnail(img))
+            self._embed_one(fid, img)
         if new or removed or moved:
             self.changed.emit()
         self._backlog()
 
+    def _embed_one(self, fid: int, img: np.ndarray) -> bool:
+        """The picture's shape vector, when the pack is there. A failure is recorded (b"") so the
+        picture is not tried again and again."""
+        embed = self.embedder
+        if embed is None:
+            return False
+        try:
+            self.catalog.set_embed(fid, embed(img))
+        except Exception:  # noqa: BLE001 - one picture must not stop the rest
+            log.exception("catalogue: shape vector failed for row %s", fid)
+            self.catalog.set_embed(fid, b"")
+        return True
+
     def _backlog(self) -> None:
+        self._text_backlog()
+        self._embed_backlog()
+
+    def _embed_backlog(self) -> None:
+        if self.embedder is None:
+            return
+        total = len(self.catalog.pending_embed(limit=100_000))
+        done = 0
+        while True:
+            if not self._wait_idle():
+                return
+            batch = self.catalog.pending_embed(limit=5)
+            if not batch:
+                break
+            for fid, path in batch:
+                if not self._wait_idle():
+                    return
+                img = _load(path)
+                if img is None:
+                    self.catalog.set_embed(fid, b"")
+                    continue
+                self._embed_one(fid, img)
+                done += 1
+                self.embed_progress.emit(max(0, total - done), total)
+        self.embed_progress.emit(0, total)
+        if done:
+            self.changed.emit()
+
+    def _text_backlog(self) -> None:
         if not (self.text_enabled() and self.read_text is not None):
             return
         total = self.catalog.pending_count()
