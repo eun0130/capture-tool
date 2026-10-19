@@ -13,7 +13,8 @@ GUIDE = os.path.join(ROOT, "capture_tool", "app", "guide_images")
 datas += [(os.path.join(GUIDE, f), os.path.join("capture_tool", "app", "guide_images")) for f in os.listdir(GUIDE)]
 # edition marker (build.ps1 -Edition work writes it for the 회사용 build; absent = 집용)
 EDITION = os.path.join(ROOT, "capture_tool", "edition.txt")
-WORK_EXCLUDES = ["capture_tool.platform.kakao", "capture_tool.app.mail_ui"]   # not even in the 회사용 bundle
+WORK_EXCLUDES = ["capture_tool.platform.kakao", "capture_tool.app.mail_ui",            # not even in the 회사용 bundle
+                 "capture_tool.core.websearch", "capture_tool.platform.lens", "capture_tool.core.gemini"]
 excludes = [
     "tkinter", "matplotlib", "pytest", "IPython",
     "PySide6.QtWebEngineCore", "PySide6.QtWebEngineWidgets", "PySide6.QtQml", "PySide6.QtQuick",

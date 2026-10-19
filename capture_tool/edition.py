@@ -1,6 +1,6 @@
-"""Which edition this is. 집용 "home" has everything; 회사용 "work" has no KakaoTalk and no
-web mail at all (no button, no guide page, no settings, no sender), for PCs where they must not
-exist. The work installer is built
+"""Which edition this is. 집용 "home" has everything; 회사용 "work" has no KakaoTalk, no web
+mail, no web search, no internet share link and no Gemini at all (no button, no guide page, no
+settings, no code), for PCs where nothing may leave for the internet. The work installer is built
 with capture_tool/edition.txt saying "work" (build.ps1 -Edition work); the source tree carries
 no such file, so a developer run is the home edition. CAPTURE_EDITION in the environment
 overrides the file (tests, trying the work edition from source) - but never in an installed
@@ -13,7 +13,10 @@ import sys
 from pathlib import Path
 
 HOME, WORK = "home", "work"
-EXCLUDED_AT_WORK = ("kakao", "mail")      # bar buttons (and their code paths) the work edition has not got
+EXCLUDED_AT_WORK = ("kakao", "mail", "search_web", "link_web", "gemini")
+# bar buttons and code paths the work edition has not got: KakaoTalk, web mail, web search (Google
+# Lens / Google / Naver / Papago), the internet share link, and Gemini (the company LLM takes its
+# place). The 검색 and 링크 buttons stay: they search the saved captures / copy the file link.
 _MARKER = Path(__file__).with_name("edition.txt")
 _file_edition: str | None = None
 
@@ -58,6 +61,19 @@ def has(name: str) -> bool:
 
 def has_kakao() -> bool:
     return has("kakao")
+
+
+def has_web_search() -> bool:
+    return has("search_web")
+
+
+def has_share() -> bool:
+    """Internet share link (upload)."""
+    return has("link_web")
+
+
+def has_gemini() -> bool:
+    return has("gemini")
 
 
 def title() -> str:

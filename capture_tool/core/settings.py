@@ -10,7 +10,7 @@ from pathlib import Path
 from .color import normalize_hex
 from .hotkey import HotkeyError, parse
 
-DEFAULT_HOTKEYS = {"capture": "Alt + ~", "ocr": "", "shapes": "", "fullscreen": "", "scroll": ""}
+DEFAULT_HOTKEYS = {"capture": "Alt + ~", "ocr": "", "shapes": "", "fullscreen": "", "scroll": "", "search": ""}
 SETTINGS_VERSION = 2
 OLD_DEFAULT_CAPTURE = "Win + ~"  # v1 default; Windows Terminal's quake mode owns it on many PCs
 TOOLS = {"select", "rect", "ellipse", "line", "arrow", "curve", "pen", "text", "step", "highlight", "mosaic",
@@ -63,12 +63,16 @@ class Settings:
     ai_cloud_consent: bool = False       # agreed that text is sent to Google
     ai_key: str = ""                     # Gemini key, DPAPI-encrypted (never plain text)
     ai_target_lang: str = ""             # "" = automatic (Korean <-> English)
+    ai_endpoint: str = ""                # work edition: company LLM server (http(s)://host[:port]), "" = offline only
+    ai_model: str = ""                   # work edition: model name the company server expects
     update_check: bool = True            # look for a newer version once a day (tray menu: 업데이트 확인)
     update_source: str = ""              # "" = this edition's GitHub releases; "owner/repo"; or a folder of installers
     update_last: str = ""                # when it last looked (ISO date-time)
     share_expiry: str = "24h"            # internet link: deleted by the host after 1h/12h/24h/72h
     share_consent: bool = False          # agreed that internet links upload the picture
     tip_count: int = 0                   # "click a title bar = whole window" tip shown this often
+    catalog_enabled: bool = True         # saved captures are catalogued for 캡처 찾기
+    catalog_text: bool = True            # ... including their (masked) text
     version: int = SETTINGS_VERSION
 
 
@@ -126,7 +130,7 @@ def _apply(s: Settings, data: dict, warnings: list[str]) -> None:
                     raise TypeError
                 s.jpg_quality = min(100, max(1, v))
             elif name in ("auto_save", "launch_at_startup", "redact_pii", "drm_notice_shown", "ppt_new_slide", "auto_copy", "show_recent", "styled_text", "pdf_one_page", "border_shadow", "read_ahead", "keep_style", "bar_expanded", "table_quick", "guide_shown",
-                          "ai_cloud_translate", "ai_cloud_consent", "share_consent"):
+                          "ai_cloud_translate", "ai_cloud_consent", "share_consent", "catalog_enabled", "catalog_text"):
                 if not isinstance(v, bool):
                     raise TypeError
                 setattr(s, name, v)
@@ -189,6 +193,17 @@ def _apply(s: Settings, data: dict, warnings: list[str]) -> None:
                 if not isinstance(v, str) or len(v) > 4096:
                     raise TypeError
                 s.ai_key = v
+            elif name == "ai_endpoint":
+                from .company_llm import clean_endpoint
+                if not isinstance(v, str) or len(v) > 2000:
+                    raise TypeError
+                s.ai_endpoint = clean_endpoint(v)
+                if v.strip() and not s.ai_endpoint:
+                    raise TypeError                        # not an http(s) address: dropped with a warning
+            elif name == "ai_model":
+                if not isinstance(v, str) or len(v) > 200:
+                    raise TypeError
+                s.ai_model = v.strip()
             elif name == "ai_target_lang":
                 from .ai_text import LANGS
                 if v != "" and v not in LANGS:

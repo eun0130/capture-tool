@@ -93,6 +93,24 @@ def test_ED_07_an_installed_build_ignores_the_environment_and_bundles_no_kakao_o
     assert "capture_tool.platform.kakao" in spec and "capture_tool.app.mail_ui" in spec and "excludes += WORK_EXCLUDES" in spec
 
 
+def test_ED_08_the_work_edition_sends_nothing_to_the_internet(work):
+    """No web search, no internet share link, no Gemini on a company PC - the modules are not
+    even in the bundle; the 검색 and 링크 buttons stay (saved-capture search, file link)."""
+    from capture_tool.core import bar_layout as bl
+    assert edition.excluded() == ("kakao", "mail", "search_web", "link_web", "gemini")
+    assert not edition.has_web_search() and not edition.has_share() and not edition.has_gemini()
+    assert "search" in bl.available_names() and "link" in bl.available_names()
+    spec = (ROOT / "packaging" / "capture_tool.spec").read_text(encoding="utf-8")
+    for mod in ("capture_tool.core.websearch", "capture_tool.platform.lens", "capture_tool.core.gemini"):
+        assert mod in spec
+    assert "capture_tool.core.share" not in spec               # file_link stays (nothing uploaded)
+
+
+def test_ED_08b_the_home_edition_keeps_them(monkeypatch):
+    monkeypatch.setenv("CAPTURE_EDITION", "home")
+    assert edition.has_web_search() and edition.has_share() and edition.has_gemini()
+
+
 def test_ED_05_the_work_edition_is_always_at_work(make, work):
     from capture_tool.core.settings import Settings
     c = make(settings=Settings(workplace="home"))
@@ -110,7 +128,7 @@ def test_ED_06_the_work_edition_has_no_mail_either(make, work):
     from capture_tool.core import bar_layout as bl
     from capture_tool.core.settings import Settings
     assert not edition.has("mail") and not edition.has("kakao") and edition.has("ppt")
-    assert edition.excluded() == ("kakao", "mail")
+    assert edition.excluded()[:2] == ("kakao", "mail")
     assert "mail" not in bl.available_names() and "kakao" not in bl.available_names()
     c = make()
     c.ask_mail = lambda *a, **k: pytest.fail("the mail picker opened")

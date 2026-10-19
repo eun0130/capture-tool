@@ -160,6 +160,19 @@ def test_SET_12_new_fields_defaults_and_validation(tmp_path):
     assert len(warnings) == 3
 
 
+def test_SET_14_company_llm_and_catalog_fields(tmp_path):
+    s = Settings()
+    assert (s.ai_endpoint, s.ai_model, s.catalog_enabled, s.catalog_text) == ("", "", True, True)
+    assert s.hotkeys["search"] == ""
+    p = tmp_path / "settings.json"
+    save(Settings(ai_endpoint=" https://llm.corp.local/v1/ ", ai_model=" corp-chat ", catalog_text=False), p)
+    s, warnings = load(p)
+    assert (s.ai_endpoint, s.ai_model, s.catalog_text) == ("https://llm.corp.local", "corp-chat", False) and not warnings
+    p.write_text(json.dumps({"ai_endpoint": "llm.corp.local", "ai_model": 5, "catalog_enabled": "no"}), encoding="utf-8")
+    s, warnings = load(p)
+    assert (s.ai_endpoint, s.ai_model, s.catalog_enabled) == ("", "", True) and len(warnings) == 3
+
+
 def test_SET_13_new_fields_round_trip(tmp_path):
     p = tmp_path / "settings.json"
     save(Settings(ppt_new_slide=False, last_highlight_color="#8ce99a", last_text_bg="#FFEC99"), p)
