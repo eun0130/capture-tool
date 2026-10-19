@@ -80,10 +80,11 @@ def test_SRCH_08_side_bar_search_menu(qt_app):
     assert "search" in bar.buttons
     menu = bar.search_menu()
     acts = [a for a in menu.actions() if not a.isSeparator() and a.isEnabled()]
-    assert len(acts) == 4 and not any("네이버" in a.text() and "이미지" in a.text() for a in acts)
-    acts[0].trigger()
+    assert len(acts) == 5 and not any("네이버" in a.text() and "이미지" in a.text() for a in acts)
+    acts[0].trigger()                                       # first: the saved captures (nothing leaves the PC)
+    acts[1].trigger()
     acts[-1].trigger()
-    assert seen == ["search_img:google", "search_text:papago"]
+    assert seen == ["search_local", "search_img:google", "search_text:papago"]
 
 
 def test_SRCH_09_browser_failure_is_reported(make):

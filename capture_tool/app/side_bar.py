@@ -158,7 +158,10 @@ class SideBar(QWidget):
             elif name == "pin":
                 b.clicked.connect(lambda _=False, btn=b: self.pin_menu().exec(btn.mapToGlobal(btn.rect().bottomLeft())))
             elif name == "search":
-                b.clicked.connect(lambda _=False, btn=b: self.search_menu().exec(btn.mapToGlobal(btn.rect().bottomLeft())))
+                if edition.has_web_search():
+                    b.clicked.connect(lambda _=False, btn=b: self.search_menu().exec(btn.mapToGlobal(btn.rect().bottomLeft())))
+                else:                                      # work: only the saved captures are searched
+                    b.clicked.connect(lambda _=False: self.action.emit("search_local"))
             else:
                 b.clicked.connect(lambda _=False, n=name: self.action.emit(n))
             b.installEventFilter(self)                     # dragging (below)
@@ -651,6 +654,9 @@ class SideBar(QWidget):
     def search_menu(self):
         from PySide6.QtWidgets import QMenu
         m = QMenu(self)
+        a = m.addAction("내 캡처에서 찾기 — 저장 폴더의 캡처를 글자·태그·모양으로")
+        a.triggered.connect(lambda _=False: self.action.emit("search_local"))
+        m.addSeparator()
         head = m.addAction("그림으로 찾기 — 캡처가 저절로 붙습니다")
         head.setEnabled(False)
         for eng, label in (("google", "구글 렌즈 (그림으로 찾기)"),):
@@ -669,6 +675,9 @@ class SideBar(QWidget):
 
     def _link_menu(self, btn) -> None:
         from PySide6.QtWidgets import QMenu
+        if not edition.has_share():                        # work: the file link, nothing else
+            self.action.emit("link_file")
+            return
         m = QMenu(self)
         a = m.addAction("파일 링크 복사 — 저장한 위치 (인터넷에 올리지 않음)")
         a.triggered.connect(lambda: self.action.emit("link_file"))

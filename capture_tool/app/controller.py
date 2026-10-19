@@ -2502,7 +2502,7 @@ class Controller(QObject):
             return
         if isinstance(result, ConsentNeeded):
             from . import ai_ui
-            choice = (self.ask_consent or (lambda: ai_ui.ask_consent(win)))()
+            choice = (self.ask_consent or (lambda: ai_ui.ask_consent(win, self.settings.ai_endpoint)))()
             if choice == "agree":
                 self.settings.ai_cloud_consent = True
                 self._persist()

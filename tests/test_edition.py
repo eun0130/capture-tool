@@ -141,6 +141,62 @@ def test_ED_09b_the_work_controller_summarises_with_the_company_llm(make, work):
     assert e.value.kind == "config"
 
 
+def test_ED_10_work_settings_and_guide_know_no_gemini_share_or_web_search(qt_app, work):
+    from capture_tool.app.settings_dialog import SettingsDialog
+    from capture_tool.core.settings import Settings
+    d = SettingsDialog(Settings(ai_endpoint="https://llm.corp.local", ai_model="corp-chat"))
+    assert d.has_share_section is False and d.has_gemini is False
+    assert "회사 AI" in d.ai_cloud.text() and "Gemini" not in d.ai_cloud.text() and "Gemini" not in d.ai_cloud_translate.text()
+    assert "llm.corp.local" in d.ai_key_status.text()
+    s = d.result_settings()
+    assert (s.ai_endpoint, s.ai_model) == ("https://llm.corp.local", "corp-chat")
+    text = "\n".join(p.title + p.intro + "".join(p.steps) + p.tip for p in guide.pages())
+    for word in ("구글", "네이버", "파파고", "렌즈", "Gemini", "Google", "인터넷 공유"):
+        assert word not in text, word
+    assert "내 캡처" in text and len(guide.pages()) == len(guide.PAGES) - 2
+
+
+def test_ED_10b_the_home_guide_also_tells_about_searching_saved_captures(monkeypatch):
+    monkeypatch.setenv("CAPTURE_EDITION", "home")
+    nine = next(p for p in guide.pages() if p.title.startswith("9."))
+    assert "내 캡처" in "".join(nine.steps) and "구글" in "".join(nine.steps)
+
+
+def test_ED_11_work_side_bar_search_and_link_go_straight_to_local(make, work):
+    c = make()
+    c.start_capture()
+    ov = c.overlays[0]
+    drag(ov, (100, 100), (500, 400))
+    got = []
+    ov.side_bar.action.connect(got.append)
+    ov.side_bar.buttons["search"].click()
+    assert got[-1] == "search_local"
+    ov.side_bar._link_menu(ov.side_bar.buttons["search"])      # the link menu is skipped: the file link at once
+    assert got[-1] == "link_file"
+
+
+def test_ED_12_the_work_key_dialog_sets_up_the_company_server(qt_app, work):
+    from capture_tool.app.ai_ui import KeyDialog, consent_text, engine_label
+    from capture_tool.core.settings import Settings
+    from capture_tool.platform.secret import unprotect
+    s = Settings()
+    checked = []
+    dlg = KeyDialog(s, check=lambda k: checked.append(k), sync=True)
+    assert dlg.work and "open" not in dlg.buttons
+    dlg.on_clipboard("sk-corp-123")                           # no address yet: nothing is checked
+    assert checked == [] and "주소" in dlg.status.text()
+    dlg.endpoint.setText("https://llm.corp.local/v1/")
+    dlg.model.setText(" corp-chat ")
+    dlg.on_clipboard("AIza-not-needed sk-corp-123")            # a company key is one word
+    assert checked == []
+    dlg.on_clipboard("sk-corp-123")
+    assert checked == ["sk-corp-123"] and dlg.ok
+    dlg.save()
+    assert unprotect(s.ai_key) == "sk-corp-123" and s.ai_endpoint == "https://llm.corp.local" and s.ai_model == "corp-chat"
+    assert engine_label("cloud") == "회사 AI (회사 서버)"
+    assert "llm.corp.local" in consent_text("https://llm.corp.local") and "Google" not in consent_text("x")
+
+
 def test_ED_05_the_work_edition_is_always_at_work(make, work):
     from capture_tool.core.settings import Settings
     c = make(settings=Settings(workplace="home"))

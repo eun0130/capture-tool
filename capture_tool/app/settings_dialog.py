@@ -223,18 +223,26 @@ class SettingsDialog(QDialog):
             mail_box.hide()
         # --- AI: translate / summary --------------------------------------------------------
         v.addWidget(QLabel("<b>AI 번역·요약</b> — 번역은 항상 무료·오프라인. 요약 방식을 고르세요."))
+        self.has_gemini = edition.has_gemini()            # work: the company AI server instead
         self.ai_local = QRadioButton("요약: 오프라인 AI (PC 안에서 처리 · 무료 · 느림, 처음 한 번 약 1.4GB 받기)")
-        self.ai_cloud = QRadioButton("요약: Gemini (Google 무료 AI · 빠르고 정확 · 무료 키 필요, 글이 Google로 전송)")
+        self.ai_cloud = QRadioButton("요약: Gemini (Google 무료 AI · 빠르고 정확 · 무료 키 필요, 글이 Google로 전송)"
+                                     if self.has_gemini else
+                                     "요약: 회사 AI (사내 LLM 서버 · 빠르고 정확 · 글이 설정한 회사 서버로 전송)")
         grp = QButtonGroup(self)
         grp.addButton(self.ai_local)
         grp.addButton(self.ai_cloud)
         (self.ai_cloud if settings.ai_summary_engine == "cloud" else self.ai_local).setChecked(True)
-        self.ai_cloud_translate = QCheckBox("번역도 Gemini로 (더 자연스러운 번역, 키가 있을 때)")
+        self.ai_cloud_translate = QCheckBox("번역도 Gemini로 (더 자연스러운 번역, 키가 있을 때)" if self.has_gemini
+                                            else "번역도 회사 AI로 (더 자연스러운 번역, 서버·키가 있을 때)")
         self.ai_cloud_translate.setChecked(settings.ai_cloud_translate)
         self._ai_key = settings.ai_key
         self._ai_consent = settings.ai_cloud_consent
+        self._ai_endpoint, self._ai_model = settings.ai_endpoint, settings.ai_model
         from ..core.share import EXPIRIES, EXPIRY_NAMES
-        share_row = QHBoxLayout()
+        self.has_share_section = edition.has_share()      # work: no internet share link, nothing to set
+        share_box = QWidget(self)
+        share_row = QHBoxLayout(share_box)
+        share_row.setContentsMargins(0, 0, 0, 0)
         share_row.addWidget(QLabel("인터넷 공유 링크 보관 시간 (지나면 자동 삭제)"))
         self.share_expiry = QComboBox()
         for code in EXPIRIES:
@@ -242,11 +250,14 @@ class SettingsDialog(QDialog):
         self.share_expiry.setCurrentIndex(max(0, self.share_expiry.findData(settings.share_expiry)))
         share_row.addWidget(self.share_expiry)
         share_row.addStretch(1)
-        v.addLayout(share_row)
+        if self.has_share_section:
+            v.addWidget(share_box)
+        else:
+            share_box.hide()
         keyrow = QHBoxLayout()
         self.ai_key_status = QLabel()
         keyrow.addWidget(self.ai_key_status, 1)
-        key_btn = QPushButton("무료 키 설정 안내…")
+        key_btn = QPushButton("무료 키 설정 안내…" if self.has_gemini else "회사 AI 서버·키 설정…")
         key_btn.clicked.connect(self._key_wizard)
         keyrow.addWidget(key_btn)
         for w in (self.ai_local, self.ai_cloud, self.ai_cloud_translate):
@@ -352,14 +363,22 @@ class SettingsDialog(QDialog):
         self._load_bar_lists()
 
     def _refresh_key(self) -> None:
-        self.ai_key_status.setText("Gemini 키: 설정됨" if self._ai_key else "Gemini 키: 없음 (오프라인으로 동작)")
+        if self.has_gemini:
+            self.ai_key_status.setText("Gemini 키: 설정됨" if self._ai_key else "Gemini 키: 없음 (오프라인으로 동작)")
+        elif self._ai_endpoint:
+            self.ai_key_status.setText(f"회사 AI: {self._ai_endpoint} · 모델 {self._ai_model or '(없음)'} · "
+                                       + ("키 설정됨" if self._ai_key else "키 없음 (오프라인으로 동작)"))
+        else:
+            self.ai_key_status.setText("회사 AI: 서버 주소 없음 (오프라인으로 동작)")
 
     def _key_wizard(self) -> None:
         from .ai_ui import KeyDialog
         tmp = Settings(ai_key=self._ai_key, ai_summary_engine="cloud" if self.ai_cloud.isChecked() else "local",
-                       ai_cloud_translate=self.ai_cloud_translate.isChecked())
+                       ai_cloud_translate=self.ai_cloud_translate.isChecked(),
+                       ai_endpoint=self._ai_endpoint, ai_model=self._ai_model)
         KeyDialog(tmp, parent=self).exec()
         self._ai_key = tmp.ai_key
+        self._ai_endpoint, self._ai_model = tmp.ai_endpoint, tmp.ai_model
         (self.ai_cloud if tmp.ai_summary_engine == "cloud" else self.ai_local).setChecked(True)
         self.ai_cloud_translate.setChecked(tmp.ai_cloud_translate)
         self._refresh_key()
@@ -448,6 +467,7 @@ class SettingsDialog(QDialog):
         s.mail_custom_url = self.mail_custom.text().strip()
         s.ai_cloud_translate = self.ai_cloud_translate.isChecked()
         s.ai_key = self._ai_key
+        s.ai_endpoint, s.ai_model = self._ai_endpoint, self._ai_model
         s.share_expiry = self.share_expiry.currentData()
         from ..core import bar_layout as bl
         self._collect_bar()
