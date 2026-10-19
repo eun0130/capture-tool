@@ -8,7 +8,9 @@ from dataclasses import dataclass
 from ..core.geometry import Rect
 
 u32 = ctypes.WinDLL("user32", use_last_error=True)
+k32 = ctypes.WinDLL("kernel32", use_last_error=True)
 dwm = ctypes.WinDLL("dwmapi")
+PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
 DWMWA_EXTENDED_FRAME_BOUNDS = 9
 DWMWA_CLOAKED = 14
 GWL_EXSTYLE = -20
@@ -76,6 +78,30 @@ def top_level_windows(exclude_pid: int | None = None) -> list[WindowInfo]:
 
     u32.EnumWindows(_EnumProc(cb), 0)
     return out
+
+
+def process_name(hwnd: int) -> str:
+    """The program behind a window as its exe name without .exe, lower case ("excel"); "" when
+    it can't be told (no window, a protected process)."""
+    if not hwnd:
+        return ""
+    pid = wintypes.DWORD()
+    u32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+    if not pid.value:
+        return ""
+    k32.OpenProcess.restype = wintypes.HANDLE
+    h = k32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid.value)
+    if not h:
+        return ""
+    try:
+        buf = ctypes.create_unicode_buffer(1024)
+        n = wintypes.DWORD(1024)
+        if not k32.QueryFullProcessImageNameW(wintypes.HANDLE(h), 0, buf, ctypes.byref(n)):
+            return ""
+        name = buf.value.replace("/", "\\").rsplit("\\", 1)[-1].lower()
+        return name[:-4] if name.endswith(".exe") else name
+    finally:
+        k32.CloseHandle(wintypes.HANDLE(h))
 
 
 def window_at(p, wins: list[WindowInfo]) -> WindowInfo | None:

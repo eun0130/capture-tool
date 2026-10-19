@@ -202,6 +202,11 @@ class Controller(QObject):
         self._taken_path = None             # file the current capture was saved to (auto-save / link)
         self.ask_share_consent = None       # tests replace the dialog
         self.uploader = None                # tests replace the upload
+        self.indexer = None                 # catalogue indexer (캡처 찾기); None in simple tests
+        self.catalog = None
+        self.search_window = None
+        self._picked_window = None          # the window the capture was taken from (app, title)
+        self._capture_kind = "area"         # area / window / fullscreen / scroll / pin / file
         self.scroll_limits: dict = {}   # tests: max_height / max_pixels / max_steps
         self.ask_save_path = self._ask_save_path_dialog
         # 메일: address book (per Windows user, encrypted), compose page, paste helper
@@ -296,8 +301,9 @@ class Controller(QObject):
         if mode == "fullscreen":
             img = np.ascontiguousarray(self.screen.grab(ordered[0].rect)[:, :, :3])
             self._copy_image(img, 96 * ordered[0].scale)
+            self._picked_window, self._capture_kind = None, "fullscreen"
             if self.settings.auto_save:
-                self._save(img)
+                self._save(img, kind="fullscreen")
             return True
         self._acted, self._taken_path = False, None
         self.tip_active = self.settings.tip_count < 3
@@ -426,8 +432,19 @@ class Controller(QObject):
             return
         r = clamp_rect(rect, ov.monitor.rect)
         if r is not None:
+            self._picked_window = window or self._window_under(ov, r)
+            self._capture_kind = "window" if window is not None else "area"
             self.session.select(r)
             self._after_select(ov)
+
+    @staticmethod
+    def _window_under(ov, r: Rect):
+        """The window the middle of the chosen area lies on (for the catalogue's app / title)."""
+        wins = getattr(ov, "windows", None)
+        if not wins:
+            return None
+        from ..platform.windows import window_at
+        return window_at((r.x + r.w // 2, r.y + r.h // 2), wins)
 
     def _after_select(self, ov) -> None:
         if self.session.state is not State.EDITING:
@@ -765,16 +782,17 @@ class Controller(QObject):
                     "blocked": "화면 캡처가 막혔습니다(보안 프로그램이나 보호된 영상이 캡처를 막고 있을 수 "
                                "있습니다). 막히기 전까지 "}.get(sc.reason, "")
             self.notify(f"스크롤 캡처({what}) {w}×{h}px를 {note}복사했습니다. 원하는 곳에 Ctrl+V")
-        self.open_editor(img, dpi, f"스크롤 캡처 · {what}")
+        self.open_editor(img, dpi, f"스크롤 캡처 · {what}", kind="scroll")
 
     # --- edit window ---------------------------------------------------------------------------------
-    def open_editor(self, img, dpi: float, title: str, save: bool = True) -> None:
+    def open_editor(self, img, dpi: float, title: str, save: bool = True, kind: str = "window") -> None:
         """Show a big capture (scroll, whole window) with every normal capture tool. It is already
         on the clipboard; with auto-save on it is saved now (and updated if drawn on).
         save=False: a picture opened again (already a file)."""
         from .editor import EditorWindow
         h, w = img.shape[:2]
-        self._editor_path = self._save(img) if (save and self.settings.auto_save) else None
+        self._capture_kind = kind
+        self._editor_path = self._save(img, kind=kind) if (save and self.settings.auto_save) else None
         self._editor_dirty = False
         self.session.hotkey(Rect(0, 0, w, h))
         self.session.select(Rect(0, 0, w, h))
@@ -853,7 +871,8 @@ class Controller(QObject):
         img = np.ascontiguousarray(img[:, :, :3])
         if self.session.state is not State.IDLE or self.overlays:   # a capture in progress: this replaces it
             self.cancel()
-        self.open_editor(img, 96, f"다시 쓰기 · {name}", save=False)
+        self._picked_window = None
+        self.open_editor(img, 96, f"다시 쓰기 · {name}", save=False, kind="file")
         return True
 
     def _result_action(self, name: str, img, dpi: float, win, holder: dict) -> None:
@@ -876,6 +895,7 @@ class Controller(QObject):
 
     # --- whole window (one click, also across monitors) -----------------------------------------
     def _capture_whole_window(self, win, ov) -> None:
+        self._picked_window, self._capture_kind = win, "window"
         img = self._screen("capture_window", win.hwnd, win.rect)
         if img is None or img.shape[:2] != (win.rect.h, win.rect.w) or looks_blocked(img):
             img = self._compose_from_screens(win.rect)
@@ -889,7 +909,7 @@ class Controller(QObject):
         if payload:
             self._set_clipboard(payload)
         self.notify(f"'{win.title or '창'}' 창 전체({win.rect.w}×{win.rect.h}px)를 복사했습니다. 원하는 곳에 Ctrl+V")
-        self.open_editor(img, dpi, f"창 전체 · {win.title or '창'}")
+        self.open_editor(img, dpi, f"창 전체 · {win.title or '창'}", kind="window")
 
     def _compose_from_screens(self, rect: Rect):
         """The window pieced together from each monitor's frozen picture (white where no monitor is)."""
@@ -1642,8 +1662,10 @@ class Controller(QObject):
         dirty, self._editor_dirty = self._editor_dirty, False
         if path is not None:
             changed = dirty or (doc is not None and bool(doc.shapes))
-            if changed and self._write_image(compose(raw, doc), Path(path)):
-                return Path(path)
+            if changed:
+                final = compose(raw, doc)
+                if self._write_image(final, Path(path)):
+                    self._index(Path(path), final)                   # the drawing changed the picture
             return Path(path)
         return self._save(compose(raw, doc))
 
@@ -1880,7 +1902,7 @@ class Controller(QObject):
         from .border_dialog import ask_border
         return ask_border(img, settings, self.active_overlay)
 
-    def _save(self, img, ask: bool = False, ext_override: str | None = None) -> Path | None:
+    def _save(self, img, ask: bool = False, ext_override: str | None = None, kind: str | None = None) -> Path | None:
         s = self.settings
         ext = ("." + ext_override) if ext_override else (".jpg" if s.image_format == "jpg" else ".png")
         try:
@@ -1892,7 +1914,39 @@ class Controller(QObject):
         if used_fallback and s.save_dir:
             self.notify(f"지정한 폴더에 저장할 수 없어 대체 폴더에 저장합니다: {folder}")
         path = unique_path(folder, render(s.filename_pattern, self.now()), ext)
-        return path if self._write_image(img, path) else None
+        if not self._write_image(img, path):
+            return None
+        self._index(path, img, kind)
+        return path
+
+    # --- the catalogue behind 캡처 찾기 -----------------------------------------------------------
+    def _index(self, path: Path, img, kind: str | None = None) -> None:
+        """Hand a saved picture to the indexer: where it came from (the window under the
+        capture), what kind of capture it was, and its text when the read-ahead read these very
+        pixels already (so it is never read twice)."""
+        ix = self.indexer
+        if ix is None or not getattr(self.settings, "catalog_enabled", True):
+            return
+        from ..core.tagging import CaptureMeta
+        win = self._picked_window
+        app = title = ""
+        if win is not None:
+            title = getattr(win, "title", "") or ""
+            app = self._screen("process_name", getattr(win, "hwnd", 0), default="") or ""
+        meta = CaptureMeta(kind or self._capture_kind, app, title, self.now().isoformat(timespec="seconds"))
+        lines = None
+        slot = getattr(self, "_ahead", None)
+        if slot is not None and slot["done"].is_set() and not isinstance(slot["result"], Exception) \
+                and slot["key"] == self._read_key(img):
+            lines = list(slot["result"])
+        try:
+            ix.add(path, img, meta, lines)
+        except Exception:  # noqa: BLE001 - the catalogue never breaks a save
+            log.exception("catalogue add failed")
+
+    def catalog_busy(self) -> bool:
+        """The indexer reads text only while nothing is being captured or edited."""
+        return self.session.state is not State.IDLE or self.scrolling or bool(self.overlays)
 
     def _write_image(self, img, path: Path) -> bool:
         suffix = path.suffix.lower()
@@ -1953,7 +2007,7 @@ class Controller(QObject):
         p.closed.connect(self._pin_closed)
         p.managerRequested.connect(lambda w: self.show_pin_manager())
         p.copyRequested.connect(lambda w: self._copy_image(w.image, 96 * w.dpr))
-        p.saveRequested.connect(lambda w: self._save(w.image))
+        p.saveRequested.connect(lambda w: self._save(w.image, kind="pin"))
         self.pins.append(p)
         p.show()
         self.notify("화면에 고정했습니다. 다른 창 위에 계속 떠 있습니다. "

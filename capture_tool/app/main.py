@@ -153,6 +153,12 @@ class TrayApp:
         self.controller = Controller(RealScreen(), RealClipboard(self.hk_window.hwnd), self.ocr, self.settings,
                                      self.settings_path, fallback_dir(), notify=self.toast)
         self.hk_window.manager.triggered.connect(self.on_hotkey)
+        from ..core.catalog import Catalog
+        from .indexer import Indexer
+        self.catalog = Catalog(data_dir() / "catalog.db")
+        self.indexer = Indexer(self.catalog, self.ocr.recognize, self._save_folder, busy=self.controller.catalog_busy,
+                               text_enabled=lambda: self.settings.catalog_text)
+        self.controller.catalog, self.controller.indexer = self.catalog, self.indexer
         self.controller.prewarm()
         app.screenAdded.connect(lambda *_: self.controller.prewarm())
         self._build_menu()
@@ -166,6 +172,15 @@ class TrayApp:
             # the beginner's guide pops up once (first start, or the first start after updating)
             QTimer.singleShot(1500, self.controller.show_guide_first_time)
             QTimer.singleShot(20_000, self._auto_check_update)      # once a day, well after start-up
+            if self.settings.catalog_enabled:
+                QTimer.singleShot(8_000, self.indexer.rescan)         # the save folder's backlog, when idle
+
+    def _save_folder(self) -> str | None:
+        from ..core.naming import SaveDirError, resolve_save_dir
+        try:
+            return str(resolve_save_dir(self.settings.save_dir, fallback_dir())[0])
+        except SaveDirError:
+            return None
 
     # --- ui ------------------------------------------------------------------------
     def toast(self, msg: str) -> None:

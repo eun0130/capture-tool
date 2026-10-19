@@ -56,6 +56,9 @@ class RealScreen:
     def capture_window(self, hwnd, rect):
         return windows.capture_window(hwnd, rect)
 
+    def process_name(self, hwnd):
+        return windows.process_name(hwnd)
+
     def windows(self):
         try:
             return windows.top_level_windows(exclude_pid=os.getpid())
