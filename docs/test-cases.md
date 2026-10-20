@@ -989,6 +989,7 @@
 | CAPP-11 | U | 컨트롤러 `shape` 속성(setter가 인덱서 embedder 연결/해제), `open_search`가 shape·`get_shape_packs` 전달; `get_shape_packs` → `model_store.download(user_root)`·진행률 콜백·받은 즉시 `indexer.set_embedder`·done(True); 실패는 AI 창 없이 토스트·done(False); `ai_idle()`이 CLIP도 내림; main은 팩이 있으면 시작 때 `shape_ready()` | 정확 |
 | SPD-14 | M | 1만 행 `nearest` 60ms 미만(필터 포함 80ms) — 측정 10ms | 정확 |
 | SHR-01 | M | 실제 팩(설치돼 있을 때만): 한국어 3·영어 3 질의가 맞는 합성 그림(표/코드/막대그래프/대화상자)을 1위로; 그림→그림 ≥0.75로 같은 그림 1위. 로드 431ms, 그림 600×400 17ms·4K 30ms, 글 2.6ms | 정확 |
+| RPX-11 | U | `make` 픽스처는 `reveal_file`·`open_folder`·`open_url`을 기록용으로 바꿈: 실제 `explorer /select`·브라우저 함수를 터지게 바꿔도 PDF 저장·폴더 열기가 통과, `c.revealed`에 PDF 경로 (BUG-126) | 정확 |
 | 측정 | M | Argos ko→en은 짧은 질의를 못 옮김("표"→"Ticketing", "지도"→"About Us", "사진"→"swarovskij") → 번역 대신 다국어 텍스트 인코더 채택. 원본 코사인은 실제 저장 폴더(80장)에서 빈 흰 화면 한 장이 14개 질의 중 9개의 1위(허브, 점수 전부 0.24~0.26) → 글·그림 중심화 뒤 허브 최대 3회, "소스 코드"→코드 화면 3장(.22/.18/.18), "사진"→웹캠 사진(.13), "웹 페이지"→민원 웹페이지(.16), "글이 많은 문서"→빽빽한 글(.19), 없는 것("대화 상자")은 바닥 0.08 아래라 0개; 한 낱말("표", "지도")은 여전히 약함 | 기록 |
 | 수동 | M | `run_capture.py --selftest` OK (아래 수동 체크리스트 참고) | 기록 |
 

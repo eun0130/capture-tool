@@ -65,6 +65,23 @@ def test_RPX_04_pdf_saves_a_pdf_and_reveals_it(make, tmp_path):
     assert PNG in c.clipboard.last                # the picture is also on the clipboard for Ctrl+V
 
 
+def test_RPX_11_the_fixture_never_opens_explorer_for_a_saved_pdf(make, monkeypatch):
+    """BUG-126: a test that saves a PDF without stubbing reveal_file used to start a real
+    `explorer /select` on the temp file; the fixture now records it instead."""
+    from capture_tool.app import controller as mod
+
+    def boom(path):
+        raise AssertionError(f"explorer started for {path}")
+    monkeypatch.setattr(mod, "_reveal_file", boom)
+    monkeypatch.setattr(mod, "_open_folder", boom)
+    monkeypatch.setattr(mod, "_open_url", boom)
+    c, ov = _editing(make)
+    c.on_toolbar_action("pdf")
+    assert len(c.revealed) == 1 and str(c.revealed[0]).endswith(".pdf")
+    c.open_folder(c.settings.save_dir)
+    assert c.opened == [c.settings.save_dir]
+
+
 def test_RPX_05_print_sends_the_capture_to_the_printer(make):
     c, ov = _editing(make)
     printed = []

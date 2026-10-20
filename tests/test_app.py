@@ -79,6 +79,9 @@ def make(qt_app, tmp_path):
                        settings=settings or Settings(save_dir=str(tmp_path / "shots")),
                        settings_path=tmp_path / "settings.json", fallback_dir=tmp_path / "fallback",
                        sync=True)
+        c.revealed, c.opened, c.urls = [], [], []          # never explorer / a browser on the test PC (BUG-126)
+        c.reveal_file, c.open_folder = c.revealed.append, c.opened.append
+        c.open_url = lambda url: (c.urls.append(url), True)[1]
         made.append(c)
         return c
 
