@@ -134,3 +134,68 @@ jobs:
           } else {
             gh release create $tag installer/Output/CaptureTool-Work-Setup-*.exe installer/Output/CaptureTool-Work-Setup-*.exe.sha256 --repo eun0130/capture_work --title "캡처 도구 (회사용) $tag" --notes "회사용 설치 파일 (카카오톡·메일 기능 없음)"
           }
+
+  mac:
+    # Apple Silicon build of the home edition: CaptureTool-<version>-mac.dmg (+ .sha256), uploaded into the
+    # releases the Windows job created (this repository and eun0130/capture_dist).
+    runs-on: macos-latest
+    needs: build
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install
+        run: python -m pip install -e .[dev]
+
+      - name: Cache OCR models
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/Library/Caches/pip/rapidocr
+            ${{ env.pythonLocation }}/lib/python3.12/site-packages/rapidocr/models
+          key: ocr-models-mac-v3.9.2
+      - name: Download OCR models
+        run: python tools/fetch_models.py
+
+      - name: Tests (headless; real Quartz / Carbon tests need a desktop session)
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: |
+          python -m pytest -q -m "not windows and not mac and not slow and not timing" 2>&1 | tee pytest.log
+          grep -Eq "( failed|error during collection| errors)" pytest.log && exit 1
+          grep -q " passed" pytest.log
+
+      - name: Version must match tag
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          v=$(python -c "import capture_tool; print(capture_tool.__version__)")
+          [ "v$v" = "${{ github.ref_name }}" ] || { echo "capture_tool.__version__ ($v) does not match tag ${{ github.ref_name }}"; exit 1; }
+
+      - name: Build CaptureTool.app and the dmg
+        run: ./build.sh --skip-tests
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: CaptureTool-mac
+          path: |
+            installer/Output/*-mac.dmg
+            installer/Output/*-mac.dmg.sha256
+
+      - name: Upload the dmg to this repository's release
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "${{ github.ref_name }}" installer/Output/*-mac.dmg installer/Output/*-mac.dmg.sha256 --clobber
+
+      - name: Upload the dmg to the public download repository (eun0130/capture_dist)
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          DIST_TOKEN: ${{ secrets.DIST_REPO_TOKEN || secrets.WORK_REPO_TOKEN }}
+        run: |
+          if [ -z "$DIST_TOKEN" ]; then echo "DIST_REPO_TOKEN not set: upload the dmg with gh release upload --repo eun0130/capture_dist from a developer machine"; exit 0; fi
+          export GH_TOKEN="$DIST_TOKEN"
+          gh release upload "${{ github.ref_name }}" installer/Output/*-mac.dmg installer/Output/*-mac.dmg.sha256 --repo eun0130/capture_dist --clobber

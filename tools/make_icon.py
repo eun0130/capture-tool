@@ -35,6 +35,25 @@ def main() -> None:
         data += png
     out.write_bytes(header + entries + data)
     print("wrote", out)
+    if sys.platform == "darwin":
+        write_icns(icon, out.with_name("app.icns"))
+
+
+def write_icns(icon, out: Path) -> None:
+    """macOS app icon: an .iconset of PNGs (16..512 @1x/@2x) turned into .icns by iconutil."""
+    import shutil
+    import subprocess
+    import tempfile
+    with tempfile.TemporaryDirectory() as tmp:
+        iconset = Path(tmp) / "app.iconset"
+        iconset.mkdir()
+        for base in (16, 32, 128, 256, 512):
+            for scale in (1, 2):
+                px = base * scale
+                name = f"icon_{base}x{base}" + ("@2x" if scale == 2 else "") + ".png"
+                icon.pixmap(px, px).toImage().save(str(iconset / name), "PNG")
+        subprocess.run(["iconutil", "-c", "icns", str(iconset), "-o", str(out)], check=True)
+    print("wrote", out)
 
 
 if __name__ == "__main__":

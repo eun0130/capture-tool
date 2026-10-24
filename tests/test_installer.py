@@ -35,3 +35,25 @@ def test_INST_03_user_data_lives_outside_the_program_folder(monkeypatch, tmp_pat
     program = tmp_path / "Local" / "Programs" / "CaptureTool"
     for p in (main.data_dir(), main.log_dir(), ms.user_root()):
         assert program not in p.parents and p != program, p
+
+
+def test_INST_10_mac_bundle_build_script_and_ci_job():
+    """The Mac build: a menu-bar .app with the permission texts (packaging/capture_tool.spec BUNDLE),
+    build.sh making CaptureTool-<v>-mac.dmg + .sha256 with an ad-hoc signature, a macos CI job
+    uploading them into the releases, and no Windows-only module in the Mac bundle."""
+    ROOT = ISS.parents[1]
+    spec = (ROOT / "packaging" / "capture_tool.spec").read_text(encoding="utf-8")
+    assert 'BUNDLE(' in spec and 'name="CaptureTool.app"' in spec and 'bundle_identifier="com.capturetool.app"' in spec
+    for key in ("LSUIElement", "NSScreenCaptureUsageDescription", "NSAppleEventsUsageDescription",
+                "CFBundleShortVersionString", "LSMinimumSystemVersion"):
+        assert key in spec, key
+    assert '"capture_tool.platform.kakao"' in spec.split("MAC_EXCLUDES")[1] and "win32com" in spec.split("MAC_EXCLUDES")[1]
+    sh = (ROOT / "build.sh").read_text(encoding="utf-8")
+    assert "codesign --force --deep -s -" in sh and "hdiutil create" in sh and "-mac.dmg" in sh and "shasum -a 256" in sh
+    assert "capture_tool.spec" in sh and "--skip-tests" in sh
+    yml = (ROOT / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
+    assert "runs-on: macos-latest" in yml and "./build.sh --skip-tests" in yml
+    assert "not windows and not mac" in yml and "--repo eun0130/capture_dist --clobber" in yml
+    assert re.search(r"name: CaptureTool-mac", yml)
+    icon = (ROOT / "tools" / "make_icon.py").read_text(encoding="utf-8")
+    assert "iconutil" in icon and "app.icns" in icon
