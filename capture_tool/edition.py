@@ -50,9 +50,18 @@ def is_work() -> bool:
     return current() == WORK
 
 
+EXCLUDED_ON_MAC = ("ppt", "ppt_shapes", "ppt_merge", "excel", "word", "kakao", "lens", "drm")
+# Office COM, KakaoTalk window control, Google Lens paste and DRM detection are Windows-only; on the
+# Mac the picture / table is on the clipboard instead (Cmd+V into Keynote, PowerPoint, Numbers).
+
+
 def excluded() -> tuple[str, ...]:
-    """The buttons this edition leaves out."""
-    return EXCLUDED_AT_WORK if is_work() else ()
+    """The buttons / code paths this edition on this OS leaves out."""
+    from . import platform as pf
+    out = EXCLUDED_AT_WORK if is_work() else ()
+    if pf.is_mac():
+        out = tuple(dict.fromkeys(out + EXCLUDED_ON_MAC))
+    return out
 
 
 def has(name: str) -> bool:

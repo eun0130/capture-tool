@@ -228,3 +228,40 @@ def test_ED_06_the_work_edition_has_no_mail_either(make, work):
     assert d.has_mail_section is False
     assert d.result_settings().mail_provider == ""
     assert bl.default_profile("work").hidden == ["mail", "kakao"]
+
+
+@pytest.fixture
+def mac(monkeypatch):
+    monkeypatch.setenv("CAPTURE_PLATFORM", "darwin")
+
+
+def test_ED_10_the_mac_has_no_office_kakao_lens_or_drm(mac, monkeypatch):
+    monkeypatch.delenv("CAPTURE_EDITION", raising=False)
+    edition.reset()
+    assert set(edition.excluded()) == {"ppt", "ppt_shapes", "ppt_merge", "excel", "word", "kakao", "lens", "drm"}
+    assert not edition.has("ppt") and not edition.has_kakao() and edition.has("mail") and edition.has("search_web")
+    from capture_tool.core import bar_layout as bl
+    names = bl.available_names()
+    assert "ppt" not in names and "excel" not in names and "pdf" in names and "print" in names and "mail" in names
+
+
+def test_ED_11_the_work_edition_on_windows_is_unchanged(work, monkeypatch):
+    monkeypatch.setenv("CAPTURE_PLATFORM", "win32")
+    edition.reset()
+    assert edition.excluded() == edition.EXCLUDED_AT_WORK
+
+
+def test_ED_12_the_controller_makes_no_office_senders_on_the_mac(mac, make):
+    """Hidden buttons have no sender; the send paths leave the content on the clipboard."""
+    c = make()
+    assert c.powerpoint is None and c.excel is None and c.word is None and c.kakao is None and c.drm is None
+    c.start_capture()
+    ov = c.overlays[0]
+    drag(ov, (100, 100), (500, 400))
+    assert "ppt" not in ov.side_bar.buttons and "word" not in ov.side_bar.buttons and "pdf" in ov.side_bar.buttons
+    c._send_to_excel("표")
+    c._send_to_word("표")
+    got = []
+    c._send_item_to_ppt(object(), "그림", on_done=lambda ok, msg: got.append((ok, msg)))
+    assert len(c.messages) >= 3 and all("클립보드" in m for m in c.messages[-3:])
+    assert got == [(False, c.messages[-1])]

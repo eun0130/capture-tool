@@ -201,20 +201,27 @@ class Controller(QObject):
         self.ask_table_options = None       # tests replace the 표 options dialog
         self.mail_helper = None
         self._book = None
-        from ..platform.powerpoint import PowerPointSender
-        from ..platform.security_software import detect_drm
-        self.powerpoint = PowerPointSender()
-        from ..platform.word import WordSender
-        self.word = WordSender()
-        from ..platform.excel import ExcelSender
-        self.excel = ExcelSender()
-        self.kakao = None                        # the work edition has no KakaoTalk at all
+        # senders only for the buttons this edition / OS has (the work edition has no KakaoTalk, the
+        # Mac no Office COM at all); a missing sender = the content stays on the clipboard
+        self.powerpoint = self.word = self.excel = self.kakao = None
+        if edition.has("ppt"):
+            from ..platform.powerpoint import PowerPointSender
+            self.powerpoint = PowerPointSender()
+        if edition.has("word"):
+            from ..platform.word import WordSender
+            self.word = WordSender()
+        if edition.has("excel"):
+            from ..platform.excel import ExcelSender
+            self.excel = ExcelSender()
         if edition.has_kakao():
             from ..platform.kakao import KakaoSender
             self.kakao = KakaoSender()
         self._kakao_done.connect(self.notify)
         self._search_done.connect(self._open_search)
-        self.drm = detect_drm()
+        self.drm = None
+        if edition.has("drm"):
+            from ..platform.security_software import detect_drm
+            self.drm = detect_drm()
 
     # --- helpers -----------------------------------------------------------------
     def _screen(self, name: str, *args, default=None):
@@ -2344,6 +2351,9 @@ class Controller(QObject):
     def _send_to_excel(self, what: str, note: str = "") -> None:
         """The table goes into Excel: the selected cell of the open sheet, or a new workbook
         after starting Excel. Without Excel it waits on the clipboard."""
+        if self.excel is None:
+            self.notify(f"{what}를 클립보드에 복사했습니다. 붙일 곳에서 붙여넣기 하세요." + note)
+            return
         from ..platform.excel import ExcelMissing, ExcelNotOpen, ExcelUnavailable
 
         def work():
@@ -2372,6 +2382,9 @@ class Controller(QObject):
 
     def _send_to_word(self, what: str, note: str = "", col_widths=None) -> None:
         """The clipboard already holds the table: Word pastes it at the cursor (in the background)."""
+        if self.word is None:
+            self.notify(f"{what} 클립보드에 복사했습니다. 붙일 곳에서 붙여넣기 하세요." + note)
+            return
         from ..platform.word import WordBusy, WordUnavailable
 
         def work():
@@ -2733,6 +2746,12 @@ class Controller(QObject):
         """Insert into PowerPoint in the background, time-limited; the clipboard already holds
         the same content, so whatever happens the user can still Ctrl+V.
         on_done(ok, message) lets a window show the outcome itself."""
+        if self.powerpoint is None:
+            msg = f"{what} 클립보드에 복사했습니다. 붙일 곳에서 붙여넣기 하세요."
+            self.notify(msg)
+            if on_done:
+                on_done(False, msg)
+            return
         if getattr(self.powerpoint, "busy", False):
             msg = "PowerPoint로 보내는 중입니다. 끝나면 다시 시도하세요. (클립보드에 있으니 Ctrl+V도 됩니다)"
             self.notify(msg)
