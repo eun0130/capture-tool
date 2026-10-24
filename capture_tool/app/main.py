@@ -29,11 +29,17 @@ APP = "CaptureTool"
 
 
 def data_dir() -> Path:
+    from .. import platform as pf
+    if pf.is_mac():
+        return Path.home() / "Library" / "Application Support" / APP
     base = os.environ.get("APPDATA") or str(Path.home())
     return Path(base) / APP
 
 
 def log_dir() -> Path:
+    from .. import platform as pf
+    if pf.is_mac():
+        return Path.home() / "Library" / "Logs" / APP
     base = os.environ.get("LOCALAPPDATA") or str(Path.home())
     return Path(base) / APP
 
@@ -374,7 +380,7 @@ class TrayApp:
         """Look for a newer version (GitHub release of this edition, or the folder in the
         settings) off the UI thread; found: the tray menu gains "새 버전 … 설치"."""
         from .. import edition
-        current, ed, source = __version__, edition.current(), getattr(self.settings, "update_source", "")
+        current, ed, source = __version__, update.channel(edition.current()), getattr(self.settings, "update_source", "")
         job = self._job()
 
         def done(result):
@@ -435,12 +441,14 @@ class TrayApp:
                 logging.warning("update download failed: %s", result)
                 self.toast(str(result) if isinstance(result, update.UpdateError) else "업데이트 파일을 받지 못했습니다.")
                 return
-            self.toast("설치를 시작합니다. 잠시 뒤 새 버전으로 다시 실행됩니다.")
-            update.launch_installer(result)
-            if wait:
-                self.quit()
+            if update.launch_installer(result):
+                self.toast("설치를 시작합니다. 잠시 뒤 새 버전으로 다시 실행됩니다.")
+                if wait:
+                    self.quit()
+                else:
+                    QTimer.singleShot(400, self.quit)
             else:
-                QTimer.singleShot(400, self.quit)
+                self.toast("새 버전 디스크 이미지를 열었습니다. CaptureTool을 응용 프로그램 폴더로 끌어 넣고 다시 실행하세요.")
         job.done.connect(done)
         job.start(lambda: update.download(u, into, progress=job.progress.emit), wait)
 

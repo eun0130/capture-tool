@@ -16,10 +16,19 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 
-REPOS = {"home": "eun0130/capture_dist", "work": "eun0130/capture_work"}
-INSTALLER = {"home": "CaptureTool-Setup-{v}.exe", "work": "CaptureTool-Work-Setup-{v}.exe"}
+REPOS = {"home": "eun0130/capture_dist", "work": "eun0130/capture_work", "mac": "eun0130/capture_dist"}
+INSTALLER = {"home": "CaptureTool-Setup-{v}.exe", "work": "CaptureTool-Work-Setup-{v}.exe",
+             "mac": "CaptureTool-{v}-mac.dmg"}
 _PATTERN = {"home": re.compile(r"^CaptureTool-Setup-(\d+\.\d+\.\d+)\.exe$"),
-            "work": re.compile(r"^CaptureTool-Work-Setup-(\d+\.\d+\.\d+)\.exe$")}
+            "work": re.compile(r"^CaptureTool-Work-Setup-(\d+\.\d+\.\d+)\.exe$"),
+            "mac": re.compile(r"^CaptureTool-(\d+\.\d+\.\d+)-mac\.dmg$")}
+
+
+def channel(edition: str) -> str:
+    """Which release asset this build updates from: the Mac has one channel (the home edition's
+    repository, a .dmg)."""
+    from .. import platform as pf
+    return "mac" if pf.is_mac() else edition
 TIMEOUT = 8.0
 USER_AGENT = "CaptureTool-updater"
 CHECK_EVERY_HOURS = 24
@@ -185,8 +194,15 @@ def _drop(path: Path) -> None:
 DETACHED_PROCESS, CREATE_NO_WINDOW = 0x00000008, 0x08000000
 
 
-def launch_installer(path: Path, runner: Callable | None = None) -> None:
-    """Run the installer silently a few seconds from now (the app quits meanwhile); it restarts
-    the app itself (/UPDATE=1 - installer/CaptureTool.iss)."""
+def launch_installer(path: Path, runner: Callable | None = None) -> bool:
+    """Start the downloaded installer. Windows: silently, a few seconds from now (the app quits
+    meanwhile), and it restarts the app itself (/UPDATE=1 - installer/CaptureTool.iss) - returns
+    True. Mac: opens the .dmg for the person to drag the app into Applications - returns False,
+    the app keeps running."""
+    from .. import platform as pf
+    if pf.is_mac():
+        (runner or subprocess.Popen)(["open", str(path)])
+        return False
     cmd = ["cmd.exe", "/c", f'ping -n 4 127.0.0.1 >nul & "{path}" /VERYSILENT /NORESTART /SUPPRESSMSGBOXES /UPDATE=1']
     (runner or subprocess.Popen)(cmd, creationflags=DETACHED_PROCESS | CREATE_NO_WINDOW, close_fds=True)
+    return True

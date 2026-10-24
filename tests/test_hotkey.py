@@ -103,3 +103,26 @@ def test_HK_11_round_trip(text):
     hk = parse(text)
     assert parse(str(hk)) == hk
     assert isinstance(hk, Hotkey)
+
+
+def test_HK_20_mac_labels_reserved_keys_and_conflicts(monkeypatch):
+    from capture_tool.core import hotkey as hk
+    monkeypatch.setenv("CAPTURE_PLATFORM", "darwin")
+    assert str(hk.parse("cmd+shift+2")) == "Shift + Cmd + 2"                  # Apple's order: Ctrl Option Shift Cmd
+    assert str(hk.parse("option+`")) == "Option + ~"
+    assert hk.known_conflicts(hk.parse("Cmd+Shift+4")) and "캡처" in hk.known_conflicts(hk.parse("Cmd+Shift+4"))[0]
+    assert hk.is_reserved(hk.parse("Cmd+Q")) and hk.is_reserved(hk.parse("Cmd+Tab")) and not hk.is_reserved(hk.parse("Win+L"))
+    assert hk.parse("Cmd + Shift + 2") == hk.parse("win+shift+2")          # the same key, whatever it is called
+    monkeypatch.setenv("CAPTURE_PLATFORM", "win32")
+    assert str(hk.parse("cmd+shift+2")) == "Shift + Win + 2"
+    assert not hk.is_reserved(hk.parse("Cmd+Q")) and hk.is_reserved(hk.parse("Win+L"))
+
+
+def test_HK_21_default_hotkeys_per_os(monkeypatch):
+    from capture_tool.core import settings as s
+    monkeypatch.setenv("CAPTURE_PLATFORM", "darwin")
+    assert s.default_hotkeys()["capture"] == "Shift + Cmd + 2"
+    assert s.Settings().hotkeys["capture"] == "Shift + Cmd + 2"
+    monkeypatch.setenv("CAPTURE_PLATFORM", "win32")
+    assert s.default_hotkeys()["capture"] == "Alt + ~" and s.DEFAULT_HOTKEYS["capture"] == "Alt + ~"
+    assert s.Settings().hotkeys["capture"] == "Alt + ~"

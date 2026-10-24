@@ -117,7 +117,7 @@ def test_UP_07_the_installer_restarts_the_app_after_an_update_and_the_release_sh
     assert "Get-FileHash" in yml and ".sha256" in yml
     ps = (ROOT / "tools" / "publish_work.ps1").read_text(encoding="utf-8")
     assert ".sha256" in ps
-    assert update.REPOS == {"home": "eun0130/capture_dist", "work": "eun0130/capture_work"}
+    assert update.REPOS == {"home": "eun0130/capture_dist", "work": "eun0130/capture_work", "mac": "eun0130/capture_dist"}
     assert update.parse_version(__version__) is not None
 
 
@@ -135,7 +135,7 @@ def test_UP_08_the_tray_offers_the_new_version_and_installs_it_on_request(qt_app
         assert tray.settings.update_last != ""
         got = []
         monkeypatch.setattr(update, "download", lambda upd, d, **k: got.append(("download", upd.version)) or (tmp_path / "setup.exe"))
-        monkeypatch.setattr(update, "launch_installer", lambda p, **k: got.append(("launch", p.name)))
+        monkeypatch.setattr(update, "launch_installer", lambda p, **k: got.append(("launch", p.name)) or True)
         monkeypatch.setattr(tray, "_confirm_update", lambda upd: True)
         quit_called = []
         monkeypatch.setattr(tray, "quit", lambda: quit_called.append(True))
@@ -150,3 +150,40 @@ def test_UP_08_the_tray_offers_the_new_version_and_installs_it_on_request(qt_app
         tray.hk_window.manager.apply({})
         tray.controller.close_all()
         tray.tray.hide()
+
+
+def test_UP_10_mac_channel_reads_the_dmg_from_capture_dist(monkeypatch):
+    monkeypatch.setenv("CAPTURE_PLATFORM", "darwin")
+    assert update.channel("home") == "mac" and update.channel("work") == "mac"
+    assert update.REPOS["mac"] == "eun0130/capture_dist"
+    assert update.INSTALLER["mac"].format(v="1.2.3") == "CaptureTool-1.2.3-mac.dmg"
+    assert update._PATTERN["mac"].match("CaptureTool-1.2.3-mac.dmg").group(1) == "1.2.3"
+    assert update._PATTERN["mac"].match("CaptureTool-Setup-1.2.3.exe") is None
+    monkeypatch.setenv("CAPTURE_PLATFORM", "win32")
+    assert update.channel("work") == "work" and update.channel("home") == "home"
+
+
+def test_UP_11_on_the_mac_the_dmg_is_opened_and_the_app_stays(monkeypatch, tmp_path):
+    monkeypatch.setenv("CAPTURE_PLATFORM", "darwin")
+    dmg = tmp_path / "CaptureTool-1.0.0-mac.dmg"
+    dmg.write_bytes(b"")
+    ran = []
+    assert update.launch_installer(dmg, runner=lambda cmd, **kw: ran.append(cmd)) is False
+    assert ran == [["open", str(dmg)]]
+    monkeypatch.setenv("CAPTURE_PLATFORM", "win32")
+    exe = tmp_path / "CaptureTool-Setup-1.0.0.exe"
+    exe.write_bytes(b"")
+    assert update.launch_installer(exe, runner=lambda cmd, **kw: None) is True
+
+
+def test_UP_12_the_mac_channel_finds_the_dmg_in_a_folder_and_on_github(monkeypatch, tmp_path):
+    monkeypatch.setenv("CAPTURE_PLATFORM", "darwin")
+    (tmp_path / "CaptureTool-9.9.9-mac.dmg").write_bytes(b"x")
+    u = update.check("0.1.0", "mac", str(tmp_path))
+    assert u and u.version == "9.9.9" and u.name.endswith("-mac.dmg")
+    release = {"tag_name": "v9.9.9", "body": "", "assets": [
+        {"name": "CaptureTool-9.9.9-mac.dmg", "browser_download_url": "https://x/d.dmg", "size": 5},
+        {"name": "CaptureTool-9.9.9-mac.dmg.sha256", "browser_download_url": "https://x/d.sha256", "size": 70},
+        {"name": "CaptureTool-Setup-9.9.9.exe", "browser_download_url": "https://x/s.exe", "size": 5}]}
+    u = update.check("0.1.0", "mac", fetch=lambda url, timeout=0: json.dumps(release).encode())
+    assert u and u.name == "CaptureTool-9.9.9-mac.dmg" and u.installer_url == "https://x/d.dmg" and u.sums_url == "https://x/d.sha256"

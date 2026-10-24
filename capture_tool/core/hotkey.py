@@ -17,6 +17,14 @@ _MOD_ALIASES = {
 }
 _MOD_ORDER = ["ctrl", "alt", "shift", "win"]
 _MOD_LABEL = {"ctrl": "Ctrl", "alt": "Alt", "shift": "Shift", "win": "Win"}
+_MOD_LABEL_MAC = {"ctrl": "Ctrl", "alt": "Option", "shift": "Shift", "win": "Cmd"}
+
+
+def _labels() -> dict[str, str]:
+    from .. import platform as pf
+    return _MOD_LABEL_MAC if pf.is_mac() else _MOD_LABEL
+
+
 _MOD_FLAG = {"ctrl": MOD_CONTROL, "alt": MOD_ALT, "shift": MOD_SHIFT, "win": MOD_WIN}
 
 _VK: dict[str, int] = {}
@@ -76,7 +84,8 @@ class Hotkey:
         return f
 
     def __str__(self) -> str:
-        parts = [_MOD_LABEL[m] for m in _MOD_ORDER if m in self.mods]
+        labels = _labels()
+        parts = [labels[m] for m in _MOD_ORDER if m in self.mods]
         parts.append(_KEY_LABEL.get(self.key, self.key))
         return " + ".join(parts)
 
@@ -120,14 +129,28 @@ def parse(text: str) -> Hotkey:
 
 _RESERVED_SET = {parse(s) for s in _RESERVED}
 _CONFLICT_MAP = {parse(k): v for k, v in _CONFLICTS.items()}
+# the Mac ("win" is the Cmd key there): system shortcuts that must stay with macOS
+_RESERVED_MAC = ["Win+Q", "Win+W", "Win+H", "Win+M", "Win+Tab", "Win+Space", "Win+`",
+                 "Win+C", "Win+V", "Win+X", "Win+Z", "Win+A", "Win+S"]
+_CONFLICTS_MAC = {
+    "Win+Shift+3": "macOS 전체 화면 캡처 단축키와 겹칩니다.",
+    "Win+Shift+4": "macOS 영역 캡처 단축키와 겹칩니다.",
+    "Win+Shift+5": "macOS 스크린샷 도구 단축키와 겹칩니다.",
+    "Win+Space": "Spotlight 단축키와 겹칩니다.",
+    "Win+`": "같은 앱의 창 전환 단축키와 겹칩니다.",
+}
+_RESERVED_SET_MAC = {parse(s) for s in _RESERVED_MAC}
+_CONFLICT_MAP_MAC = {parse(k): v for k, v in _CONFLICTS_MAC.items()}
 
 
 def is_reserved(hk: Hotkey) -> bool:
-    return hk in _RESERVED_SET
+    from .. import platform as pf
+    return hk in (_RESERVED_SET_MAC if pf.is_mac() else _RESERVED_SET)
 
 
 def known_conflicts(hk: Hotkey) -> list[str]:
-    msg = _CONFLICT_MAP.get(hk)
+    from .. import platform as pf
+    msg = (_CONFLICT_MAP_MAC if pf.is_mac() else _CONFLICT_MAP).get(hk)
     return [msg] if msg else []
 
 

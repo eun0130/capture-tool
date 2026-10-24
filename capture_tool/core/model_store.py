@@ -111,6 +111,9 @@ CATALOG = _catalog()
 
 
 def user_root() -> Path:
+    from .. import platform as pf
+    if pf.is_mac():
+        return Path.home() / "Library" / "Application Support" / "CaptureTool" / "models"
     base = os.environ.get("LOCALAPPDATA") or str(Path.home())
     return Path(base) / "CaptureTool" / "models"
 

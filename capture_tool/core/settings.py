@@ -11,6 +11,12 @@ from .color import normalize_hex
 from .hotkey import HotkeyError, parse
 
 DEFAULT_HOTKEYS = {"capture": "Alt + ~", "ocr": "", "shapes": "", "fullscreen": "", "scroll": "", "search": ""}
+DEFAULT_HOTKEYS_MAC = {**DEFAULT_HOTKEYS, "capture": "Shift + Cmd + 2"}   # Shift+Cmd+3/4/5 belong to macOS
+
+
+def default_hotkeys() -> dict:
+    from .. import platform as pf
+    return dict(DEFAULT_HOTKEYS_MAC if pf.is_mac() else DEFAULT_HOTKEYS)
 SETTINGS_VERSION = 2
 OLD_DEFAULT_CAPTURE = "Win + ~"  # v1 default; Windows Terminal's quake mode owns it on many PCs
 TOOLS = {"select", "rect", "ellipse", "line", "arrow", "curve", "pen", "text", "step", "highlight", "mosaic",
@@ -19,7 +25,7 @@ TOOLS = {"select", "rect", "ellipse", "line", "arrow", "curve", "pen", "text", "
 
 @dataclass
 class Settings:
-    hotkeys: dict = field(default_factory=lambda: dict(DEFAULT_HOTKEYS))
+    hotkeys: dict = field(default_factory=default_hotkeys)
     save_dir: str = ""
     filename_pattern: str = "{yymmdd}_{time}"      # e.g. 261004_143012.png
     image_format: str = "png"
