@@ -72,3 +72,36 @@ def test_MAC_05_launch_agent_plist(monkeypatch, tmp_path):
     startup.set_enabled(False, "/x")
     assert not startup.is_enabled() and not startup.plist_path().exists()
     startup.set_enabled(False, "/x")                                              # off twice: nothing to remove, no error
+
+
+def test_MAC_06_permission_messages_and_the_first_start_check(mac, monkeypatch):
+    from capture_tool.app import main
+    from capture_tool.platform.mac import permissions
+    monkeypatch.setattr(permissions, "screen_recording", lambda: False)
+    monkeypatch.setattr(permissions, "request_screen_recording", lambda: False)
+    monkeypatch.setattr(permissions, "accessibility", lambda: False)
+    assert "화면 기록" in main.mac_permission_missing("screen")
+    assert "손쉬운 사용" in main.mac_permission_missing("accessibility")
+    asked, opened = [], []
+    assert main.check_mac_permissions(ask=lambda t: asked.append(t) or True, open_settings=lambda: opened.append(1)) is False
+    assert asked == [permissions.MESSAGES["screen"]] and opened == [1]
+    assert main.check_mac_permissions(ask=lambda t: False, open_settings=lambda: opened.append(2)) is False
+    assert opened == [1]                                                          # "나중에": nothing opened
+    monkeypatch.setattr(permissions, "screen_recording", lambda: True)
+    monkeypatch.setattr(permissions, "accessibility", lambda: True)
+    assert main.mac_permission_missing("screen") is None and main.mac_permission_missing("accessibility") is None
+    assert main.check_mac_permissions(ask=lambda t: pytest.fail("asked although granted")) is True
+    monkeypatch.setenv("CAPTURE_PLATFORM", "win32")
+    assert main.mac_permission_missing("screen") is None and main.check_mac_permissions() is True
+
+
+def test_MAC_07_the_guide_on_the_mac(mac, monkeypatch):
+    from capture_tool.app import guide
+    pages = guide.pages()
+    titles = [p.title for p in pages]
+    assert pages[-1].title == "맥에서 처음 쓰기" and "화면 기록" in " ".join(pages[-1].steps)
+    assert not any("파워포인트" in t or "카카오톡" in t for t in titles)
+    assert "Shift + Cmd + 2" in pages[0].title and "Alt + ~" not in " ".join(s for p in pages for s in p.steps)
+    assert not any("Ctrl + V" in s for p in pages for s in p.steps)             # Cmd + V on the Mac
+    monkeypatch.setenv("CAPTURE_PLATFORM", "win32")
+    assert guide.pages()[-1].title != "맥에서 처음 쓰기" and "Alt + ~" in guide.pages()[0].title

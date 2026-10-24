@@ -48,6 +48,47 @@ def fallback_dir() -> Path:
     return Path.home() / "Pictures" / "Captures"
 
 
+def mac_permission_missing(which: str) -> str | None:
+    """On the Mac: the message to show when the Screen Recording ('screen') or Accessibility
+    ('accessibility') permission is not granted; None when granted or not on a Mac."""
+    from .. import platform as pf
+    if not pf.is_mac():
+        return None
+    from ..platform.mac import permissions
+    try:
+        ok = permissions.screen_recording() if which == "screen" else permissions.accessibility()
+    except Exception:  # noqa: BLE001 - pyobjc missing in a developer run: do not block the app
+        return None
+    return None if ok else permissions.MESSAGES[which]
+
+
+def check_mac_permissions(ask=None, open_settings=None) -> bool:
+    """First start on a Mac: ask the system for Screen Recording once; still missing, explain and
+    offer the settings pane. Returns True when capturing is possible. `ask(text) -> bool` and
+    `open_settings()` are injected by tests."""
+    from .. import platform as pf
+    if not pf.is_mac():
+        return True
+    from ..platform.mac import permissions
+    try:
+        if permissions.screen_recording() or permissions.request_screen_recording():
+            return True
+    except Exception:  # noqa: BLE001
+        return True
+    text = permissions.MESSAGES["screen"]
+    if ask is None:
+        def ask(t):
+            box = QMessageBox(QMessageBox.Warning, "캡처 도구", t)
+            go = box.addButton("설정 열기", QMessageBox.AcceptRole)
+            box.addButton("나중에", QMessageBox.RejectRole)
+            box.setWindowFlag(Qt.WindowStaysOnTopHint, True)
+            box.exec()
+            return box.clickedButton() is go
+    if ask(text):
+        (open_settings or (lambda: permissions.open_settings("screen")))()
+    return False
+
+
 def app_icon() -> QIcon:
     svg = ('<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">'
            '<rect x="2" y="2" width="60" height="60" rx="14" fill="#1F5FD1"/>'
@@ -172,6 +213,8 @@ class TrayApp:
         self.tray.show()
         self.tray.activated.connect(lambda reason: self.on_hotkey("capture")
                                     if reason == QSystemTrayIcon.Trigger else None)
+        if not selftest:
+            check_mac_permissions()
         for w in warnings:
             self.toast(w)
         if not selftest:
@@ -295,6 +338,11 @@ class TrayApp:
         if action.startswith("open:"):                  # a picture sent from a second launch
             self.controller.open_image_file(action[len("open:"):])
             return
+        if action == "scroll":
+            missing = mac_permission_missing("accessibility")
+            if missing:
+                self.toast(missing)
+                return
         if action == "search":
             self.controller.open_search()
             return
