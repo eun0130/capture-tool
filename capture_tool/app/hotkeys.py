@@ -58,12 +58,15 @@ class HotkeyWindow(QWidget):
 
     def __init__(self):
         super().__init__()
-        from ..platform import win_hotkey
+        from .. import platform as pf
+        hotkey = pf.backend().hotkey
         self.hwnd = int(self.winId())
         self.manager = HotkeyManager(
-            register=lambda i, hk: win_hotkey.register(self.hwnd, i, hk),
-            unregister=lambda i: win_hotkey.unregister(self.hwnd, i),
+            register=lambda i, hk: hotkey.register(self.hwnd, i, hk),
+            unregister=lambda i: hotkey.unregister(self.hwnd, i),
         )
+        if pf.is_mac():
+            hotkey.set_dispatch(self.manager.dispatch)        # Carbon calls back; no WM_HOTKEY on the Mac
 
     def nativeEvent(self, event_type, message):
         if event_type == b"windows_generic_MSG" or event_type == "windows_generic_MSG":

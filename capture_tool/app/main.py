@@ -308,16 +308,16 @@ class TrayApp:
     def _sync_startup(self) -> None:
         if not getattr(sys, "frozen", False):
             return  # only the installed exe registers itself
-        from ..platform import startup
+        from .. import platform as pf
         try:
-            startup.set_enabled(self.settings.launch_at_startup, sys.executable)
+            pf.backend().startup.set_enabled(self.settings.launch_at_startup, sys.executable)
         except OSError as e:
             logging.warning("startup registration failed: %s", e)
 
     def open_settings(self) -> None:
         if getattr(sys, "frozen", False):  # show the real state (the installer may have set it)
-            from ..platform import startup
-            self.settings.launch_at_startup = startup.is_enabled()
+            from .. import platform as pf
+            self.settings.launch_at_startup = pf.backend().startup.is_enabled()
         dlg = SettingsDialog(self.settings)
         dlg.setWindowIcon(app_icon())
         dlg.setWindowFlag(Qt.WindowStaysOnTopHint, True)
@@ -338,7 +338,8 @@ class TrayApp:
             d, _ = resolve_save_dir(self.settings.save_dir, fallback_dir())
             if not Path(d).is_dir():  # never "open" a file path taken from settings
                 raise OSError(f"폴더가 아닙니다: {d}")
-            os.startfile(d)  # noqa: S606 - opening the user's own folder in Explorer
+            from .. import platform as pf
+            pf.backend().shell.open_path(d)                   # the person's own folder in Explorer / Finder
         except (SaveDirError, OSError) as e:
             self.toast(str(e))
 
@@ -455,7 +456,7 @@ def selftest(tray: TrayApp) -> int:
     from PySide6.QtTest import QTest
     from PySide6.QtCore import QPoint
     from ..core.clipboard_payload import PNG
-    from ..platform import win_clipboard
+    from .. import platform as pf
 
     c = tray.controller
     tray.ocr._load()  # in real use the warm-up has long finished before the first hotkey
@@ -479,7 +480,7 @@ def selftest(tray: TrayApp) -> int:
     t1 = time.perf_counter()
     c.finish("copy")
     t_copy = (time.perf_counter() - t1) * 1000
-    png = win_clipboard.get_format(PNG)
+    png = pf.backend().clipboard.get_format(PNG)
     ocr_ok, shapes_ok = _selftest_recognition(tray)
     translate_ok = _selftest_translation()
     summary_ok = _selftest_summary()

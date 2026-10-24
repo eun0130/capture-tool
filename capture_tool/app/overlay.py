@@ -557,8 +557,8 @@ class OverlayWindow(QWidget):
             self._moved = True
         if st is State.SELECTING:
             if self._press is None:
-                from ..platform.windows import window_at
-                self.hover_window = window_at(self.to_phys(pos), self.windows)
+                from .. import platform as pf
+                self.hover_window = pf.backend().windows.window_at(self.to_phys(pos), self.windows)
         elif st is State.EDITING and self._current is not None:
             d = self.to_doc(pos)
             sel = self.c.session.selection

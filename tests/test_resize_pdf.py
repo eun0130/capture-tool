@@ -68,13 +68,13 @@ def test_RPX_04_pdf_saves_a_pdf_and_reveals_it(make, tmp_path):
 def test_RPX_11_the_fixture_never_opens_explorer_for_a_saved_pdf(make, monkeypatch):
     """BUG-126: a test that saves a PDF without stubbing reveal_file used to start a real
     `explorer /select` on the temp file; the fixture now records it instead."""
-    from capture_tool.app import controller as mod
+    from capture_tool.platform import shell
 
-    def boom(path):
+    def boom(path, runner=None):
         raise AssertionError(f"explorer started for {path}")
-    monkeypatch.setattr(mod, "_reveal_file", boom)
-    monkeypatch.setattr(mod, "_open_folder", boom)
-    monkeypatch.setattr(mod, "_open_url", boom)
+    monkeypatch.setattr(shell, "reveal", boom)
+    monkeypatch.setattr(shell, "open_path", boom)
+    monkeypatch.setattr(shell, "open_url", boom)
     c, ov = _editing(make)
     c.on_toolbar_action("pdf")
     assert len(c.revealed) == 1 and str(c.revealed[0]).endswith(".pdf")

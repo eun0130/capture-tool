@@ -328,8 +328,8 @@ class KeyDialog(QDialog):
     def save(self) -> None:
         if not (self.ok and self.key):
             return
-        from ..platform.secret import protect
-        self.settings.ai_key = protect(self.key)
+        from .. import platform as pf
+        self.settings.ai_key = pf.backend().secret.protect(self.key)
         self.settings.ai_summary_engine = "cloud"
         if self.work:
             from ..core.company_llm import clean_endpoint

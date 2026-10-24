@@ -54,8 +54,8 @@ class Toast(QWidget):
         if not self._excluded:
             self._excluded = True
             try:
-                from ..platform.scroll import exclude_from_capture
-                exclude_from_capture(int(self.winId()))
+                from .. import platform as pf
+                pf.backend().scroll.exclude_from_capture(int(self.winId()))
             except (OSError, ImportError, AttributeError):
                 pass
         self._timer.start(max(1500, ms))

@@ -63,7 +63,8 @@ log = logging.getLogger("capture_tool")
 
 def _protect(text: str) -> str:
     from ..core.contacts import SecretError
-    from ..platform import secret
+    from .. import platform as pf
+    secret = pf.backend().secret
     try:
         return secret.protect(text)
     except secret.SecretError as e:
@@ -71,20 +72,8 @@ def _protect(text: str) -> str:
 
 
 def _unprotect(blob: str) -> str:
-    from ..platform import secret
-    return secret.unprotect(blob)
-
-
-def _open_url(url: str) -> bool:
-    """The person's default browser (web mail) or mail app (mailto:)."""
-    if not url.startswith(("https://", "mailto:")):
-        return False
-    import os
-    try:
-        os.startfile(url)
-        return True
-    except OSError:
-        return False
+    from .. import platform as pf
+    return pf.backend().secret.unprotect(blob)
 
 
 def _confirm(text: str) -> bool:
@@ -92,22 +81,6 @@ def _confirm(text: str) -> bool:
     box = QMessageBox(QMessageBox.Question, "캡처 도구", text, QMessageBox.Yes | QMessageBox.No)
     box.setWindowFlags(box.windowFlags() | Qt.WindowStaysOnTopHint)
     return box.exec() == QMessageBox.Yes
-
-
-def _open_folder(path) -> None:
-    import os
-    try:
-        os.startfile(str(path))
-    except OSError:
-        pass
-
-
-def _reveal_file(path) -> None:
-    import subprocess
-    try:
-        subprocess.Popen(["explorer", "/select,", str(path)])
-    except OSError:
-        pass
 
 
 class _Job(QRunnable):
@@ -216,9 +189,9 @@ class Controller(QObject):
         # 메일: address book (per Windows user, encrypted), compose page, paste helper
         self.contacts_path = self.settings_path.parent / "contacts.dat"
         self.protect, self.unprotect = _protect, _unprotect
-        self.open_url = _open_url
-        self.reveal_file = _reveal_file
-        self.open_folder = _open_folder
+        from .. import platform as pf
+        shell = pf.backend().shell                   # Explorer / Finder, the browser, the mail app
+        self.open_url, self.reveal_file, self.open_folder = shell.open_url, shell.reveal, shell.open_path
         self.ask_resize = self._resize_dialog   # tests replace it
         self.ask_border = self._border_dialog   # tests replace it
         self.ask_transparent = self._transparent_dialog
@@ -447,8 +420,8 @@ class Controller(QObject):
         wins = getattr(ov, "windows", None)
         if not wins:
             return None
-        from ..platform.windows import window_at
-        return window_at((r.x + r.w // 2, r.y + r.h // 2), wins)
+        from .. import platform as pf
+        return pf.backend().windows.window_at((r.x + r.w // 2, r.y + r.h // 2), wins)
 
     def _after_select(self, ov) -> None:
         if self.session.state is not State.EDITING:
@@ -2561,9 +2534,9 @@ class Controller(QObject):
         if not self.settings.ai_key:
             return None
         try:
-            from ..platform.secret import SecretError, unprotect
-            return unprotect(self.settings.ai_key)
-        except (SecretError, OSError, ImportError):
+            from .. import platform as pf
+            return pf.backend().secret.unprotect(self.settings.ai_key)
+        except Exception:  # noqa: BLE001 - the backend's SecretError, OSError, a missing backend module
             return None
 
     def ai_request(self, kind: str, text: str, tgt: str | None = None) -> None:
