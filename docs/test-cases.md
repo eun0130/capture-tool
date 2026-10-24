@@ -977,6 +977,25 @@
 | 측정 | M | 1만 행: 추가 3.4ms/행, 검색 13~30ms, 필터 포함 26ms, 비슷한 그림 12ms, DB 9.7MB. 4K 설명 92ms(해시 25·색 7·내용 58)·썸네일 20ms·픽셀 키 31ms — 전부 인덱서 스레드. 실제 저장 폴더 최신 20장(960×540) 실제 인식기: 장당 0.2~3.8초, 총 24.6초; "표"·"설정"·"excel" 검색이 해당 캡처를 찾음 | 기록 |
 | 수동 | M | `run_capture.py --selftest` 카탈로그 생성 포함 OK (overlay 57ms, copy 61ms) | 기록 |
 
+## v0.10.0 추가 — 맥 지원 1단계 (핵심 캡처) · A: Windows 쪽 준비
+
+| ID | 분류 | 내용 | 기대 결과 |
+|---|---|---|---|
+| PB-01~04 | U | `platform.backend()`: OS 따라 WINDOWS/MAC, `CAPTURE_PLATFORM`은 비프로즌에서만, Windows 백엔드는 기존 모듈(win_clipboard 등) 그대로, 맥 모듈은 어느 OS에서나 import 됨, `use(fake)`로 교체·복원 | 정확 |
+| PB-05 | U | `shell.open_path/reveal/open_url`: 주입한 실행기로 startfile·`explorer /select,`·URL(https/mailto만), 실패는 삼킴 | 정확 |
+| PB-06 | U | app 층 어느 파일도 OS 모듈(screen·win_clipboard·win_hotkey·windows·scroll·startup·secret·shell)을 이름으로 import 하지 않고 `os.startfile`·explorer를 부르지 않음 | 정확 |
+| ED-10~12 | U | 맥: `excluded()` = ppt·ppt_shapes·ppt_merge·excel·word·kakao·lens·drm, mail·search_web·pdf·print는 남음; Windows 회사용은 불변; 컨트롤러 sender 전부 None·drm None, 숨은 버튼 없음, Excel/Word/PPT 보내기는 "클립보드에 복사" 알림만 | 정확 |
+| HK-20/21 | U | 맥 표시 "Shift + Cmd + 2"·"Option + ~", Shift+Cmd+3/4/5·Space·` 충돌 메시지, Cmd+Q·Tab 예약(Windows는 불변); 기본 캡처 키 맥 "Shift + Cmd + 2", Windows "Alt + ~" | 정확 |
+| MAC-01 | U | 맥 데이터 경로 `~/Library/Application Support/CaptureTool`(catalog·설정·models), 로그 `~/Library/Logs/CaptureTool`, 대체 저장 `~/Pictures/Captures`; Windows는 APPDATA 그대로 | 정확 |
+| MAC-02 | U | AppKit 아래쪽 원점 사각형 → 위쪽 원점(`flip_rect`), 배율 곱(`to_physical`) | 정확 |
+| MAC-03 | U | `carbon_keys`: Shift+Cmd+2 → (0x13, cmd|shift), Ctrl+Option+` → (0x32, control|option), F5 → (0x60, 0); PrintScreen은 `UnsupportedKey` | 정확 |
+| MAC-04 | U | `pasteboard_items`: PNG→public.png, CF_HTML 포장 벗겨 public.html, 글(str·UTF-16)→public.utf8-plain-text; CF_DIB·GVML은 버림 | 정확 |
+| MAC-05 | U | LaunchAgent plist(라벨 com.capturetool.app, --tray, RunAtLoad) 쓰기·지우기·`is_enabled` | 정확 |
+| UP-10~12 | U | 맥 채널 "mac": capture_dist의 `CaptureTool-<v>-mac.dmg`(폴더·GitHub 모두), `launch_installer`는 `open dmg` 뒤 False(앱 유지); Windows는 True·불변 | 정확 |
+| 수동 | M | Windows 전체 테스트·selftest 집용/회사용 불변 | 기록 |
+
+(B: 맥 실제 API·권한·selftest, C: .app/.dmg·CI — 맥에서 진행, `docs/superpowers/plans/2026-10-24-macos-port.md`)
+
 ## v0.9.1 추가 — 말로 모양 찾기 (CLIP 팩)
 
 | ID | 분류 | 내용 | 기대 결과 |

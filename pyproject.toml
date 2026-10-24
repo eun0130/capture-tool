@@ -18,7 +18,9 @@ dependencies = [
     "onnxruntime>=1.20",
     "rapidocr>=3.0",
     "mss>=9.0",
-    "pywin32>=306",
+    "pywin32>=306; sys_platform == 'win32'",
+    "pyobjc-framework-Cocoa>=10; sys_platform == 'darwin'",      # NSPasteboard, NSRunningApplication, NSWindow
+    "pyobjc-framework-Quartz>=10; sys_platform == 'darwin'",     # CGWindowList, CGEvent, screen-recording checks
     "ctranslate2>=4.5",         # offline translation (Argos Translate models)
     "sentencepiece>=0.2",
     "sacremoses>=0.1",          # tokenizer of a few newer Argos packs
@@ -37,4 +39,5 @@ markers = [
     "slow: long-running evaluation tests",
     "timing: wall-clock bounds measured on a developer PC; not run on shared CI runners (BUG-118)",
     "windows: needs real Windows APIs",
+    "mac: needs real macOS APIs (Quartz, Carbon, NSPasteboard)",
 ]

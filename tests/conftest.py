@@ -90,3 +90,15 @@ def _never_touch_the_users_office(monkeypatch, request):
     monkeypatch.setattr(excel, "_running_app", not_open)
     monkeypatch.setattr(excel, "_start_app", never_start)
     monkeypatch.setattr(excel, "installed", lambda: False)
+
+
+def pytest_collection_modifyitems(config, items):
+    """OS-bound tests: `mac` ones run only on a Mac, `windows` ones only on Windows."""
+    import sys
+    skip_mac = pytest.mark.skip(reason="needs macOS")
+    skip_win = pytest.mark.skip(reason="needs Windows")
+    for item in items:
+        if "mac" in item.keywords and sys.platform != "darwin":
+            item.add_marker(skip_mac)
+        if "windows" in item.keywords and sys.platform == "darwin":
+            item.add_marker(skip_win)
