@@ -164,3 +164,18 @@ def test_MACR_08_a_full_screen_grab_is_fast(mac_env):
     out = run_on_desktop(GRAB_FLOW, lambda o: "MS " in o and int(re.search(r"MS (\d+)", o).group(1)) < 100)
     assert "SHAPE True uint8 True" in out, out
     assert int(re.search(r"MS (\d+)", out).group(1)) < 100, out
+
+
+def test_MACR_09_a_test_session_ends_without_a_segfault():
+    """BUG-130: Qt windows left by the tests were freed at interpreter exit after QApplication was
+    gone and the run ended in a segfault (139) on the Mac, which stopped build.sh. conftest closes them
+    at session end; test_app.py alone used to reproduce it."""
+    import subprocess
+    import sys
+    from pathlib import Path
+    root = Path(__file__).resolve().parents[1]
+    env = dict(os.environ, QT_QPA_PLATFORM="offscreen")
+    r = subprocess.run([sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider",
+                        "--basetemp", str(root / ".pytest_tmp" / "macr09"), "tests/test_app.py"],
+                       cwd=root, env=env, capture_output=True, text=True, timeout=600)
+    assert r.returncode == 0, (r.returncode, r.stdout[-800:], r.stderr[-800:])
