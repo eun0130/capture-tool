@@ -1,8 +1,12 @@
 import os
+import sys
 
 import pytest
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+
+# 맥에서는 이 두 파일을 모듈 import 단계에서 Windows 모듈(winreg, WinDLL)을 불러 수집이 깨지므로 건너뛴다.
+collect_ignore = [] if sys.platform == "win32" else ["test_platform_win.py", "test_office_real.py"]
 
 
 def run_on_desktop(code: str, ok, attempts: int = 3, timeout: int = 180) -> str:

@@ -2,14 +2,12 @@
 from __future__ import annotations
 
 import ctypes
+import sys
 from ctypes import wintypes
 from dataclasses import dataclass
 
 from ..core.geometry import Rect
 
-u32 = ctypes.WinDLL("user32", use_last_error=True)
-k32 = ctypes.WinDLL("kernel32", use_last_error=True)
-dwm = ctypes.WinDLL("dwmapi")
 PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
 DWMWA_EXTENDED_FRAME_BOUNDS = 9
 DWMWA_CLOAKED = 14
@@ -17,15 +15,20 @@ GWL_EXSTYLE = -20
 WS_EX_TOOLWINDOW = 0x00000080
 WS_EX_TRANSPARENT = 0x00000020
 
-_EnumProc = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
-u32.EnumWindows.argtypes = [_EnumProc, wintypes.LPARAM]
-u32.IsWindowVisible.argtypes = [wintypes.HWND]
-u32.IsIconic.argtypes = [wintypes.HWND]
-u32.GetWindowTextW.argtypes = [wintypes.HWND, wintypes.LPWSTR, ctypes.c_int]
-u32.GetWindowTextLengthW.argtypes = [wintypes.HWND]
-u32.GetWindowLongW.argtypes = [wintypes.HWND, ctypes.c_int]
-u32.GetWindowThreadProcessId.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.DWORD)]
-dwm.DwmGetWindowAttribute.argtypes = [wintypes.HWND, wintypes.DWORD, ctypes.c_void_p, wintypes.DWORD]
+# 맥에서는 이 모듈을 import만 한다(테스트가 WindowInfo 를 가져감). Windows DLL 은 Windows 에서만 연다.
+if sys.platform == "win32":
+    u32 = ctypes.WinDLL("user32", use_last_error=True)
+    k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    dwm = ctypes.WinDLL("dwmapi")
+    _EnumProc = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+    u32.EnumWindows.argtypes = [_EnumProc, wintypes.LPARAM]
+    u32.IsWindowVisible.argtypes = [wintypes.HWND]
+    u32.IsIconic.argtypes = [wintypes.HWND]
+    u32.GetWindowTextW.argtypes = [wintypes.HWND, wintypes.LPWSTR, ctypes.c_int]
+    u32.GetWindowTextLengthW.argtypes = [wintypes.HWND]
+    u32.GetWindowLongW.argtypes = [wintypes.HWND, ctypes.c_int]
+    u32.GetWindowThreadProcessId.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.DWORD)]
+    dwm.DwmGetWindowAttribute.argtypes = [wintypes.HWND, wintypes.DWORD, ctypes.c_void_p, wintypes.DWORD]
 
 
 @dataclass(frozen=True)
@@ -112,7 +115,6 @@ def window_at(p, wins: list[WindowInfo]) -> WindowInfo | None:
 
 
 # --- whole-window picture (also where the window is covered or off-screen) ----------------------
-_gdi = ctypes.WinDLL("gdi32", use_last_error=True)
 PW_RENDERFULLCONTENT = 0x2
 
 
@@ -123,20 +125,22 @@ class _BMIH(ctypes.Structure):
                 ("biYPelsPerMeter", wintypes.LONG), ("biClrUsed", wintypes.DWORD), ("biClrImportant", wintypes.DWORD)]
 
 
-u32.GetWindowRect.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.RECT)]
-u32.GetWindowDC.argtypes = [wintypes.HWND]
-u32.GetWindowDC.restype = wintypes.HDC
-u32.ReleaseDC.argtypes = [wintypes.HWND, wintypes.HDC]
-u32.PrintWindow.argtypes = [wintypes.HWND, wintypes.HDC, wintypes.UINT]
-_gdi.CreateCompatibleDC.argtypes = [wintypes.HDC]
-_gdi.CreateCompatibleDC.restype = wintypes.HDC
-_gdi.CreateDIBSection.argtypes = [wintypes.HDC, ctypes.c_void_p, wintypes.UINT, ctypes.POINTER(ctypes.c_void_p),
-                                  wintypes.HANDLE, wintypes.DWORD]
-_gdi.CreateDIBSection.restype = wintypes.HBITMAP
-_gdi.SelectObject.argtypes = [wintypes.HDC, wintypes.HGDIOBJ]
-_gdi.SelectObject.restype = wintypes.HGDIOBJ
-_gdi.DeleteObject.argtypes = [wintypes.HGDIOBJ]
-_gdi.DeleteDC.argtypes = [wintypes.HDC]
+if sys.platform == "win32":
+    _gdi = ctypes.WinDLL("gdi32", use_last_error=True)
+    u32.GetWindowRect.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.RECT)]
+    u32.GetWindowDC.argtypes = [wintypes.HWND]
+    u32.GetWindowDC.restype = wintypes.HDC
+    u32.ReleaseDC.argtypes = [wintypes.HWND, wintypes.HDC]
+    u32.PrintWindow.argtypes = [wintypes.HWND, wintypes.HDC, wintypes.UINT]
+    _gdi.CreateCompatibleDC.argtypes = [wintypes.HDC]
+    _gdi.CreateCompatibleDC.restype = wintypes.HDC
+    _gdi.CreateDIBSection.argtypes = [wintypes.HDC, ctypes.c_void_p, wintypes.UINT, ctypes.POINTER(ctypes.c_void_p),
+                                      wintypes.HANDLE, wintypes.DWORD]
+    _gdi.CreateDIBSection.restype = wintypes.HBITMAP
+    _gdi.SelectObject.argtypes = [wintypes.HDC, wintypes.HGDIOBJ]
+    _gdi.SelectObject.restype = wintypes.HGDIOBJ
+    _gdi.DeleteObject.argtypes = [wintypes.HGDIOBJ]
+    _gdi.DeleteDC.argtypes = [wintypes.HDC]
 
 
 def capture_window(hwnd: int, frame: Rect):
