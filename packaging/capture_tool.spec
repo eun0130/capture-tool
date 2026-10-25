@@ -35,6 +35,8 @@ MAC_EXCLUDES = ["win32com", "pythoncom", "pywintypes", "win32api", "win32gui", "
                 "capture_tool.platform.word", "capture_tool.platform.security_software"]
 WIN_HIDDEN = ["win32com.client", "pythoncom", "pywintypes"]
 MAC_HIDDEN = ["AppKit", "Foundation", "Quartz", "ApplicationServices", "objc"]
+# platform.backend() imports these by name (importlib), so PyInstaller cannot find them itself
+MAC_BACKEND = ["capture_tool.platform.mac.clipboard", "capture_tool.platform.mac.hotkey", "capture_tool.platform.mac.permissions", "capture_tool.platform.mac.screen", "capture_tool.platform.mac.scroll", "capture_tool.platform.mac.secret", "capture_tool.platform.mac.shell", "capture_tool.platform.mac.startup", "capture_tool.platform.mac.windows"]
 if MAC:
     excludes += MAC_EXCLUDES
 binaries = collect_dynamic_libs("onnxruntime")
@@ -53,7 +55,7 @@ a = Analysis(
     binaries=binaries,
     datas=datas,
     hiddenimports=["rapidocr", "onnxruntime", "PySide6.QtSvg", "PySide6.QtNetwork",
-                   *(MAC_HIDDEN if MAC else WIN_HIDDEN),
+                   *(MAC_HIDDEN + MAC_BACKEND if MAC else WIN_HIDDEN),
                    "ctranslate2", "sentencepiece", "onnxruntime_genai", "sacremoses", "subword_nmt.apply_bpe"],
     excludes=excludes,
     noarchive=False,

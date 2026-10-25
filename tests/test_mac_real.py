@@ -15,6 +15,14 @@ def mac_env(monkeypatch):
     monkeypatch.setenv("CAPTURE_PLATFORM", "darwin")
 
 
+def _skip_if_locked():
+    """A locked Mac (front app loginwindow) delivers no global hot keys and grabs come back black
+    and ~1 s slow - nothing to check there; unlock the screen and run again."""
+    from Quartz import CGSessionCopyCurrentDictionary
+    if (CGSessionCopyCurrentDictionary() or {}).get("CGSSessionScreenIsLocked"):
+        pytest.skip("the screen is locked - unlock the Mac and run again")
+
+
 def test_MACR_01_pasteboard_round_trip(mac_env):
     from capture_tool.core.clipboard_payload import HTML, PNG, UNICODE, cf_html
     from capture_tool.platform.mac import clipboard
@@ -92,6 +100,7 @@ def test_MACR_04_carbon_hotkey_fires(mac_env):
     """Carbon delivers hot keys through the Cocoa event loop, which offscreen Qt (this test session)
     never runs - so the check runs in a child process on the real desktop (cocoa platform)."""
     from tests.conftest import run_on_desktop
+    _skip_if_locked()
     out = run_on_desktop(HOTKEY_FLOW, lambda o: "GOT [40969]" in o)
     assert "REGISTERED True" in out, out
     assert "GOT [40969]" in out, out                                             # 0xA009
@@ -124,3 +133,34 @@ def test_MACR_07_shell_open_runs_open(mac_env, tmp_path):
     shell.reveal(tmp_path / "a.png", runner=lambda cmd: ran.append(cmd))
     assert shell.open_url("mailto:a@b", runner=lambda cmd: ran.append(cmd)) and not shell.open_url("file:///x")
     assert ran == [["open", str(tmp_path)], ["open", "-R", str(tmp_path / "a.png")], ["open", "mailto:a@b"]]
+
+
+GRAB_FLOW = r"""
+import os, time
+os.environ["CAPTURE_PLATFORM"] = "darwin"
+from PySide6.QtWidgets import QApplication
+app = QApplication([])
+from capture_tool.platform.mac import screen
+m = next(x for x in screen.monitors() if x.primary).rect
+screen.grab(m)                                                                   # first call loads Quartz
+best = 1e9
+for _ in range(3):
+    t0 = time.perf_counter()
+    img = screen.grab(m)
+    best = min(best, (time.perf_counter() - t0) * 1000)
+print("SHAPE", img.shape == (m.h, m.w, 3), img.dtype, img.flags["C_CONTIGUOUS"], m)
+print("MS %.0f" % best)
+"""
+
+
+@pytest.mark.timing
+def test_MACR_08_a_full_screen_grab_is_fast(mac_env):
+    """The overlay waits for this grab after the hot key: it stays well under 100 ms (measured
+    10-20 ms on a 3420x2214 Retina screen). A sleeping display makes every grab ~1 s and black -
+    wake the screen before running. Real desktop (cocoa) child: offscreen Qt has a small fake screen."""
+    import re
+    from tests.conftest import run_on_desktop
+    _skip_if_locked()
+    out = run_on_desktop(GRAB_FLOW, lambda o: "MS " in o and int(re.search(r"MS (\d+)", o).group(1)) < 100)
+    assert "SHAPE True uint8 True" in out, out
+    assert int(re.search(r"MS (\d+)", out).group(1)) < 100, out

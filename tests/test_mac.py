@@ -183,3 +183,14 @@ def test_MAC_12_excel_paste_is_refused_on_the_mac_without_a_worker_thread(mac):
     with pytest.raises(excel.ExcelMissing):
         excel.paste_into_excel()
     assert threading.active_count() == before
+
+
+def test_MAC_13_every_mac_backend_module_is_bundled():
+    # backend() 는 맥 모듈을 importlib 로 이름만 보고 불러서 PyInstaller 가 못 찾는다 - 빌드한 앱이
+    # "No module named capture_tool.platform.mac.hotkey" 로 시작도 못 했다. spec 에 전부 적혀 있어야 한다.
+    spec = (ROOT / "packaging" / "capture_tool.spec").read_text(encoding="utf-8")
+    listed = spec.split("MAC_BACKEND = ")[1].split("]")[0]
+    for py in (ROOT / "capture_tool" / "platform" / "mac").glob("*.py"):
+        if py.stem != "__init__":
+            assert f'"capture_tool.platform.mac.{py.stem}"' in listed, f"{py.stem} missing from MAC_BACKEND"
+    assert "*MAC_BACKEND" in spec.split("hiddenimports=")[1].split(")")[0] or "MAC_HIDDEN + MAC_BACKEND" in spec
