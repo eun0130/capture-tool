@@ -18,6 +18,10 @@ def work(monkeypatch):
     monkeypatch.setenv("CAPTURE_EDITION", "work")
 
 
+pytestmark = pytest.mark.windows_contract
+
+
+
 def test_ED_01_default_is_home_the_marker_or_env_says_work(monkeypatch, tmp_path):
     monkeypatch.delenv("CAPTURE_EDITION", raising=False)
     monkeypatch.setattr(edition, "_MARKER", tmp_path / "edition.txt")
@@ -175,10 +179,15 @@ def test_ED_11_work_side_bar_search_and_link_go_straight_to_local(make, work):
     assert got[-1] == "link_file"
 
 
-def test_ED_12_the_work_key_dialog_sets_up_the_company_server(qt_app, work):
+def test_ED_12_the_work_key_dialog_sets_up_the_company_server(qt_app, work, monkeypatch):
+    from types import SimpleNamespace
     from capture_tool.app.ai_ui import KeyDialog, consent_text, engine_label
     from capture_tool.core.settings import Settings
-    from capture_tool.platform.secret import unprotect
+    from capture_tool import platform as pf
+    # Windows 계약에서 DPAPI 는 이 맥에서 없다 - 키 보관만 흉내 낸다
+    monkeypatch.setattr(pf, "_override", SimpleNamespace(secret=SimpleNamespace(
+        protect=lambda t: "P:" + t, unprotect=lambda b: b[2:])))
+    unprotect = pf.backend().secret.unprotect
     s = Settings()
     checked = []
     dlg = KeyDialog(s, check=lambda k: checked.append(k), sync=True)

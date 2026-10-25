@@ -185,7 +185,8 @@ def test_AIE_15_find_key_in_clipboard_text():
 # --- key storage (Windows DPAPI) --------------------------------------------------------------------------
 @pytest.mark.skipif(sys.platform != "win32", reason="Windows only")
 def test_AIE_16_key_is_encrypted_for_this_windows_user():
-    from capture_tool.platform import secret
+    from capture_tool.platform import backend
+    secret = backend().secret
     blob = secret.protect(KEY)
     assert KEY not in blob and secret.unprotect(blob) == KEY
     with pytest.raises(secret.SecretError):

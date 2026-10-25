@@ -177,7 +177,8 @@ def test_KEY_01_copied_key_is_found_tested_and_saved_encrypted(qt_app):
     assert KEY not in dlg.key_label.text() and "AIza" in dlg.key_label.text()   # shown masked
     dlg.save()
     assert s.ai_key and KEY not in s.ai_key and s.ai_summary_engine == "cloud"
-    from capture_tool.platform.secret import unprotect
+    from capture_tool.platform import backend
+    unprotect = backend().secret.unprotect
     assert unprotect(s.ai_key) == KEY
 
 
@@ -208,7 +209,8 @@ def test_KEY_03_other_clipboard_text_is_ignored_and_manual_paste_works(qt_app):
 
 def test_KEY_04_remove_key(qt_app):
     from capture_tool.app.ai_ui import KeyDialog
-    from capture_tool.platform.secret import protect
+    from capture_tool.platform import backend
+    protect = backend().secret.protect
     s = Settings(ai_key=protect(KEY), ai_summary_engine="cloud", ai_cloud_translate=True)
     dlg = KeyDialog(s, open_url=lambda u: None, check=lambda k: None, sync=True)
     dlg.remove()

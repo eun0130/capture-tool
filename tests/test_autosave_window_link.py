@@ -71,6 +71,8 @@ def select(c, a=(100, 100), b=(300, 250)):
 
 # --- auto-save ------------------------------------------------------------------------------------------
 @pytest.mark.parametrize("action", ["copy", "ppt", "pin"])
+
+
 def test_AUTO_01_every_finish_saves_once_when_on(make, tmp_path, action):
     c = make(auto_save=True)
     c.powerpoint = FakePpt()
@@ -131,7 +133,9 @@ def test_AUTO_07_drawing_is_in_the_saved_file(make, tmp_path):
 
 def test_AUTO_08_bad_folder_falls_back_and_says_where(make, tmp_path):
     c = make(auto_save=True)
-    c.settings.save_dir = "Z:\\no\\such\\drive"
+    blocker = tmp_path / "blocker"                        # a file where a folder is needed: fails on any OS
+    blocker.write_text("x", encoding="utf-8")
+    c.settings.save_dir = str(blocker / "sub")
     ov = select(c)
     ov.side_bar.trigger("copy")
     assert list((tmp_path / "fallback").glob("*.png"))
@@ -278,6 +282,7 @@ def test_LINK_02_file_link_reuses_the_auto_saved_file(make, tmp_path):
     assert len(shots(tmp_path)) == 1
 
 
+@pytest.mark.windows_contract
 def test_LINK_03_network_folder_gives_a_network_link(make, tmp_path):
     from capture_tool.core.share import file_link
     text, url = file_link(Path(r"\\fileserver\team\캡처\Capture 1.png"))

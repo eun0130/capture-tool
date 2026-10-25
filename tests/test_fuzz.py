@@ -28,6 +28,9 @@ def rnd_rect(span=6000):
 
 
 # --- geometry ------------------------------------------------------------------------------------------
+pytestmark = pytest.mark.windows_contract
+
+
 def test_FUZZ_01_geometry_never_leaves_its_bounds():
     for _ in range(4000):
         b = Rect(R.randint(-5000, 5000), R.randint(-3000, 3000), R.randint(1, 8000), R.randint(1, 5000))

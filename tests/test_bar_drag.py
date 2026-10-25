@@ -2,6 +2,7 @@
 the blue line was; a 전체 button dragged up joins the favourites; a favourite dragged down onto
 the 전체 rows leaves them; outside the bar is a cancel; the fixed ends never move; a plain click
 still works. The edit window's column and the settings lists drag the same way."""
+import pytest
 from PySide6.QtCore import QPoint, Qt
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QAbstractItemView
@@ -41,6 +42,9 @@ def _wire(sb):
     fired = []
     sb.action.connect(fired.append)
     return fired
+
+
+pytestmark = pytest.mark.windows_contract
 
 
 def test_BD_01_a_favourite_dragged_along_the_row_lands_after_the_button_before_the_line(make):

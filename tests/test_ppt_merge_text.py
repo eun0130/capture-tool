@@ -17,6 +17,9 @@ def _text(det):
     return [d for d in det if d.kind == "text"]
 
 
+pytestmark = pytest.mark.windows_contract
+
+
 def test_MERGE_01_loose_text_becomes_one_box_keeping_lines():
     det = [Detected("text", 10, 10, 120, 24, text="Adobe 생성형", text_color="#E03131"),
            Detected("text", 10, 40, 140, 24, text="AI를 무제한으로", text_color="#E03131"),

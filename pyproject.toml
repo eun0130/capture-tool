@@ -41,4 +41,5 @@ markers = [
     "timing: wall-clock bounds measured on a developer PC; not run on shared CI runners (BUG-118)",
     "windows: needs real Windows APIs",
     "mac: needs real macOS APIs (Quartz, Carbon, NSPasteboard)",
+    "windows_contract: expectations are the Windows behaviour; pins CAPTURE_PLATFORM=win32 so they also run on a Mac",
 ]

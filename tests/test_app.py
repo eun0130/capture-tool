@@ -1,3 +1,4 @@
+import sys
 """UI behavior tests (headless Qt). Mouse/keyboard are simulated with QTest."""
 import io
 import zipfile
@@ -102,6 +103,9 @@ def decode_png(data):
 
 
 # --- capture start & multi-monitor -------------------------------------------
+
+pytestmark = pytest.mark.windows_contract
+
 
 def test_APP_01_cursor_monitor_first(make):
     c = make(FakeScreen(cursor=(1000, 300), monitors=[MON_A, MON_B]))
@@ -224,7 +228,9 @@ def test_APP_10_save_to_folder_with_unique_names(make, tmp_path):
 
 
 def test_APP_11_save_falls_back_when_folder_invalid(make, tmp_path):
-    c = make(settings=Settings(save_dir="Z:\\no\\such\\drive"))
+    blocker = tmp_path / "blocker"                        # a file where a folder is needed: fails on any OS
+    blocker.write_text("x", encoding="utf-8")
+    c = make(settings=Settings(save_dir=str(blocker / "sub")))
     c.start_capture()
     ov = c.overlays[0]
     drag(ov, (10, 10), (110, 60))
@@ -698,6 +704,7 @@ def test_APP_68_shapes_button_without_shapes_falls_back_to_picture(make):
     assert any("도형이 없어" in m for m in c.messages)
 
 
+@pytest.mark.skipif(sys.platform != "win32", reason="needs the Windows fonts in C:\\Windows\\Fonts")
 def test_APP_69_font_box_lists_popular_korean_fonts_first(make):
     from PySide6.QtGui import QFontDatabase
     for f in ("malgun.ttf", "batang.ttc", "gulim.ttc", "arial.ttf"):
@@ -870,6 +877,7 @@ def _some_other_font():
     return QFontDatabase.applicationFontFamilies(fid)[0]
 
 
+@pytest.mark.skipif(sys.platform != "win32", reason="needs the Windows fonts in C:\\Windows\\Fonts")
 def test_APP_60_choose_font_for_new_text(make):
     c, ov = _editing(make)
     ov.set_tool("text")
@@ -884,6 +892,7 @@ def test_APP_60_choose_font_for_new_text(make):
     assert c.session.document.shapes[-1].font_family == fam
 
 
+@pytest.mark.skipif(sys.platform != "win32", reason="needs the Windows fonts in C:\\Windows\\Fonts")
 def test_APP_61_change_font_of_selected_text_and_undo(make):
     from capture_tool.core.annotations import Shape
     c, ov = _editing(make)
@@ -897,6 +906,7 @@ def test_APP_61_change_font_of_selected_text_and_undo(make):
     assert c.session.document.shapes[0].font_family == "Malgun Gothic"
 
 
+@pytest.mark.skipif(sys.platform != "win32", reason="needs the Windows fonts in C:\\Windows\\Fonts")
 def test_APP_62_font_remembered_for_next_capture(make):
     c, ov = _editing(make)
     fam = _some_other_font()

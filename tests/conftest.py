@@ -9,6 +9,13 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 collect_ignore = [] if sys.platform == "win32" else ["test_platform_win.py", "test_office_real.py"]
 
 
+@pytest.fixture(autouse=True)
+def _windows_contract(request, monkeypatch):
+    """Tests marked windows_contract assert Windows behaviour (labels, defaults, edition buttons)."""
+    if request.node.get_closest_marker("windows_contract"):
+        monkeypatch.setenv("CAPTURE_PLATFORM", "win32")
+
+
 def run_on_desktop(code: str, ok, attempts: int = 3, timeout: int = 180) -> str:
     """Run a script on the real desktop (not offscreen). The person may be using the PC while
     tests run (notifications, other windows), so a measurement disturbed by that is retried.
@@ -60,7 +67,9 @@ def qt_app():
     app = QApplication.instance() or QApplication([])
     # offscreen Qt sees no system fonts: register the default font so every test draws real text
     # regardless of which test ran first
-    QFontDatabase.addApplicationFont(r"C:\Windows\Fonts\malgun.ttf")
+    # 맥에는 맑은 고딕이 없다 - 같은 역할의 한글 시스템 폰트로 대신한다
+    font = r"C:\Windows\Fonts\malgun.ttf" if sys.platform == "win32" else "/System/Library/Fonts/AppleSDGothicNeo.ttc"
+    QFontDatabase.addApplicationFont(font)
     yield app
 
 

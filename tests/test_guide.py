@@ -1,5 +1,6 @@
 """Beginner's guide: one source shown as a pop-up window in the app (도움말 button, F1, tray menu,
 first start) and written to docs/QUICK_START.md - kept identical by this test."""
+import pytest
 from pathlib import Path
 
 from PySide6.QtCore import Qt
@@ -9,6 +10,9 @@ from capture_tool.app import guide
 from tests.test_app import drag, make  # noqa: F401 (fixture)
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+pytestmark = pytest.mark.windows_contract
 
 
 def test_GUIDE_01_pages_are_complete_and_ordered():

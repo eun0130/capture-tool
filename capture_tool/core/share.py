@@ -22,6 +22,10 @@ def file_link(path: Path) -> tuple[str, str]:
     """(path to show/paste, file:// URL). A network folder (\\\\server\\share) gives a link that
     colleagues with access to that folder can open."""
     from urllib.parse import quote
+    from .. import platform as pf
+    if pf.is_mac():                                         # the Mac path is already a POSIX path
+        text = str(path)
+        return text, "file://" + quote(text, safe="/:")
     p = PureWindowsPath(str(path))
     text = str(p)
     if text.startswith("\\\\"):                              # \\server\share\... -> file://server/share/...

@@ -7,6 +7,10 @@ from capture_tool.core import settings as st
 from capture_tool.core.settings import Settings, load, save
 
 
+pytestmark = pytest.mark.windows_contract
+
+
+
 def test_SET_01_missing_file_gives_defaults(tmp_path):
     s, warnings = load(tmp_path / "settings.json")
     assert s == Settings()

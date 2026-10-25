@@ -15,6 +15,10 @@ from capture_tool.core.hotkey import (
 )
 
 
+pytestmark = pytest.mark.windows_contract
+
+
+
 def test_HK_01_win_tilde():
     hk = parse("Win+~")
     assert hk.mods == frozenset({"win"})

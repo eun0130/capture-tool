@@ -1,5 +1,6 @@
 """The bar on screen: favourites first, the rest in groups under 전체, right-click to rearrange,
 one arrangement per place, a 집/회사 switch, the settings page for it."""
+import pytest
 from PySide6.QtCore import QPoint, Qt
 from PySide6.QtTest import QTest
 
@@ -17,6 +18,9 @@ def _open(c):
 
 def _menu_action(menu, key):
     return next(a for a in menu.actions() if a.data() == key)
+
+
+pytestmark = pytest.mark.windows_contract
 
 
 def test_BU_01_the_bar_shows_favourites_then_groups_with_labels(make):

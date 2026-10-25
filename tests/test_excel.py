@@ -1,6 +1,7 @@
 """표 → 엑셀: when Excel is open the table goes to its selected cell (like Word / PowerPoint);
 when it isn't, the table waits on the clipboard with a clear 'Ctrl+V' message. Excel is never
 started just for this."""
+import pytest
 from capture_tool.core.clipboard_payload import HTML
 from capture_tool.platform.excel import ExcelNotOpen, paste_into_open_excel
 from tests.test_app import make  # noqa: F401 (fixture)
@@ -29,6 +30,9 @@ class FakeExcelApp:
         self.ActiveCell = FakeCell()
         self.Visible = False
         self.ActiveWindow = type("W", (), {"Activate": lambda s: None})()
+
+
+pytestmark = pytest.mark.windows_contract
 
 
 def test_EXCEL_01_paste_at_the_selected_cell():

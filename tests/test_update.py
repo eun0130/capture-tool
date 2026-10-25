@@ -19,6 +19,9 @@ def _release(tag: str, names: list[str]) -> bytes:
     return json.dumps({"tag_name": tag, "body": "고침 목록", "assets": assets}).encode("utf-8")
 
 
+pytestmark = pytest.mark.windows_contract
+
+
 def test_UP_01_versions_compare_as_numbers_not_strings():
     assert update.parse_version("v0.8.30") == (0, 8, 30) and update.parse_version("0.10.2") == (0, 10, 2)
     assert update.parse_version("latest") is None and update.parse_version("v1.2") is None
