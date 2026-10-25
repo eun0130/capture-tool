@@ -1288,3 +1288,10 @@ def test_APP_29b_direct_text_mode_never_runs_shape_recognition(make, monkeypatch
     c.start_capture(mode="text")
     drag(c.overlays[0], (100, 100), (400, 300))
     assert "바로 복사" in c.clipboard.last[UNICODE]
+
+
+def test_PREWARM_01_prewarm_also_warms_a_screen_grab(make):
+    # 첫 캡처가 느린 이유: 첫 grab 이 화면 라이브러리를 불러온다(맥 109 ms). 시작 때 미리 한 번 해 둔다.
+    c = make(FakeScreen())
+    c.prewarm()
+    assert len(c.screen.grabs) == 1

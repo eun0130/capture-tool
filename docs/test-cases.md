@@ -994,6 +994,9 @@
 | UP-10~12 | U | 맥 채널 "mac": capture_dist의 `CaptureTool-<v>-mac.dmg`(폴더·GitHub 모두), `launch_installer`는 `open dmg` 뒤 False(앱 유지); Windows는 True·불변 | 정확 |
 | MAC-08 | U | `platform/mac/*.py`가 import 하는 pyobjc 프레임워크(AppKit·Foundation·objc·Quartz·ApplicationServices) 전부가 pyproject의 darwin 의존성이고 PyInstaller `MAC_HIDDEN`에 있음; Windows 쪽에는 pyobjc 없음 | 정확 |
 | MAC-09 | U | Carbon 함수 5개(`GetApplicationEventTarget`·`InstallEventHandler`·`GetEventParameter`·`RegisterEventHotKey`·`UnregisterEventHotKey`)에 argtypes/restype 선언: 포인터는 c_void_p/POINTER, 크기는 c_size_t, `EventHotKeyID`는 값 전달(8바이트) — arm64에서 64비트 EventRef 잘림 방지 | 정확 |
+| MAC-10 | A | `exclude_from_capture` 는 Cocoa 창이 아니면(오프스크린) 아무것도 안 하고 False | 자동 |
+| MAC-11 | A | 맥 파일 링크는 POSIX 경로와 `file://` 주소 | 자동 |
+| PREWARM-01 | A | 시작 워밍업이 화면 캡처를 한 번 미리 함 | 자동 |
 | 수동 | M | Windows 전체 테스트·selftest 집용/회사용 불변 | 기록 |
 
 (B: 맥 실제 API·권한·selftest, C: .app/.dmg·CI — 맥에서 진행: `docs/MAC_HANDOFF.md`, `docs/superpowers/plans/2026-10-24-macos-port.md`)

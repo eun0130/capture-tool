@@ -326,7 +326,10 @@ class Controller(QObject):
     def prewarm(self) -> None:
         """Create (hidden) overlay windows for every monitor ahead of the first hotkey."""
         import numpy as np
-        for m in self.screen.monitors():
+        mons = self.screen.monitors()
+        if mons:
+            self.screen.grab(mons[0].rect)  # the first grab loads the capture library (slow once)
+        for m in mons:
             ov = self._overlay_for(m, np.zeros((8, 8, 3), np.uint8), [])
             ov.place()
             ov.winId()  # force native window creation now
