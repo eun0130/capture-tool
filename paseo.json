@@ -1,0 +1,10 @@
+{
+  "scripts": {
+    "setup": { "command": "./tools/mac_bootstrap.sh" },
+    "test": { "command": "QT_QPA_PLATFORM=offscreen .venv/bin/python -m pytest -q -m \"not windows and not slow and not timing\"" },
+    "test-mac-real": { "command": ".venv/bin/python -m pytest tests/test_mac_real.py -q" },
+    "selftest": { "command": ".venv/bin/python run_capture.py --selftest" },
+    "app": { "command": ".venv/bin/python run_capture.py", "type": "service" },
+    "build": { "command": "./build.sh --skip-tests" }
+  }
+}

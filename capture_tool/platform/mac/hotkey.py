@@ -4,6 +4,7 @@ puts the hot key id on a queue that a Qt timer drains and hands to HotkeyManager
 `carbon_keys` is pure and tested on every OS; the registration bodies need a Mac."""
 from __future__ import annotations
 
+import ctypes
 import queue
 
 from ...core.hotkey import Hotkey
@@ -66,21 +67,44 @@ def _drain() -> None:
             _dispatch(hk_id)
 
 
+class EventHotKeyID(ctypes.Structure):
+    _fields_ = [("signature", ctypes.c_uint32), ("id", ctypes.c_uint32)]
+
+
+class EventTypeSpec(ctypes.Structure):
+    _fields_ = [("eventClass", ctypes.c_uint32), ("eventKind", ctypes.c_uint32)]
+
+
+# OSStatus handler(EventHandlerCallRef, EventRef, void *userData)
+HANDLER = ctypes.CFUNCTYPE(ctypes.c_int32, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p)
+CARBON_FUNCTIONS = ("GetApplicationEventTarget", "InstallEventHandler", "GetEventParameter",
+                    "RegisterEventHotKey", "UnregisterEventHotKey")
+
+
+def _declare(lib) -> None:
+    """Carbon signatures (Carbon/CarbonEvents.h). Without argtypes ctypes passes Python ints as
+    32-bit C ints, which truncates 64-bit EventRefs / ByteCounts on arm64 (MAC-09)."""
+    c = ctypes
+    lib.GetApplicationEventTarget.restype, lib.GetApplicationEventTarget.argtypes = c.c_void_p, []
+    lib.InstallEventHandler.restype = c.c_int32
+    lib.InstallEventHandler.argtypes = [c.c_void_p, HANDLER, c.c_size_t, c.POINTER(EventTypeSpec), c.c_void_p,
+                                        c.c_void_p]
+    lib.GetEventParameter.restype = c.c_int32
+    lib.GetEventParameter.argtypes = [c.c_void_p, c.c_uint32, c.c_uint32, c.POINTER(c.c_uint32), c.c_size_t,
+                                      c.POINTER(c.c_size_t), c.POINTER(EventHotKeyID)]
+    lib.RegisterEventHotKey.restype = c.c_int32
+    lib.RegisterEventHotKey.argtypes = [c.c_uint32, c.c_uint32, EventHotKeyID, c.c_void_p, c.c_uint32,
+                                        c.POINTER(c.c_void_p)]
+    lib.UnregisterEventHotKey.restype, lib.UnregisterEventHotKey.argtypes = c.c_int32, [c.c_void_p]
+
+
 def _carbon():
     """The Carbon framework and the installed hot-key event handler (installed once)."""
-    import ctypes
     import ctypes.util
     if "carbon" in _refs:
         return _refs["carbon"]
     lib = ctypes.cdll.LoadLibrary(ctypes.util.find_library("Carbon"))
-
-    class EventHotKeyID(ctypes.Structure):
-        _fields_ = [("signature", ctypes.c_uint32), ("id", ctypes.c_uint32)]
-
-    class EventTypeSpec(ctypes.Structure):
-        _fields_ = [("eventClass", ctypes.c_uint32), ("eventKind", ctypes.c_uint32)]
-
-    HANDLER = ctypes.CFUNCTYPE(ctypes.c_int32, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p)
+    _declare(lib)
 
     def on_hotkey(next_handler, event, user_data):
         hk = EventHotKeyID()
@@ -93,23 +117,21 @@ def _carbon():
     cb = HANDLER(on_hotkey)
     _keep.append(cb)
     spec = EventTypeSpec(0x6B657962, 5)                    # kEventClassKeyboard 'keyb', kEventHotKeyPressed
-    lib.GetApplicationEventTarget.restype = ctypes.c_void_p
     target = lib.GetApplicationEventTarget()
-    lib.InstallEventHandler(ctypes.c_void_p(target), cb, 1, ctypes.byref(spec), None, None)
-    _refs["carbon"] = (lib, target, EventHotKeyID)
+    _keep.append(spec)
+    lib.InstallEventHandler(target, cb, 1, ctypes.byref(spec), None, None)
+    _refs["carbon"] = (lib, target)
     return _refs["carbon"]
 
 
 def register(hwnd, hotkey_id: int, hk: Hotkey) -> bool:
-    import ctypes
     try:
         vk, mods = carbon_keys(hk)
     except UnsupportedKey:
         return False
-    lib, target, EventHotKeyID = _carbon()
+    lib, target = _carbon()
     ref = ctypes.c_void_p()
-    status = lib.RegisterEventHotKey(ctypes.c_uint32(vk), ctypes.c_uint32(mods), EventHotKeyID(SIGNATURE, hotkey_id),
-                                     ctypes.c_void_p(target), 0, ctypes.byref(ref))
+    status = lib.RegisterEventHotKey(vk, mods, EventHotKeyID(SIGNATURE, hotkey_id), target, 0, ctypes.byref(ref))
     if status != 0:
         return False
     _refs[hotkey_id] = ref

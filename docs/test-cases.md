@@ -992,9 +992,11 @@
 | MAC-04 | U | `pasteboard_items`: PNG→public.png, CF_HTML 포장 벗겨 public.html, 글(str·UTF-16)→public.utf8-plain-text; CF_DIB·GVML은 버림 | 정확 |
 | MAC-05 | U | LaunchAgent plist(라벨 com.capturetool.app, --tray, RunAtLoad) 쓰기·지우기·`is_enabled` | 정확 |
 | UP-10~12 | U | 맥 채널 "mac": capture_dist의 `CaptureTool-<v>-mac.dmg`(폴더·GitHub 모두), `launch_installer`는 `open dmg` 뒤 False(앱 유지); Windows는 True·불변 | 정확 |
+| MAC-08 | U | `platform/mac/*.py`가 import 하는 pyobjc 프레임워크(AppKit·Foundation·objc·Quartz·ApplicationServices) 전부가 pyproject의 darwin 의존성이고 PyInstaller `MAC_HIDDEN`에 있음; Windows 쪽에는 pyobjc 없음 | 정확 |
+| MAC-09 | U | Carbon 함수 5개(`GetApplicationEventTarget`·`InstallEventHandler`·`GetEventParameter`·`RegisterEventHotKey`·`UnregisterEventHotKey`)에 argtypes/restype 선언: 포인터는 c_void_p/POINTER, 크기는 c_size_t, `EventHotKeyID`는 값 전달(8바이트) — arm64에서 64비트 EventRef 잘림 방지 | 정확 |
 | 수동 | M | Windows 전체 테스트·selftest 집용/회사용 불변 | 기록 |
 
-(B: 맥 실제 API·권한·selftest, C: .app/.dmg·CI — 맥에서 진행, `docs/superpowers/plans/2026-10-24-macos-port.md`)
+(B: 맥 실제 API·권한·selftest, C: .app/.dmg·CI — 맥에서 진행: `docs/MAC_HANDOFF.md`, `docs/superpowers/plans/2026-10-24-macos-port.md`)
 
 ## v0.9.1 추가 — 말로 모양 찾기 (CLIP 팩)
 

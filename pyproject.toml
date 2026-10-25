@@ -21,6 +21,7 @@ dependencies = [
     "pywin32>=306; sys_platform == 'win32'",
     "pyobjc-framework-Cocoa>=10; sys_platform == 'darwin'",      # NSPasteboard, NSRunningApplication, NSWindow
     "pyobjc-framework-Quartz>=10; sys_platform == 'darwin'",     # CGWindowList, CGEvent, screen-recording checks
+    "pyobjc-framework-ApplicationServices>=10; sys_platform == 'darwin'",   # AXIsProcessTrusted (Accessibility)
     "ctranslate2>=4.5",         # offline translation (Argos Translate models)
     "sentencepiece>=0.2",
     "sacremoses>=0.1",          # tokenizer of a few newer Argos packs

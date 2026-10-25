@@ -1032,7 +1032,9 @@ git push origin main
 
 # Milestone B — on the Mac (Claude Code in the same repository)
 
-Setup on the Mac first: `git clone`, `python3.12 -m venv .venv && .venv/bin/pip install -e .[dev]`, `.venv/bin/python tools/fetch_models.py`, `.venv/bin/python -m pytest -q -m "not windows and not slow and not timing"` (must pass before touching code; Windows-marked tests are skipped by Task 8's conftest).
+Setup on the Mac first: `tools/mac_bootstrap.sh` does it all (Homebrew, python 3.12, `.venv`, `pip install -e .[dev]`, `tools/fetch_models.py`, Claude Code, the first `pytest -m "not windows and not mac and not slow and not timing"` run); the human steps and the agent prompt are in `docs/MAC_HANDOFF.md` (Paseo Desktop + Claude Code). The tests must pass before touching code; Windows-marked tests are skipped by Task 8's conftest.
+
+**Already written from Windows, untested on a Mac (2026-10-25):** the bodies of Tasks 9-12, the guide page of Task 13, the packaging and CI of Tasks 15-16. On the Mac the work is: run, watch what breaks, fix with a test, commit. Two desk-check fixes landed before the handoff: `pyobjc-framework-ApplicationServices` dependency (MAC-08) and Carbon ctypes argtypes (MAC-09, `hotkey._declare`).
 
 ### Task 9: Permissions module and first-run flow
 

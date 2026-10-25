@@ -105,3 +105,56 @@ def test_MAC_07_the_guide_on_the_mac(mac, monkeypatch):
     assert not any("Ctrl + V" in s for p in pages for s in p.steps)             # Cmd + V on the Mac
     monkeypatch.setenv("CAPTURE_PLATFORM", "win32")
     assert guide.pages()[-1].title != "맥에서 처음 쓰기" and "Alt + ~" in guide.pages()[0].title
+
+
+ROOT = Path(__file__).resolve().parents[1]
+# pyobjc ships one pip package per framework; every framework module the Mac backend imports must
+# be a darwin dependency (a missing one only shows up as ImportError on the Mac, at run time).
+_PYOBJC_PACKAGE = {"AppKit": "pyobjc-framework-Cocoa", "Foundation": "pyobjc-framework-Cocoa",
+                   "objc": "pyobjc-framework-Cocoa", "Quartz": "pyobjc-framework-Quartz",
+                   "ApplicationServices": "pyobjc-framework-ApplicationServices"}
+
+
+def test_MAC_08_every_framework_the_mac_backend_imports_is_a_darwin_dependency():
+    import re
+    import tomllib
+    deps = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))["project"]["dependencies"]
+    darwin = {re.split(r"[ ><=;]", d)[0] for d in deps if "sys_platform == 'darwin'" in d}
+    spec = (ROOT / "packaging" / "capture_tool.spec").read_text(encoding="utf-8")
+    hidden = spec.split("MAC_HIDDEN = ")[1].split("\n")[0]
+    used = set()
+    for py in (ROOT / "capture_tool" / "platform" / "mac").glob("*.py"):
+        for m in re.findall(r"^\s*(?:from|import)\s+([A-Za-z]+)", py.read_text(encoding="utf-8"), re.M):
+            if m in _PYOBJC_PACKAGE:
+                used.add(m)
+    assert {"AppKit", "Quartz", "ApplicationServices", "objc"} <= used, used
+    for mod in used:
+        assert _PYOBJC_PACKAGE[mod] in darwin, f"{mod} needs {_PYOBJC_PACKAGE[mod]} in pyproject (darwin)"
+        assert f'"{mod}"' in hidden, f"{mod} missing from the PyInstaller MAC_HIDDEN list"
+    assert not any(d.startswith("pyobjc") for d in deps if "darwin" not in d)       # never on Windows
+
+
+def test_MAC_09_carbon_functions_get_argument_types_before_they_are_called():
+    """ctypes without argtypes passes Python ints as 32-bit C ints: on arm64 a 64-bit EventRef or
+    ByteCount is truncated and the hot key never arrives. Every Carbon function used gets its
+    signature declared, pointer-sized parameters as c_void_p / POINTER, sizes as c_size_t."""
+    import ctypes
+    import types
+    from capture_tool.platform.mac import hotkey
+    lib = types.SimpleNamespace(**{n: types.SimpleNamespace() for n in hotkey.CARBON_FUNCTIONS})
+    hotkey._declare(lib)
+    for name in hotkey.CARBON_FUNCTIONS:
+        f = getattr(lib, name)
+        assert isinstance(f.argtypes, (list, tuple)), name
+        assert f.restype in (ctypes.c_int32, ctypes.c_void_p), name
+    assert lib.GetApplicationEventTarget.restype is ctypes.c_void_p and lib.GetApplicationEventTarget.argtypes == []
+    a = lib.GetEventParameter.argtypes
+    assert a[0] is ctypes.c_void_p and a[4] is ctypes.c_size_t and a[6] is ctypes.POINTER(hotkey.EventHotKeyID)
+    r = lib.RegisterEventHotKey.argtypes
+    assert r[:2] == [ctypes.c_uint32, ctypes.c_uint32] and r[2] is hotkey.EventHotKeyID and r[3] is ctypes.c_void_p
+    assert r[5] is ctypes.POINTER(ctypes.c_void_p)
+    i = lib.InstallEventHandler.argtypes
+    assert i[0] is ctypes.c_void_p and i[1] is hotkey.HANDLER and i[2] is ctypes.c_size_t
+    assert i[3] is ctypes.POINTER(hotkey.EventTypeSpec)
+    assert lib.UnregisterEventHotKey.argtypes == [ctypes.c_void_p]
+    assert ctypes.sizeof(hotkey.EventHotKeyID) == 8 and ctypes.sizeof(hotkey.EventTypeSpec) == 8
