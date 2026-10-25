@@ -8,6 +8,7 @@ dist/
 *.spec.bak
 installer/Output/
 assets/app.ico
+assets/app.icns
 *.prof
 .pytest_tmp*/
 
