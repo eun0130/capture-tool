@@ -173,3 +173,13 @@ def test_MAC_11_file_link_on_the_mac_is_a_posix_path_and_file_url(mac):
     text, url = file_link(Path("/Users/eun/Pictures/캡처 1.png"))
     assert text == "/Users/eun/Pictures/캡처 1.png"
     assert url == "file:///Users/eun/Pictures/%EC%BA%A1%EC%B2%98%201.png"
+
+
+def test_MAC_12_excel_paste_is_refused_on_the_mac_without_a_worker_thread(mac):
+    # 맥에는 Excel COM 이 없다. 실제 경로로 들어가면 워커 스레드가 pythoncom 을 못 불러 죽고 종료 때 세그폴트가 난다.
+    import threading
+    from capture_tool.platform import excel
+    before = threading.active_count()
+    with pytest.raises(excel.ExcelMissing):
+        excel.paste_into_excel()
+    assert threading.active_count() == before

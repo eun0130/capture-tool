@@ -6,6 +6,8 @@ from __future__ import annotations
 import threading
 from typing import Callable
 
+from .. import platform as pf
+
 DEFAULT_TIMEOUT = 45.0          # starting Excel can take a while
 
 
@@ -61,6 +63,8 @@ def paste_into_excel(running: Callable | None = None, start: Callable | None = N
     """-> the cell it went to (e.g. "Sheet1!B3"). running() gives the open Excel or raises
     ExcelNotOpen; start() opens Excel with a new workbook; installed() says whether it exists."""
     real = running is None
+    if real and pf.is_mac():                    # no Excel COM on the Mac: refuse before any worker thread starts
+        raise ExcelMissing("Excel 붙여넣기는 Windows에서만 됩니다. 맥에서는 Cmd+V 로 붙여넣으세요.")
     running = running or _running_app
     start = start or _start_app
     is_installed = installed or globals()["installed"]
