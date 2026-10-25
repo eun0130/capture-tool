@@ -32,8 +32,6 @@ def light(h):
     return min(int(h[i:i + 2], 16) for i in (1, 3, 5)) >= 180
 
 
-pytestmark = pytest.mark.windows_contract
-
 
 def test_TCAP_01_dark_table_screenshot_becomes_a_table():
     """Bug (v0.6.4): a dark-page table sent by 도형PPT became stacked white text boxes,
@@ -239,6 +237,7 @@ def test_TCAP_16_text_mode_button_for_the_dark_grid_table(make, ocr):
 
 
 # --- v0.6.7: a "표" button right next to the capture (no need to open text mode first) ----------
+@pytest.mark.windows_contract
 def test_TCAP_17_side_bar_has_a_table_button(make):
     from tests.test_app import drag
     c = make()

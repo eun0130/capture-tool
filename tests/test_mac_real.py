@@ -60,27 +60,42 @@ def test_MACR_03_screen_grab_matches_the_asked_size(mac_env, qt_app):
     assert isinstance(x, int) and isinstance(y, int)
 
 
-def test_MACR_04_carbon_hotkey_fires(mac_env, qt_app):
-    from capture_tool.core.hotkey import parse
-    from capture_tool.platform.mac import hotkey
-    from Quartz import CGEventCreateKeyboardEvent, CGEventPost, CGEventSetFlags, kCGEventFlagMaskCommand, \
-        kCGEventFlagMaskShift, kCGHIDEventTap
-    got = []
-    hotkey.set_dispatch(got.append)
-    assert hotkey.register(0, 0xA009, parse("Shift+Cmd+9"))
-    try:
-        for down in (True, False):
-            ev = CGEventCreateKeyboardEvent(None, 0x19, down)                   # kVK_ANSI_9
-            CGEventSetFlags(ev, kCGEventFlagMaskCommand | kCGEventFlagMaskShift)
-            CGEventPost(kCGHIDEventTap, ev)
-        t0 = time.time()
-        while not got and time.time() - t0 < 2:
-            qt_app.processEvents()
-            time.sleep(0.02)
-        assert got == [0xA009]
-    finally:
-        hotkey.unregister(0, 0xA009)
-    assert not hotkey.register(0, 0xA00A, parse("Alt+PrintScreen"))              # no such key: refused, no crash
+HOTKEY_FLOW = r"""
+import os, time
+os.environ["CAPTURE_PLATFORM"] = "darwin"
+from PySide6.QtWidgets import QApplication
+app = QApplication([])
+from capture_tool.core.hotkey import parse
+from capture_tool.platform.mac import hotkey
+from Quartz import (CGEventCreateKeyboardEvent, CGEventPost, CGEventSetFlags, kCGEventFlagMaskCommand,
+                    kCGEventFlagMaskShift, kCGHIDEventTap)
+got = []
+hotkey.set_dispatch(got.append)
+print("REGISTERED", hotkey.register(0, 0xA009, parse("Shift+Cmd+9")))
+try:
+    for down in (True, False):
+        ev = CGEventCreateKeyboardEvent(None, 0x19, down)                       # kVK_ANSI_9
+        CGEventSetFlags(ev, kCGEventFlagMaskCommand | kCGEventFlagMaskShift)
+        CGEventPost(kCGHIDEventTap, ev)
+    t0 = time.time()
+    while not got and time.time() - t0 < 2:
+        app.processEvents()
+        time.sleep(0.02)
+    print("GOT", got)
+finally:
+    hotkey.unregister(0, 0xA009)
+print("REFUSED", not hotkey.register(0, 0xA00A, parse("Alt+PrintScreen")))   # no such key: refused, no crash
+"""
+
+
+def test_MACR_04_carbon_hotkey_fires(mac_env):
+    """Carbon delivers hot keys through the Cocoa event loop, which offscreen Qt (this test session)
+    never runs - so the check runs in a child process on the real desktop (cocoa platform)."""
+    from tests.conftest import run_on_desktop
+    out = run_on_desktop(HOTKEY_FLOW, lambda o: "GOT [40969]" in o)
+    assert "REGISTERED True" in out, out
+    assert "GOT [40969]" in out, out                                             # 0xA009
+    assert "REFUSED True" in out, out
 
 
 def test_MACR_05_keychain_round_trip(mac_env):

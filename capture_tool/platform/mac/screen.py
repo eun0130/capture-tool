@@ -52,7 +52,7 @@ def grab(r: Rect) -> np.ndarray:
     physical pixels of a Retina display; the result is resized to the asked size if they differ."""
     import mss
     k = _scale_at(r)
-    with mss.mss() as sct:
+    with (mss.MSS() if hasattr(mss, "MSS") else mss.mss()) as sct:       # mss 10 deprecates mss.mss
         shot = sct.grab({"left": int(round(r.x / k)), "top": int(round(r.y / k)),
                          "width": max(1, int(round(r.w / k))), "height": max(1, int(round(r.h / k)))})
     img = np.frombuffer(shot.bgra, np.uint8).reshape(shot.height, shot.width, 4)[:, :, :3]
