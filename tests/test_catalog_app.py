@@ -1,5 +1,6 @@
 """Saving a capture hands it to the catalogue with where it came from and what kind of capture
 it was; the read-ahead's text is reused; the search window opens from the bar and the tray."""
+import sys
 from pathlib import Path
 
 import numpy as np
@@ -176,6 +177,7 @@ def test_CAPP_10_the_recent_strip_takes_thumbnails_from_the_catalogue(qt_app, tm
     assert not strip.buttons[0].icon().isNull() and strip.buttons[1].icon().isNull()
 
 
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows API / Windows fonts")
 def test_CAPP_06_process_name_of_a_real_window():
     import ctypes
     from capture_tool.platform.windows import process_name

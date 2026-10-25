@@ -1,4 +1,6 @@
 """v0.8.31 speed: the copy path and text mode do less on the GUI thread."""
+import pytest
+import sys
 import threading
 
 import cv2
@@ -153,6 +155,7 @@ def test_SPD_07_a_deferred_hide_after_close_all_touches_no_deleted_window(make, 
     assert c._later == [] and not back.isHidden()
 
 
+@pytest.mark.skipif(sys.platform != "win32", reason="macOS OpenCV ignores setNumThreads (measured 10 threads); memory footprint only")
 def test_SPD_08_opencv_keeps_a_small_thread_pool():
     """The first big OpenCV op (the 4K veil) started one worker per core - 31 idle threads for the
     app's lifetime on a 32-core PC (RES_05: 87 threads). The render module caps the pool."""

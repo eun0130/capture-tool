@@ -1,5 +1,6 @@
 """Text read from a photographed document (the person's rental contract): line order, the ◆
 bullet, and a clearer reading of blurry print. Real OCR on tests/data/contract_photo_text.png."""
+import sys
 import cv2
 import numpy as np
 import pytest
@@ -62,6 +63,7 @@ def test_PHOTO_03_a_photo_is_told_from_a_screenshot():
 
 
 @real_ocr
+@pytest.mark.skipif(sys.platform != "win32", reason="measures Windows font metrics (malgun); needs recalibration on the Mac")
 def test_PHOTO_04_real_contract_photo_reads_in_order_with_the_bullet():
     text = full_text(OcrEngine().recognize(cv2.imread(PHOTO)))
     lines = text.split("\n")

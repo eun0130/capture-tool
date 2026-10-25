@@ -2,6 +2,7 @@
 or a folder a company points it at), downloads the installer, checks its SHA-256 against the
 release's .sha256 file, runs the installer silently and restarts. Nothing of it needs a network
 here: fetches are injected."""
+import sys
 import hashlib
 import json
 from pathlib import Path
@@ -124,6 +125,7 @@ def test_UP_07_the_installer_restarts_the_app_after_an_update_and_the_release_sh
     assert update.parse_version(__version__) is not None
 
 
+@pytest.mark.skipif(sys.platform != "win32", reason="tray / installer is Windows-only")
 def test_UP_08_the_tray_offers_the_new_version_and_installs_it_on_request(qt_app, tmp_path, monkeypatch):
     from capture_tool.app import main
     monkeypatch.setattr(main, "data_dir", lambda: tmp_path)

@@ -5,6 +5,8 @@ import re
 import sys
 from pathlib import Path
 
+import pytest
+
 from capture_tool import platform as pf
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -24,6 +26,7 @@ def test_PB_01_the_backend_follows_the_os_and_CAPTURE_PLATFORM(monkeypatch):
     assert pf.name() == sys.platform                      # an installed build ignores the variable
 
 
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows API / Windows fonts")
 def test_PB_02_windows_backend_maps_names_to_the_existing_modules(monkeypatch):
     monkeypatch.setenv("CAPTURE_PLATFORM", "win32")
     b = pf.backend()

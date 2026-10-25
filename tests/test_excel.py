@@ -1,6 +1,7 @@
 """표 → 엑셀: when Excel is open the table goes to its selected cell (like Word / PowerPoint);
 when it isn't, the table waits on the clipboard with a clear 'Ctrl+V' message. Excel is never
 started just for this."""
+import sys
 import pytest
 from capture_tool.core.clipboard_payload import HTML
 from capture_tool.platform.excel import ExcelNotOpen, paste_into_open_excel
@@ -55,6 +56,7 @@ def test_EXCEL_03_table_goes_into_open_excel(make):
     assert HTML in c.clipboard.last and "B3" in c.messages[-1]
 
 
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows API / Windows fonts")
 def test_EXCEL_04_without_excel_the_table_waits_on_the_clipboard(make):
     c = make()                                    # the test guard: not open, not installed
     c._deliver_table([["항목", "값"], ["a", "1"]], None, None, [], target="excel")

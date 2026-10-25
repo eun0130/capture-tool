@@ -23,6 +23,9 @@ def visible(sb):
     return [k for k, b in sb.buttons.items() if not b.isHidden()]
 
 
+pytestmark = pytest.mark.windows_contract
+
+
 def test_BAR_01_one_row_right_under_the_capture(make):
     c, ov = selected(make)
     sb = ov.side_bar
