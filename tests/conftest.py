@@ -52,6 +52,19 @@ def pytest_sessionstart(session):
 
 
 def pytest_sessionfinish(session, exitstatus):
+    """Close the Qt windows the tests left behind while the app is still alive: otherwise Python
+    frees them at interpreter exit, after QApplication is gone, and the process segfaults."""
+    from PySide6.QtWidgets import QApplication
+    app = QApplication.instance()
+    if app is not None:
+        for w in app.topLevelWidgets():
+            w.close()
+        app.processEvents()
+        for w in app.topLevelWidgets():
+            w.deleteLater()
+        app.processEvents()
+    import gc
+    gc.collect()
     """BUG-125: an Excel a flow started and did not get rid of stays for hours and slows every
     clipboard change on the PC. Name them here so a leak is seen on the run that caused it."""
     new = _windowless_excel() - getattr(session.config, "_excel_before", set())
