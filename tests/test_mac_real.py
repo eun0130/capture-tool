@@ -16,11 +16,17 @@ def mac_env(monkeypatch):
 
 
 def _skip_if_locked():
-    """A locked Mac (front app loginwindow) delivers no global hot keys and grabs come back black
-    and ~1 s slow - nothing to check there; unlock the screen and run again."""
+    """A locked Mac (front app loginwindow) delivers no global hot keys - unlock it and run again."""
     from Quartz import CGSessionCopyCurrentDictionary
     if (CGSessionCopyCurrentDictionary() or {}).get("CGSSessionScreenIsLocked"):
         pytest.skip("the screen is locked - unlock the Mac and run again")
+
+
+def _skip_if_display_asleep():
+    """A sleeping display makes every grab ~1 s and black - wake it and run again."""
+    from Quartz import CGDisplayIsAsleep, CGMainDisplayID
+    if CGDisplayIsAsleep(CGMainDisplayID()):
+        pytest.skip("the display is asleep - wake the screen and run again")
 
 
 def test_MACR_01_pasteboard_round_trip(mac_env):
@@ -156,11 +162,11 @@ print("MS %.0f" % best)
 @pytest.mark.timing
 def test_MACR_08_a_full_screen_grab_is_fast(mac_env):
     """The overlay waits for this grab after the hot key: it stays well under 100 ms (measured
-    10-20 ms on a 3420x2214 Retina screen). A sleeping display makes every grab ~1 s and black -
-    wake the screen before running. Real desktop (cocoa) child: offscreen Qt has a small fake screen."""
+    10-20 ms on a 3420x2214 Retina screen, also while the screen is locked). A sleeping display
+    makes every grab ~1 s and black - the test skips then. Real desktop (cocoa) child: offscreen Qt has a small fake screen."""
     import re
     from tests.conftest import run_on_desktop
-    _skip_if_locked()
+    _skip_if_display_asleep()
     out = run_on_desktop(GRAB_FLOW, lambda o: "MS " in o and int(re.search(r"MS (\d+)", o).group(1)) < 100)
     assert "SHAPE True uint8 True" in out, out
     assert int(re.search(r"MS (\d+)", out).group(1)) < 100, out

@@ -547,15 +547,15 @@ def selftest(tray: TrayApp) -> int:
             f"png_bytes={len(png or b'')} ocr_korean={ocr_ok} shapes={shapes_ok} translate={translate_ok} "
             f"summary={'not installed' if summary_ok is None else summary_ok}")
     # 오버레이 예산: Windows 150 ms. 맥은 워밍업 뒤에도 실제 화면에서 165~180 ms(화면 캡처 10~20 ms,
-    # 창 목록 1~3 ms, 나머지는 전체 화면 창 띄우기) - 250 ms 로 둔다. 화면이 잠들어 있으면 캡처가 1초씩 걸린다.
+    # 창 목록 1~3 ms, 나머지는 전체 화면 창 띄우기) - 250 ms 로 둔다. 디스플레이가 잠들어 있으면 캡처가 검고 1초씩 걸린다.
     overlay_budget = 250 if pf.is_mac() else 150
     ok = (bool(png) and t_overlay < overlay_budget and t_copy < 150 and ocr_ok and shapes_ok and translate_ok
           and summary_ok is not False)
     print(line)
     if pf.is_mac():
-        from Quartz import CGSessionCopyCurrentDictionary
-        if (CGSessionCopyCurrentDictionary() or {}).get("CGSSessionScreenIsLocked"):
-            print("note: the screen is locked - captures are black and slow; unlock the Mac and run again")
+        from Quartz import CGDisplayIsAsleep, CGMainDisplayID
+        if CGDisplayIsAsleep(CGMainDisplayID()):
+            print("note: the display is asleep - captures are black and ~1 s slow; wake the screen and run again")
     print("SELFTEST", "OK" if ok else "FAIL")
     logging.info("selftest %s %s", "OK" if ok else "FAIL", line)
     return 0 if ok else 1
