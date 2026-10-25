@@ -39,6 +39,9 @@ def display_affinity(hwnd: int) -> int:
 
 def exclude_from_capture(hwnd: int) -> bool:
     """`hwnd` is a Qt winId = NSView pointer; its window stops appearing in screen captures."""
+    from PySide6.QtGui import QGuiApplication
+    if QGuiApplication.platformName() != "cocoa":       # offscreen (tests): winId is not a real NSView
+        return False
     import objc
     from AppKit import NSWindowSharingNone
     view = objc.objc_object(c_void_p=int(hwnd))

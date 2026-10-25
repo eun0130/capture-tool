@@ -158,3 +158,9 @@ def test_MAC_09_carbon_functions_get_argument_types_before_they_are_called():
     assert i[3] is ctypes.POINTER(hotkey.EventTypeSpec)
     assert lib.UnregisterEventHotKey.argtypes == [ctypes.c_void_p]
     assert ctypes.sizeof(hotkey.EventHotKeyID) == 8 and ctypes.sizeof(hotkey.EventTypeSpec) == 8
+
+
+def test_MAC_10_exclude_from_capture_is_a_no_op_without_a_native_window(qt_app):
+    # 오프스크린 Qt 의 winId 는 NSView 포인터가 아니다 - 그대로 objc 에 넘기면 세그폴트가 난다.
+    from capture_tool.platform.mac import scroll
+    assert scroll.exclude_from_capture(12345) is False
