@@ -39,39 +39,70 @@ def test_MACR_01_pasteboard_round_trip(mac_env):
     assert clipboard.get_format("CF_DIB") is None
 
 
-def test_MACR_02_windows_and_window_capture(mac_env, qt_app):
-    from PySide6.QtWidgets import QWidget
-    from capture_tool.platform.mac import permissions, windows
+WINDOWS_FLOW = r"""
+import os, time
+os.environ["CAPTURE_PLATFORM"] = "darwin"
+import numpy as np
+from PySide6.QtWidgets import QApplication, QWidget
+app = QApplication([])
+from capture_tool.platform.mac import windows
+w = QWidget()
+w.setWindowTitle("CaptureTool test window")
+w.resize(300, 200)
+w.show()
+for _ in range(15):
+    app.processEvents(); time.sleep(0.02)
+wins = windows.top_level_windows()
+mine = [x for x in wins if x.pid == os.getpid()]
+print("MINE", bool(mine) and mine[0].rect.w >= 300, mine[:1])
+print("AT", windows.window_at((mine[0].rect.x + 5, mine[0].rect.y + 5), wins).hwnd == mine[0].hwnd)
+print("EXCLUDE", windows.top_level_windows(exclude_pid=os.getpid()) == [x for x in wins if x.pid != os.getpid()])
+img = windows.capture_window(mine[0].hwnd, mine[0].rect)
+print("CAPTURE", isinstance(img, np.ndarray) and img.shape[1] >= 300 and img.shape[2] == 3, getattr(img, "shape", None))
+print("NAME", bool(windows.process_name(mine[0].hwnd)))
+"""
+
+
+def test_MACR_02_windows_and_window_capture(mac_env):
+    """Our own window in the Quartz window list, hit-testing and capturing it. Real desktop child:
+    in the offscreen test session a QWidget is never a macOS window."""
+    from capture_tool.platform.mac import permissions
+    from tests.conftest import run_on_desktop
     if not permissions.screen_recording():
         pytest.skip("Screen Recording not granted to the test runner")
-    w = QWidget()
-    w.setWindowTitle("CaptureTool test window")
-    w.resize(300, 200)
-    w.show()
-    qt_app.processEvents()
-    time.sleep(0.3)
-    wins = windows.top_level_windows()
-    mine = [x for x in wins if x.pid == os.getpid()]
-    assert mine and mine[0].rect.w >= 300
-    assert windows.window_at((mine[0].rect.x + 5, mine[0].rect.y + 5), wins).hwnd == mine[0].hwnd
-    assert windows.top_level_windows(exclude_pid=os.getpid()) == [x for x in wins if x.pid != os.getpid()]
-    img = windows.capture_window(mine[0].hwnd, mine[0].rect)
-    assert isinstance(img, np.ndarray) and img.shape[1] >= 300 and img.shape[2] == 3
-    assert windows.process_name(mine[0].hwnd)
+    _skip_if_display_asleep()
+    out = run_on_desktop(WINDOWS_FLOW, lambda o: "NAME True" in o)
+    for check in ("MINE True", "AT True", "EXCLUDE True", "CAPTURE True", "NAME True"):
+        assert check in out, out
 
 
-def test_MACR_03_screen_grab_matches_the_asked_size(mac_env, qt_app):
-    from capture_tool.core.geometry import Rect
-    from capture_tool.platform.mac import permissions, screen
+SCREEN_FLOW = r"""
+import os
+os.environ["CAPTURE_PLATFORM"] = "darwin"
+from PySide6.QtWidgets import QApplication
+app = QApplication([])
+from capture_tool.core.geometry import Rect
+from capture_tool.platform.mac import screen
+mons = screen.monitors()
+print("PRIMARY", bool(mons) and any(m.primary for m in mons), mons)
+r = Rect(mons[0].rect.x, mons[0].rect.y, 200, 100)
+print("SHAPE", screen.grab(r).shape == (100, 200, 3))
+x, y = screen.cursor_pos()
+print("CURSOR", isinstance(x, int) and isinstance(y, int))
+"""
+
+
+def test_MACR_03_screen_grab_matches_the_asked_size(mac_env):
+    """Real monitors (Retina scale) and a small grab at the asked physical size. Real desktop child:
+    offscreen Qt has a fake screen."""
+    from capture_tool.platform.mac import permissions
+    from tests.conftest import run_on_desktop
     if not permissions.screen_recording():
         pytest.skip("Screen Recording not granted")
-    mons = screen.monitors()
-    assert mons and any(m.primary for m in mons)
-    r = Rect(mons[0].rect.x, mons[0].rect.y, 200, 100)
-    img = screen.grab(r)
-    assert img.shape == (100, 200, 3)
-    x, y = screen.cursor_pos()
-    assert isinstance(x, int) and isinstance(y, int)
+    _skip_if_display_asleep()
+    out = run_on_desktop(SCREEN_FLOW, lambda o: "CURSOR True" in o)
+    for check in ("PRIMARY True", "SHAPE True", "CURSOR True"):
+        assert check in out, out
 
 
 HOTKEY_FLOW = r"""
