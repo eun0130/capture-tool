@@ -196,3 +196,22 @@ def test_MAC_13_every_mac_backend_module_is_bundled():
         if py.stem != "__init__":
             assert f'"capture_tool.platform.mac.{py.stem}"' in listed, f"{py.stem} missing from MAC_BACKEND"
     assert "*MAC_BACKEND" in spec.split("hiddenimports=")[1].split(")")[0] or "MAC_HIDDEN + MAC_BACKEND" in spec
+
+
+def test_MAC_14_the_installed_mac_app_registers_its_login_item_at_start(mac, monkeypatch, tmp_path):
+    # 맥에는 설치 프로그램 단계가 없어 로그인 항목이 설정 창에서 확인을 눌러야만 생겼다 - 설치한 앱이
+    # 재시동 뒤 저절로 켜지지 않았다. 설치된 앱(frozen)이 시작할 때 설정대로 등록한다.
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    from capture_tool.app.main import ensure_mac_login_item
+    from capture_tool.platform.mac import startup
+    exe = "/Applications/CaptureTool.app/Contents/MacOS/CaptureTool"
+    assert ensure_mac_login_item(True, frozen=True, exe=exe) is True
+    assert exe in startup.plist_path().read_text(encoding="utf-8") and startup.is_enabled()
+    moved = "/Users/x/Applications/CaptureTool.app/Contents/MacOS/CaptureTool"
+    ensure_mac_login_item(True, frozen=True, exe=moved)                         # the app moved: the path follows
+    assert moved in startup.plist_path().read_text(encoding="utf-8")
+    startup.set_enabled(False, exe)
+    assert ensure_mac_login_item(False, frozen=True, exe=exe) is False and not startup.is_enabled()   # turned off: stays off
+    assert ensure_mac_login_item(True, frozen=False, exe=exe) is False and not startup.is_enabled()   # python run_capture.py: never
+    monkeypatch.setenv("CAPTURE_PLATFORM", "win32")
+    assert ensure_mac_login_item(True, frozen=True, exe=exe) is False                                  # Windows: the installer does it

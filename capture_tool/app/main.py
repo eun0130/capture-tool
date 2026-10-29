@@ -62,6 +62,23 @@ def mac_permission_missing(which: str) -> str | None:
     return None if ok else permissions.MESSAGES[which]
 
 
+def ensure_mac_login_item(enabled: bool, frozen: bool | None = None, exe: str | None = None) -> bool:
+    """The Mac has no installer step that registers the login item (Windows: the Inno Setup task), so
+    the installed app does it at every start while the setting is on - with its current location, in
+    case the app was moved. Off stays off; a developer run (python run_capture.py) never registers.
+    Returns True when it registered."""
+    from .. import platform as pf
+    frozen = getattr(sys, "frozen", False) if frozen is None else frozen
+    if not (enabled and frozen and pf.is_mac()):
+        return False
+    try:
+        pf.backend().startup.set_enabled(True, exe or sys.executable)
+    except OSError as e:
+        logging.warning("login item registration failed: %s", e)
+        return False
+    return True
+
+
 def check_mac_permissions(ask=None, open_settings=None) -> bool:
     """First start on a Mac: ask the system for Screen Recording once; still missing, explain and
     offer the settings pane. Returns True when capturing is possible. `ask(text) -> bool` and
@@ -215,6 +232,7 @@ class TrayApp:
                                     if reason == QSystemTrayIcon.Trigger else None)
         if not selftest:
             check_mac_permissions()
+            ensure_mac_login_item(self.settings.launch_at_startup)
         for w in warnings:
             self.toast(w)
         if not selftest:

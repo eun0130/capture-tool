@@ -998,6 +998,7 @@
 | MAC-11 | A | 맥 파일 링크는 POSIX 경로와 `file://` 주소 | 자동 |
 | PREWARM-01 | A | 시작 워밍업이 화면 캡처를 한 번 미리 함 | 자동 |
 | MAC-12 | A | 맥에서 Excel 보내기는 작업 스레드를 띄우기 전에 `ExcelMissing` | 자동 |
+| MAC-14 | A | 설치된 맥 앱은 시작할 때 로그인 항목 등록(설정 켜짐일 때만, 위치 바뀌면 따라감); 개발 실행·Windows는 안 함 | 자동 |
 | 수동 | M | Windows 전체 테스트·selftest 집용/회사용 불변 | 기록 |
 
 (B: 맥 실제 API·권한·selftest, C: .app/.dmg·CI — 맥에서 진행: `docs/MAC_HANDOFF.md`, `docs/superpowers/plans/2026-10-24-macos-port.md`)
