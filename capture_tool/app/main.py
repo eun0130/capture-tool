@@ -231,8 +231,8 @@ class TrayApp:
         self.tray.activated.connect(lambda reason: self.on_hotkey("capture")
                                     if reason == QSystemTrayIcon.Trigger else None)
         if not selftest:
+            ensure_mac_login_item(self.settings.launch_at_startup)   # before the permission dialog, which waits for the person
             check_mac_permissions()
-            ensure_mac_login_item(self.settings.launch_at_startup)
         for w in warnings:
             self.toast(w)
         if not selftest:
