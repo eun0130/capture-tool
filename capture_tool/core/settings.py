@@ -11,7 +11,9 @@ from .color import normalize_hex
 from .hotkey import HotkeyError, parse
 
 DEFAULT_HOTKEYS = {"capture": "Alt + ~", "ocr": "", "shapes": "", "fullscreen": "", "scroll": "", "search": ""}
-DEFAULT_HOTKEYS_MAC = {**DEFAULT_HOTKEYS, "capture": "Shift + Cmd + 2"}   # Shift+Cmd+3/4/5 belong to macOS
+# the Mac: the same keys as Alt + ~ on Windows (Option is the Mac's Alt), so one habit works on both PCs;
+# free on macOS (Cmd + ` is the window switcher, Shift+Cmd+3/4/5 are its screenshots)
+DEFAULT_HOTKEYS_MAC = {**DEFAULT_HOTKEYS, "capture": "Option + ~"}
 
 
 def default_hotkeys() -> dict:

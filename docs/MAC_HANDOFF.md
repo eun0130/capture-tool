@@ -87,7 +87,7 @@ app/main.py 의 권한 확인, app/guide.py 의 맥 페이지, packaging/capture
 4. .venv/bin/python run_capture.py --selftest 가 OK 를 찍을 때까지 고쳐.
 5. .venv/bin/python run_capture.py 로 앱을 띄우고(메뉴 막대 아이콘), 설계서 §9 수동 체크리스트를 한 항목씩 사용자에게
    시키고 결과를 받아 고쳐. 예상 걸림: 오버레이가 메뉴 막대까지 덮는지(NSWindow level), scroll.exclude_from_capture 의
-   winId→NSView, Retina 에서 mss 크기, Carbon 단축키 수신(Shift+Cmd+2), 키체인 프롬프트, 메뉴 막대 아이콘·메뉴,
+   winId→NSView, Retina 에서 mss 크기, Carbon 단축키 수신(Option+~), 키체인 프롬프트, 메뉴 막대 아이콘·메뉴,
    붙여넣기(미리보기·Keynote·메모).
 6. ./build.sh — dist/CaptureTool.app 과 installer/Output/CaptureTool-<v>-mac.dmg 가 나오는지, dmg 의 앱을 응용 프로그램
    폴더로 끌어 넣고 우클릭>열기 로 실행되는지 사용자와 확인.
@@ -106,7 +106,7 @@ app/main.py 의 권한 확인, app/guide.py 의 맥 페이지, packaging/capture
 |---|---|
 | "화면 기록 권한을 켜 주세요" | 시스템 설정 > 개인정보 보호 및 보안 > 화면 기록 → **Paseo**(터미널에서 돌리면 **터미널**) 켜기 → Paseo `Cmd + Q` → 다시 열기 → 에이전트에 "켰어" |
 | "손쉬운 사용 권한" | 같은 곳의 **손쉬운 사용** 에서 Paseo 켜기 → 재시작 |
-| "Shift+Cmd+2 눌러 보세요", "붙여넣어 보세요" | 해 보고 결과를 그대로 말하기(안 되면 무엇이 보였는지) |
+| "Option+~ 눌러 보세요", "붙여넣어 보세요" | 해 보고 결과를 그대로 말하기(안 되면 무엇이 보였는지) |
 | "키체인 접근 허용" 창 | **항상 허용** |
 | "커밋/푸시할게요" | 그냥 두면 됨(승인 불필요). 삭제 명령 확인 창이 뜨면 대상 경로를 읽고 허용/거절 |
 | "태그 v0.10.0 올릴까요" | 원하면 `진행` |
@@ -118,7 +118,7 @@ Paseo 의 **Changes** 탭에서 바뀐 파일을, **New terminal** 에서 직접
 
 - 태그 `v0.10.0` 을 올리면 GitHub Actions 가 Windows 설치 파일 2종과 `CaptureTool-0.10.0-mac.dmg` 를 capture-tool 과
   capture_dist 의 릴리스에 올립니다(맥 잡은 `macos-latest`, 약 20분).
-- 맥 설치: dmg → 응용 프로그램으로 끌기 → 우클릭 > 열기 → 화면 기록 권한 → 메뉴 막대 아이콘 → `Shift + Cmd + 2`.
+- 맥 설치: dmg → 응용 프로그램으로 끌기 → 우클릭 > 열기 → 화면 기록 권한 → 메뉴 막대 아이콘 → `Option + ~`.
 - Windows PC 설치는 그쪽에서 버전마다 승인 뒤에만(기존 규칙).
 
 ## 5. 막히면

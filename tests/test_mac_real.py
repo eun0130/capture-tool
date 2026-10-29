@@ -130,6 +130,22 @@ try:
 finally:
     hotkey.unregister(0, 0xA009)
 print("REFUSED", not hotkey.register(0, 0xA00A, parse("Alt+PrintScreen")))   # no such key: refused, no crash
+from Quartz import kCGEventFlagMaskAlternate
+from capture_tool.core.settings import default_hotkeys
+default = default_hotkeys()["capture"]                                          # Option + ~ (Alt + ~ on Windows)
+print("DEFAULT_REGISTERED", default, hotkey.register(0, 0xA00B, parse(default)))
+try:
+    for down in (True, False):
+        ev = CGEventCreateKeyboardEvent(None, 0x32, down)                       # kVK_ANSI_Grave (the ~ key)
+        CGEventSetFlags(ev, kCGEventFlagMaskAlternate)
+        CGEventPost(kCGHIDEventTap, ev)
+    t0 = time.time()
+    while 0xA00B not in got and time.time() - t0 < 2:
+        app.processEvents()
+        time.sleep(0.02)
+    print("DEFAULT_GOT", 0xA00B in got)
+finally:
+    hotkey.unregister(0, 0xA00B)
 """
 
 
@@ -138,10 +154,11 @@ def test_MACR_04_carbon_hotkey_fires(mac_env):
     never runs - so the check runs in a child process on the real desktop (cocoa platform)."""
     from tests.conftest import run_on_desktop
     _skip_if_locked()
-    out = run_on_desktop(HOTKEY_FLOW, lambda o: "GOT [40969]" in o)
+    out = run_on_desktop(HOTKEY_FLOW, lambda o: "GOT [40969]" in o and "DEFAULT_GOT True" in o)
     assert "REGISTERED True" in out, out
     assert "GOT [40969]" in out, out                                             # 0xA009
     assert "REFUSED True" in out, out
+    assert "DEFAULT_REGISTERED Option + ~ True" in out and "DEFAULT_GOT True" in out, out   # the default capture key
 
 
 def test_MACR_05_keychain_round_trip(mac_env):

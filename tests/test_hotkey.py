@@ -124,9 +124,12 @@ def test_HK_20_mac_labels_reserved_keys_and_conflicts(monkeypatch):
 
 def test_HK_21_default_hotkeys_per_os(monkeypatch):
     from capture_tool.core import settings as s
+    from capture_tool.core.hotkey import parse as hk_parse
     monkeypatch.setenv("CAPTURE_PLATFORM", "darwin")
-    assert s.default_hotkeys()["capture"] == "Shift + Cmd + 2"
-    assert s.Settings().hotkeys["capture"] == "Shift + Cmd + 2"
+    # the same keys as Alt + ~ on Windows (Option is the Mac's Alt): one habit on both PCs
+    assert s.default_hotkeys()["capture"] == "Option + ~"
+    assert s.Settings().hotkeys["capture"] == "Option + ~"
+    assert hk_parse("Option + ~") == hk_parse("Alt + ~")
     monkeypatch.setenv("CAPTURE_PLATFORM", "win32")
     assert s.default_hotkeys()["capture"] == "Alt + ~" and s.DEFAULT_HOTKEYS["capture"] == "Alt + ~"
     assert s.Settings().hotkeys["capture"] == "Alt + ~"

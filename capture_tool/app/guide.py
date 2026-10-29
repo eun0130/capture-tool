@@ -223,7 +223,7 @@ def _at_work(text: str) -> str:
 
 
 _MAC_SKIPS_TITLES = ("파워포인트", "카카오톡")                 # chapters about programs the Mac build has no sender for
-_MAC_WORDS = (("Alt + ~", "Shift + Cmd + 2"), ("**Alt** 를 누른 채 **~** (숫자 1 왼쪽 키)", "**Shift** 와 **Cmd** 를 누른 채 **2**"),
+_MAC_WORDS = (("Alt + ~", "Option + ~"), ("**Alt** 를 누른 채 **~** (숫자 1 왼쪽 키)", "**Option** 을 누른 채 **~** (숫자 1 왼쪽 키)"),
               ("Ctrl + V", "Cmd + V"), ("Ctrl + C", "Cmd + C"), ("Ctrl + S", "Cmd + S"), ("Ctrl + Z", "Cmd + Z"),
               ("트레이", "메뉴 막대"), ("탐색기", "Finder"))
 _MAC_PAGE = Page(
@@ -232,7 +232,7 @@ _MAC_PAGE = Page(
     ("처음 열 때 \"확인되지 않은 개발자\" 경고가 나오면 응용 프로그램 폴더의 캡처 도구를 **우클릭 > 열기** 하세요.",
      "**화면 기록** 권한: 시스템 설정 > 개인정보 보호 및 보안 > 화면 기록에서 캡처 도구를 켜고 다시 실행합니다.",
      "긴 화면 찍기(스크롤)는 같은 곳의 **손쉬운 사용** 권한도 켜야 합니다.",
-     "단축키는 **Shift + Cmd + 2** 입니다. 메뉴 막대의 캡처 도구 아이콘에서도 캡처·설정·종료할 수 있습니다.",
+     "단축키는 **Option + ~** 입니다(Option 은 Windows의 Alt 키입니다). 메뉴 막대의 캡처 도구 아이콘에서도 캡처·설정·종료할 수 있습니다.",
      "맥에는 PPT 도형·Excel·Word로 바로 보내기, 카카오톡, Google Lens가 없습니다. 그림·표는 클립보드에 있으니 **Cmd + V** 하세요."),
     "설정과 캡처 목록은 ~/Library/Application Support/CaptureTool 에 있습니다.")
 

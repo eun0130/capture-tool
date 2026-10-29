@@ -985,7 +985,7 @@
 | PB-05 | U | `shell.open_path/reveal/open_url`: 주입한 실행기로 startfile·`explorer /select,`·URL(https/mailto만), 실패는 삼킴 | 정확 |
 | PB-06 | U | app 층 어느 파일도 OS 모듈(screen·win_clipboard·win_hotkey·windows·scroll·startup·secret·shell)을 이름으로 import 하지 않고 `os.startfile`·explorer를 부르지 않음 | 정확 |
 | ED-10~12 | U | 맥: `excluded()` = ppt·ppt_shapes·ppt_merge·excel·word·kakao·lens·drm, mail·search_web·pdf·print는 남음; Windows 회사용은 불변; 컨트롤러 sender 전부 None·drm None, 숨은 버튼 없음, Excel/Word/PPT 보내기는 "클립보드에 복사" 알림만 | 정확 |
-| HK-20/21 | U | 맥 표시 "Shift + Cmd + 2"·"Option + ~", Shift+Cmd+3/4/5·Space·` 충돌 메시지, Cmd+Q·Tab 예약(Windows는 불변); 기본 캡처 키 맥 "Shift + Cmd + 2", Windows "Alt + ~" | 정확 |
+| HK-20/21 | U | 맥 표시 "Shift + Cmd + 2"·"Option + ~", Shift+Cmd+3/4/5·Space·` 충돌 메시지, Cmd+Q·Tab 예약(Windows는 불변); 기본 캡처 키 맥 "Option + ~"(= Windows Alt + ~ 와 같은 키), Windows "Alt + ~" | 정확 |
 | MAC-01 | U | 맥 데이터 경로 `~/Library/Application Support/CaptureTool`(catalog·설정·models), 로그 `~/Library/Logs/CaptureTool`, 대체 저장 `~/Pictures/Captures`; Windows는 APPDATA 그대로 | 정확 |
 | MAC-02 | U | AppKit 아래쪽 원점 사각형 → 위쪽 원점(`flip_rect`), 배율 곱(`to_physical`) | 정확 |
 | MAC-03 | U | `carbon_keys`: Shift+Cmd+2 → (0x13, cmd|shift), Ctrl+Option+` → (0x32, control|option), F5 → (0x60, 0); PrintScreen은 `UnsupportedKey` | 정확 |

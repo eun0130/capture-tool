@@ -75,7 +75,8 @@ def excluded() -> tuple[str, ...]:   # edition 제외 + OS 제외의 합집합
 
 - 파서(`core/hotkey.py`)는 이미 `cmd`·`command`를 `win` 수식키로 받는다. 표시 이름만 OS별: 맥에서는 `Win`→`Cmd`,
   `Alt`→`Option`(`_MOD_LABEL`을 함수로).
-- 맥 기본값: 캡처 `Cmd+Shift+2`(시스템 `Cmd+Shift+3/4/5`와 안 겹침). Windows 기본값 `Alt + ~`는 그대로.
+- 맥 기본값: 캡처 `Option + ~`(2026-10-29 변경 — Windows `Alt + ~`와 같은 키라 두 PC에서 손에 익은 대로; 맥에서 실측 동작,
+  예약·충돌 없음). 처음 설계는 `Cmd+Shift+2`(시스템 `Cmd+Shift+3/4/5` 옆)였음. Windows 기본값 `Alt + ~`는 그대로.
   `settings.py`의 `DEFAULT_HOTKEYS`는 OS별 사전이 된다. 설정 파일에 값이 있으면 그것을 쓴다(지금과 같음).
 - 충돌표(`known_conflicts`)에 맥 항목: `Cmd+Shift+3/4/5`(시스템 캡처), `Cmd+Space`(Spotlight), `Cmd+Tab`, `` Cmd+` ``(창 전환),
   `Cmd+Q/W/H/M`.
@@ -90,7 +91,7 @@ def excluded() -> tuple[str, ...]:   # edition 제외 + OS 제외의 합집합
   여전히 없으면 **안내 창**: "시스템 설정 > 개인정보 보호 및 보안 > 화면 기록에서 캡처 도구를 켜고 다시 실행". 단추로
   설정 창 열기. 캡처 단축키를 눌렀는데 권한이 없으면 같은 안내를 토스트로.
 - 스크롤 캡처를 처음 누를 때 손쉬운 사용이 없으면 같은 식의 안내(스크롤만 막힘, 다른 캡처는 됨).
-- 안내 페이지(`guide.py`)에 맥 전용 페이지 1장 "맥에서 처음 쓰기"(권한 2개, 우클릭 > 열기, 단축키 Cmd+Shift+2).
+- 안내 페이지(`guide.py`)에 맥 전용 페이지 1장 "맥에서 처음 쓰기"(권한 2개, 우클릭 > 열기, 단축키 Option+~).
   Windows 빌드에는 안 보인다(`has("mac_guide")`식이 아니라 `sys.platform` 판단은 guide.py 한 곳).
 - 메뉴 막대 앱: `Info.plist`의 `LSUIElement=1`(Dock 아이콘 없음). 지금 트레이 메뉴가 메뉴 막대 아이콘이 된다(Qt
   `QSystemTrayIcon`이 맥에서 메뉴 막대로 감).
@@ -138,7 +139,7 @@ def excluded() -> tuple[str, ...]:   # edition 제외 + OS 제외의 합집합
 ## 9. 맥 수동 체크리스트
 
 - [ ] 처음 실행: 화면 기록 권한 요청 → 설정에서 켜기 → 재실행 후 메뉴 막대 아이콘
-- [ ] `Cmd+Shift+2` → 커서 있는 모니터 정지 화면(내장 Retina + 외장 모니터, 배율 다를 때)
+- [ ] `Option+~` → 커서 있는 모니터 정지 화면(내장 Retina + 외장 모니터, 배율 다를 때)
 - [ ] 영역·창(커서 아래 창 테두리)·전체·스크롤(손쉬운 사용 권한) 캡처
 - [ ] 복사 → 미리보기·Keynote·PowerPoint·메모·Slack에 Cmd+V
 - [ ] 저장 폴더·PDF·인쇄·글자 복사·표 복사·캡처 찾기·모양으로(팩 받기)
