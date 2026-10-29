@@ -1,4 +1,4 @@
-# Publish an installer built by release.yml as a release of the repository people download from:
+﻿# Publish an installer built by release.yml as a release of the repository people download from:
 #   -Edition work  -> CaptureTool-Work-Setup-<v>.exe to eun0130/capture_work (회사용; the default)
 #   -Edition home  -> CaptureTool-Setup-<v>.exe      to eun0130/capture_dist (개인용; public, installers only)
 # Needed when WORK_REPO_TOKEN / DIST_REPO_TOKEN are not set in the main repository's secrets.

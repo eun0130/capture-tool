@@ -1,4 +1,4 @@
-# Build CaptureTool: tests -> icon -> PyInstaller (dist\CaptureTool) -> Inno Setup (installer\Output)
+﻿# Build CaptureTool: tests -> icon -> PyInstaller (dist\CaptureTool) -> Inno Setup (installer\Output)
 # -Edition work builds 회사용 (no KakaoTalk): capture_tool\edition.txt says "work" inside that build only,
 # the installer is CaptureTool-Work-Setup-<version>.exe (published from its own repository).
 param([switch]$SkipTests, [ValidateSet("home", "work")][string]$Edition = "home")
