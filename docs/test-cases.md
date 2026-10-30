@@ -999,6 +999,7 @@
 | PREWARM-01 | A | 시작 워밍업이 화면 캡처를 한 번 미리 함 | 자동 |
 | MAC-12 | A | 맥에서 Excel 보내기는 작업 스레드를 띄우기 전에 `ExcelMissing` | 자동 |
 | MAC-14 | A | 설치된 맥 앱은 시작할 때 로그인 항목 등록(설정 켜짐일 때만, 위치 바뀌면 따라감); 개발 실행·Windows는 안 함 | 자동 |
+| MAC-15 | A | build.sh 는 `tools/mac_signing.sh` 의 고정 인증서로 서명(없을 때만 ad-hoc) — 빌드가 바뀌어도 designated requirement 가 같아 화면 기록 권한 유지(실측: CDHash 다른 두 빌드, 같은 요구사항) | 자동 + 실측 |
 | 수동 | M | Windows 전체 테스트·selftest 집용/회사용 불변 | 기록 |
 
 (B: 맥 실제 API·권한·selftest, C: .app/.dmg·CI — 맥에서 진행: `docs/MAC_HANDOFF.md`, `docs/superpowers/plans/2026-10-24-macos-port.md`)

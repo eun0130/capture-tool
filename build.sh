@@ -1,5 +1,6 @@
 #!/bin/sh
-# Build CaptureTool on a Mac: tests -> icon -> PyInstaller (dist/CaptureTool.app) -> ad-hoc codesign
+# Build CaptureTool on a Mac: tests -> icon -> PyInstaller (dist/CaptureTool.app) -> codesign (the local
+# identity of tools/mac_signing.sh when set up, so permissions survive updates; ad-hoc otherwise)
 # -> installer/Output/CaptureTool-<version>-mac.dmg (+ .sha256 for the in-app updater).
 # Home edition only (the work edition is Windows-only). `./build.sh --skip-tests` skips the test run.
 set -e
@@ -14,7 +15,15 @@ $PY tools/make_icon.py
 rm -rf dist/CaptureTool.app dist/dmg
 $PY -m PyInstaller --noconfirm --clean --distpath dist --workpath build packaging/capture_tool.spec
 V=$($PY -c "import capture_tool; print(capture_tool.__version__)")
-codesign --force --deep -s - dist/CaptureTool.app            # ad-hoc: no developer account; "우클릭 > 열기" on first run
+SIGN_ID=$(sh tools/mac_signing.sh identity 2>/dev/null || true)
+if [ -n "$SIGN_ID" ]; then
+    # the same identity every build: macOS keeps Screen Recording / Accessibility after an update
+    codesign --force --deep -s "$SIGN_ID" dist/CaptureTool.app
+else
+    echo "no local signing identity (sh tools/mac_signing.sh setup): ad-hoc signature - the permissions must be granted again after each update"
+    codesign --force --deep -s - dist/CaptureTool.app        # ad-hoc: no developer account
+fi
+codesign -v dist/CaptureTool.app
 mkdir -p dist/dmg installer/Output
 cp -R dist/CaptureTool.app dist/dmg/
 ln -s /Applications dist/dmg/Applications

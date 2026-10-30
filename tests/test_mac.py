@@ -215,3 +215,16 @@ def test_MAC_14_the_installed_mac_app_registers_its_login_item_at_start(mac, mon
     assert ensure_mac_login_item(True, frozen=False, exe=exe) is False and not startup.is_enabled()   # python run_capture.py: never
     monkeypatch.setenv("CAPTURE_PLATFORM", "win32")
     assert ensure_mac_login_item(True, frozen=True, exe=exe) is False                                  # Windows: the installer does it
+
+
+def test_MAC_15_builds_are_signed_with_the_same_local_identity():
+    # ad-hoc 서명은 빌드마다 정체가 바뀌어(cdhash) 업데이트할 때마다 화면 기록 권한을 다시 켜야 했다.
+    # build.sh 는 tools/mac_signing.sh 의 고정 인증서로 서명하고, 없을 때만 ad-hoc 으로 돌아간다.
+    build = (ROOT / "build.sh").read_text(encoding="utf-8")
+    signing = (ROOT / "tools" / "mac_signing.sh").read_text(encoding="utf-8")
+    assert "sh tools/mac_signing.sh identity" in build and 'codesign --force --deep -s "$SIGN_ID"' in build
+    assert build.index('-s "$SIGN_ID"') < build.index("-s - dist/CaptureTool.app")          # ad-hoc only as the fallback
+    assert "codesign -v dist/CaptureTool.app" in build
+    assert "/usr/bin/openssl pkcs12 -export" in signing                  # Homebrew OpenSSL's .p12 cannot be imported
+    assert "login.keychain" not in signing and "capturetool-signing.keychain-db" in signing
+    assert "sh tools/mac_signing.sh setup" in (ROOT / "tools" / "mac_bootstrap.sh").read_text(encoding="utf-8")

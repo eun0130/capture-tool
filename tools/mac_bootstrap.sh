@@ -31,6 +31,9 @@ step "가상환경 + 의존성 (.venv) - 처음에는 몇 분"
 step "OCR·번역 모델 받기 (처음 한 번, 수백 MB)"
 .venv/bin/python tools/fetch_models.py
 
+step "서명 인증서 (이 맥 전용, 무료) - 업데이트해도 화면 기록 권한이 유지됨"
+sh tools/mac_signing.sh setup
+
 step "Claude Code"
 if ! command -v claude >/dev/null 2>&1 && [ ! -x "$HOME/.local/bin/claude" ]; then
     curl -fsSL https://claude.ai/install.sh | bash

@@ -126,3 +126,6 @@ Paseo 의 **Changes** 탭에서 바뀐 파일을, **New terminal** 에서 직접
 - 에이전트에 에러 메시지를 그대로 붙입니다(터미널 글자를 드래그해 `Cmd + C`).
 - Paseo 없이도 됩니다: 터미널에서 `cd ~/capture-tool && claude` 뒤 2장의 프롬프트를 붙이면 같은 작업.
 - Paseo 자체 문제(연결·제공자): Paseo 의 Settings > About / Providers > Diagnostic, 문서 https://paseo.sh/docs/troubleshooting
+
+## 서명 (업데이트해도 권한 유지)
+`sh tools/mac_signing.sh setup` 이 이 맥 전용 자체 서명 인증서(무료, 10년)를 전용 키체인 `~/Library/Keychains/capturetool-signing.keychain-db` 에 만든다(암호는 `~/Library/Application Support/CaptureTool-signing/keychain.pass`, 리포 밖). `build.sh` 가 그것으로 서명하면 빌드가 바뀌어도 macOS가 같은 앱으로 보고 화면 기록·손쉬운 사용 권한을 유지한다. 없으면 ad-hoc(빌드마다 권한 다시). `mac_bootstrap.sh` 가 자동으로 만든다. GitHub CI 의 dmg 는 아직 ad-hoc.
