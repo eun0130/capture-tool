@@ -180,3 +180,53 @@ def test_REUSE_15_edit_window_strip_follows_the_setting(saved, tmp_path):
     cv2.imwrite(str(p), np.zeros((50, 80, 3), np.uint8))
     assert c.open_image_file(str(p))
     assert c.editor.recent is None or not c.editor.recent.isVisible()
+
+
+def _trash_into(c, bin_dir):
+    """A stand-in Trash: the file really leaves the save folder, into bin_dir."""
+    bin_dir.mkdir(exist_ok=True)
+
+    def move(p):
+        os.replace(p, bin_dir / os.path.basename(p))
+        c.trashed.append(str(p))
+        return True
+    c.trash_file = move
+
+
+def test_REUSE_16_each_recent_capture_has_a_delete_button_that_moves_it_to_the_trash(saved, tmp_path):
+    c, folder = saved
+    paths = _save_images(folder, 4)
+    _trash_into(c, tmp_path / "bin")
+    c.start_capture()
+    strip = c.overlays[0].recent
+    assert len(strip.delete_buttons) == 4 and all(b.toolTip() for b in strip.delete_buttons)
+    strip.delete_buttons[0].click()                      # the newest
+    newest = paths[-1]
+    assert c.trashed == [str(newest)] and not newest.exists() and (tmp_path / "bin" / newest.name).exists()
+    assert strip.isVisible() and strip.paths == list(reversed(paths[:-1]))            # refilled without it
+    assert any("휴지통" in m and newest.name in m for m in c.messages)
+    assert c.editor is None                                # deleting never opens the picture
+
+
+def test_REUSE_17_a_failed_delete_keeps_the_file_and_says_so(saved):
+    c, folder = saved
+    paths = _save_images(folder, 2)
+    c.trash_file = lambda p: False
+    c.start_capture()
+    strip = c.overlays[0].recent
+    strip.delete_buttons[0].click()
+    assert paths[-1].exists() and strip.paths == list(reversed(paths))
+    assert any("못했습니다" in m for m in c.messages)
+
+
+def test_REUSE_18_deleting_the_last_one_hides_the_strip_and_the_edit_window_strip_deletes_too(saved, tmp_path):
+    c, folder = saved
+    paths = _save_images(folder, 2)
+    _trash_into(c, tmp_path / "bin")
+    c.start_capture()
+    c.overlays[0].recent.buttons[0].click()                # open the newest in the edit window
+    ed = c.editor
+    ed.recent.delete_buttons[1].click()                    # delete the oldest from the edit window's strip
+    assert not paths[0].exists() and ed.recent.paths == [paths[1]]
+    ed.recent.delete_buttons[0].click()
+    assert not paths[1].exists() and not ed.recent.isVisible()

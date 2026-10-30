@@ -1,6 +1,6 @@
 """The 'recent captures' strip at the bottom of the screen when a capture starts: the newest saved
-captures as thumbnails - one click opens that picture with every capture button. Image files can
-be dropped on it too. Thumbnails are read after the capture screen is up (it never waits)."""
+captures as thumbnails - one click opens that picture with every capture button, the 🗑 in its
+corner sends it to the Trash (recoverable there). Image files can be dropped on it too. Thumbnails are read after the capture screen is up (it never waits)."""
 from __future__ import annotations
 
 from datetime import datetime
@@ -21,6 +21,9 @@ QToolButton { border: 1px solid #353C4E; border-radius: 8px; background: #262C3A
 QToolButton:hover { border: 1.5px solid #5A92FA; background: #2D3446; }
 QToolButton#close { border: none; background: transparent; font-size: 14px; color: #8A93A6; }
 QToolButton#close:hover { color: #FFFFFF; }
+QToolButton#delete { border: none; border-radius: 6px; background: rgba(27, 31, 42, 200); font-size: 12px;
+                     padding: 0px; }
+QToolButton#delete:hover { background: #C0392B; }
 """
 
 
@@ -35,6 +38,7 @@ def image_paths(urls) -> list[str]:
 
 class RecentStrip(QWidget):
     open_path = Signal(str)
+    delete_path = Signal(str)                     # 🗑 on a thumbnail: the owner sends it to the Trash
 
     def __init__(self, parent, sync: bool = False, thumb_source=None):
         super().__init__(parent)
@@ -48,7 +52,7 @@ class RecentStrip(QWidget):
         v.setContentsMargins(12, 8, 12, 10)
         v.setSpacing(6)
         top = QHBoxLayout()
-        self.title = QLabel("최근 캡처 — 눌러서 다시 쓰기 · 그림 파일을 여기에 끌어다 놓아도 됩니다")
+        self.title = QLabel("최근 캡처 — 눌러서 다시 쓰기 · 🗑 휴지통으로 · 그림 파일을 여기에 끌어다 놓아도 됩니다")
         top.addWidget(self.title, 1)
         close = QToolButton()
         close.setObjectName("close")
@@ -62,13 +66,14 @@ class RecentStrip(QWidget):
         self.row.setSpacing(8)
         v.addLayout(self.row)
         self.buttons: list[QToolButton] = []
+        self.delete_buttons: list[QToolButton] = []
         self.paths: list[Path] = []
 
     def set_paths(self, paths: list[Path]) -> None:
         for b in self.buttons:
             self.row.removeWidget(b)
             b.deleteLater()
-        self.buttons, self.paths = [], list(paths)
+        self.buttons, self.delete_buttons, self.paths = [], [], list(paths)
         for p in self.paths:
             b = QToolButton()
             b.setToolButtonStyle(Qt.ToolButtonTextUnderIcon)
@@ -82,8 +87,17 @@ class RecentStrip(QWidget):
             b.setToolTip(f"{p.name}\n눌러서 이 캡처를 다시 엽니다 (표·텍스트·PPT·메일… 모두 사용)")
             b.setFocusPolicy(Qt.NoFocus)
             b.clicked.connect(lambda _=False, path=str(p): self.open_path.emit(path))
+            d = QToolButton(b)                         # in the thumbnail's top-right corner
+            d.setObjectName("delete")
+            d.setText("🗑")
+            d.setFixedSize(22, 22)
+            d.move(b.width() - d.width() - 3, 3)
+            d.setToolTip(f"{p.name}\n휴지통으로 옮깁니다 (휴지통에서 되살릴 수 있습니다)")
+            d.setFocusPolicy(Qt.NoFocus)
+            d.clicked.connect(lambda _=False, path=str(p): self.delete_path.emit(path))
             self.row.addWidget(b)
             self.buttons.append(b)
+            self.delete_buttons.append(d)
         self.adjustSize()
         if self._sync:
             self._load_thumbs()

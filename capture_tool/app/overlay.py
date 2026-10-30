@@ -442,10 +442,19 @@ class OverlayWindow(QWidget):
         if self.recent is None:
             self.recent = RecentStrip(self, sync=self.c.sync, thumb_source=getattr(self.c, "thumb_for", None))
             self.recent.open_path.connect(self.c.open_image_file)
+            self.recent.delete_path.connect(self._delete_recent)
         self.recent.set_paths(paths)
         self.recent.place(self.mapFromGlobal(QCursor.pos()))
         self.recent.show()
         self.recent.raise_()
+
+    def _delete_recent(self, path: str) -> None:
+        if self.c.delete_recent(path):
+            rest = self.c.recent_captures()
+            if rest:
+                self.show_recent(rest)                # refilled with the next newest
+            else:
+                self.hide_recent()
 
     def hide_recent(self) -> None:
         if self.recent is not None:

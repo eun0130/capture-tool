@@ -843,6 +843,7 @@
 | TXT-10~11 | core | find_text_table: 깨진 구분선 줄 제외, 닮은꼴 세로선으로 열 나눔 | 정확 |
 | PIPE-01~02 | L | 사용자 화면(`tests/data/pipe_table.png`) 실제 OCR → 3열, 표 버튼이 미리보기로 열림 | 정확 |
 | REUSE-13~15 | L | 편집 창 열린 채 Alt+~ → 새 캡처+최근 띠, 편집 창 자체의 최근 띠(눌러 전환), 설정 끄면 없음 | 정확 |
+| REUSE-16~18 | L | 최근 캡처 줄의 그림마다 🗑: 누르면 휴지통으로(파일 이동, 열지 않음), 줄은 다음 캡처로 다시 채움, 마지막이면 줄 숨김; 휴지통 실패면 파일 그대로·안내; 편집 창의 줄에서도 같음. 테스트는 진짜 휴지통을 쓰지 않음(`trash_file` 대체) | 정확 |
 
 ## v0.8.22 추가 — 개인정보 가림 안내
 
@@ -1011,6 +1012,7 @@
 | MS-12 | U | 모델 팩 `clip-vit-b32-ml`(kind clip, 4파일 약 227MB, 고정 리비전·SHA-256, 압축 아님); `clip_files()`가 네 파일을 찾고 없으면 FileNotFoundError | 정확 |
 | CLIP-01~06 | U | `core/shape.py`: WordPiece(BERT basic: `##` 조각, [UNK], 한자 낱자, 구두점 분리, 대소문자 유지, 탭·줄바꿈 공백, [CLS]…[SEP], 128 제한); 전처리(짧은 변 224·가운데 자르기·RGB·mean/std, 작은 그림 확대); safetensors를 numpy만으로; 가짜 세션으로 그림·글 벡터(정규화, input_ids·attention_mask int64, 평균 풀링 → Dense); 글 벡터는 기준 문구 25개(`BANK`)의 평균을 뺀 중심화 벡터(묶음은 한 번만 임베딩, `centre=False`면 원본); blob 왕복 float16 1024바이트(빈/짧은 blob은 None); `ShapeSearch`(팩 없으면 `missing()`·ModelMissing, 4스레드가 동시에 불러도 한 번만 로드, `unload()`) | 정확 |
 | CAT-11~13 | U | `set_embed`·`pending_embed`(embed IS NULL, b""는 실패 표시로 대기 아님)·`embed_count`; 재추가하면 다시 대기; `nearest`(코사인순·`min_score`·limit·종류/내용/앱/기간/색 필터·`Hit.score`, 벡터 없는 행 제외); `centre=True`면 그림 평균을 빼고 다시 정규화해 '모든 질의에 가까운 밋밋한 그림'(허브)이 바닥 아래로 내려감, 8장 미만이면 그대로 | 정확 |
+| CAT-14 | U | `remove_path`: 지운 캡처는 캡처 찾기에서 빠짐, 없는 경로는 False | 정확 |
 | IDX-05 | U | 팩 없이 rescan → 벡터 0·대기 2; `set_embedder` 뒤 `run_backlog` → 전부 채움·`embed_progress` (1,2)→(0,2)·changed 1회; 새 캡처 `add`도 백로그 경로로 한가할 때 벡터(동기 모드선 즉시; 모델 로드 0.4초가 GIL을 잡아 복사 중엔 절대 안 함 — selftest clipboard 266ms→24ms); 임베딩 예외는 b""로 표시하고 재시도 없음 | 정확 |
 | SW-07~09 | U | 검색 창: shape 없으면 버튼 숨김; **모양으로** 켜고 "막대 그래프" → a, b 점수순·상태줄 "모양"·툴팁 "모양 점수"; "고양이"는 바닥(0.17) 아래라 0개; 칩이 좁힘; 빈 입력은 최신순; 끄면 낱말 검색; 팩 없으면 켤 때 받기 확인(MB 표시) → 거절하면 꺼짐, 수락하면 `get_packs(ids, done, progress)`·진행률 "50 / 227"·받은 뒤 결과·"받았습니다"; 비슷한 그림 찾기는 해시 결과 뒤에 CLIP 이웃(≥0.75) 덧붙임, 팩 없으면 해시만 | 정확 |
 | CAPP-11 | U | 컨트롤러 `shape` 속성(setter가 인덱서 embedder 연결/해제), `open_search`가 shape·`get_shape_packs` 전달; `get_shape_packs` → `model_store.download(user_root)`·진행률 콜백·받은 즉시 `indexer.set_embedder`·done(True); 실패는 AI 창 없이 토스트·done(False); `ai_idle()`이 CLIP도 내림; main은 팩이 있으면 시작 때 `shape_ready()` | 정확 |

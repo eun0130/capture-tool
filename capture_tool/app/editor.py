@@ -148,9 +148,18 @@ class EditorWindow(QWidget):
         if self.recent is None:
             self.recent = RecentStrip(self, sync=self.c.sync, thumb_source=getattr(self.c, "thumb_for", None))
             self.recent.open_path.connect(self.c.open_image_file)
+            self.recent.delete_path.connect(self._delete_recent)
             self.layout().addWidget(self.recent, 0, Qt.AlignHCenter)
         self.recent.set_paths(paths)
         self.recent.show()
+
+    def _delete_recent(self, path: str) -> None:
+        if self.c.delete_recent(path):
+            rest = self.c.recent_captures()
+            if rest:
+                self.show_recent(rest)
+            else:
+                self.recent.hide()
 
     def close_from_controller(self) -> None:
         self._closing = True

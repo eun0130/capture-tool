@@ -228,3 +228,11 @@ def test_CAT_13_centred_nearest_takes_the_bland_hub_out(cat):
     for fid in ids[3:]:
         cat.remove(fid)
     assert cat.nearest(q, centre=True, min_score=0.08)[0].id == ids[0]   # fewer than 8 pictures: raw again, hub first
+
+
+def test_CAT_14_remove_path_drops_a_deleted_capture_from_the_search(cat):
+    # the recent strip's 🗑 sends the file to the Trash; 캡처 찾기 must not keep showing it
+    a, b, c = fill(cat)
+    assert cat.remove_path(os.path.join(str(Path("D:/shots")), "a.png")) is True
+    assert cat.get(a) is None and cat.count() == 2 and cat.search("매출현황") == []
+    assert cat.remove_path("D:/shots/nothing.png") is False                       # not in the catalogue: no harm

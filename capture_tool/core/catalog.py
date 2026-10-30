@@ -170,6 +170,15 @@ class Catalog:
         with self._lock, self.db:
             self._remove(file_id)
 
+    def remove_path(self, path: str | Path) -> bool:
+        """Drop a file that was deleted on purpose (the recent strip's 🗑). False when it was not here."""
+        with self._lock, self.db:
+            row = self.db.execute("SELECT id FROM files WHERE path = ?", (str(path),)).fetchone()
+            if row is None:
+                return False
+            self._remove(row["id"])
+            return True
+
     def clear(self) -> None:
         with self._lock, self.db:
             self.db.execute("DELETE FROM tags")

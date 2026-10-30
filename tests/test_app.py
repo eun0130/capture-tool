@@ -83,6 +83,8 @@ def make(qt_app, tmp_path):
         c.revealed, c.opened, c.urls = [], [], []          # never explorer / a browser on the test PC (BUG-126)
         c.reveal_file, c.open_folder = c.revealed.append, c.opened.append
         c.open_url = lambda url: (c.urls.append(url), True)[1]
+        c.trashed = []                                     # never the real Trash / Recycle Bin either
+        c.trash_file = lambda p: (c.trashed.append(str(p)), True)[1]
         made.append(c)
         return c
 

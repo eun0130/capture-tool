@@ -50,6 +50,12 @@ MAX_OPEN_BYTES = 200 * 1024 * 1024
 MAX_OPEN_PIXELS = 60_000_000         # (a 4K screen is 8.3 M; a very long scroll capture fits too)
 
 
+def _move_to_trash(path: str) -> bool:
+    """The Trash on the Mac, the Recycle Bin on Windows (Qt does both): a deleted capture can come back."""
+    from PySide6.QtCore import QFile
+    return bool(QFile.moveToTrash(str(path)))
+
+
 def _looks_like_image(p: Path) -> bool:
     try:
         with open(p, "rb") as f:
@@ -192,6 +198,7 @@ class Controller(QObject):
         from .. import platform as pf
         shell = pf.backend().shell                   # Explorer / Finder, the browser, the mail app
         self.open_url, self.reveal_file, self.open_folder = shell.open_url, shell.reveal, shell.open_path
+        self.trash_file = _move_to_trash             # tests replace it: never the real Trash
         self.ask_resize = self._resize_dialog   # tests replace it
         self.ask_border = self._border_dialog   # tests replace it
         self.ask_transparent = self._transparent_dialog
@@ -831,6 +838,25 @@ class Controller(QObject):
             if len(out) >= n:
                 break
         return out
+
+    def delete_recent(self, path) -> bool:
+        """The recent strip's 🗑: the saved capture goes to the Trash (it can come back from there) and
+        leaves 캡처 찾기. False, and the file stays, when the Trash refuses it."""
+        p = Path(str(path))
+        try:
+            ok = self.trash_file(str(p))
+        except OSError:
+            ok = False
+        if not ok:
+            self.notify(f"{p.name} 을(를) 휴지통으로 옮기지 못했습니다. 파일이 열려 있는지 확인해 보세요.")
+            return False
+        if self.catalog is not None:
+            try:
+                self.catalog.remove_path(p)
+            except Exception:  # noqa: BLE001 - the catalogue catches up at its next rescan
+                pass
+        self.notify(f"{p.name} 을(를) 휴지통으로 옮겼습니다. 휴지통에서 되살릴 수 있습니다.")
+        return True
 
     def open_image_file(self, path: str) -> bool:
         """Open a picture file (a saved capture, a photo, a dropped file) with every capture
