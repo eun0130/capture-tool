@@ -104,6 +104,8 @@ def test_MAC_07_the_guide_on_the_mac(mac, monkeypatch):
     assert "Option + ~" in pages[0].title and "Alt + ~" not in " ".join(s for p in pages for s in p.steps)
     assert "Shift + Cmd + 2" not in " ".join(s for p in pages for s in (p.title, p.intro, p.tip, *p.steps))
     assert "**Option + ~**" in " ".join(pages[-1].steps)
+    # macOS 15+ dropped "우클릭 > 열기" for an unnotarised app: System Settings has "그래도 열기"
+    assert "그래도 열기" in " ".join(pages[-1].steps) and "우클릭 > 열기" not in " ".join(pages[-1].steps)
     assert not any("Ctrl + V" in s for p in pages for s in p.steps)             # Cmd + V on the Mac
     monkeypatch.setenv("CAPTURE_PLATFORM", "win32")
     assert guide.pages()[-1].title != "맥에서 처음 쓰기" and "Alt + ~" in guide.pages()[0].title

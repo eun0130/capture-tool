@@ -10,7 +10,7 @@ Windows 쪽 준비는 전부 끝나 `main`에 있습니다. 맥에서 남은 일
 - **붙여넣기**: `Cmd + V`. 아래 명령은 **한 줄씩** 붙이고 `return`. 다음 줄은 앞 줄이 끝나고(프롬프트 `%`가 다시 보이면) 붙입니다.
 - **암호**: 터미널이 `Password:` 를 물으면 맥 로그인 암호를 치고 `return`. 글자가 안 보여도 입력되고 있는 것입니다.
 - **앱 설치(dmg)**: 받은 `.dmg`를 두 번 눌러 열고, 앱 아이콘을 **응용 프로그램(Applications)** 폴더로 끌어 넣습니다.
-- **처음 여는 앱 경고**("확인되지 않은 개발자", "열 수 없음"): 응용 프로그램 폴더에서 앱을 **우클릭(두 손가락 클릭) > 열기**.
+- **처음 여는 앱 경고**("확인되지 않은 개발자", "열 수 없음"): **완료** → 시스템 설정 > 개인정보 보호 및 보안 맨 아래 **그래도 열기** → 앱을 다시 열기. (macOS 15부터 우클릭 > 열기는 막힘)
 - **권한**: 시스템 설정 > 개인정보 보호 및 보안 > **화면 기록** / **손쉬운 사용**. 스위치를 켠 뒤 그 앱을 완전히 종료하고 다시 엽니다.
 
 ## 1. 사람이 하는 설치 (한 번, 20~40분, 대부분 기다리기)
@@ -51,7 +51,7 @@ claude
 brew install --cask paseo
 ```
 (또는 https://paseo.sh/download 에서 **Apple Silicon** dmg를 받아 응용 프로그램으로 끌어 넣기. macOS 13 이상.)
-`Cmd + Space` → `Paseo` → `return` 으로 실행합니다. 처음 열 때 경고가 나오면 우클릭 > 열기.
+`Cmd + Space` → `Paseo` → `return` 으로 실행합니다. 처음 열 때 경고가 나오면 위의 **그래도 열기** 방법.
 
 ### 1-6 Paseo 에서 프로젝트 열기
 1. 왼쪽 사이드바에서 프로젝트 추가(폴더 열기) → `~/capture-tool` 선택. 안 보이면 터미널에서:
@@ -90,7 +90,7 @@ app/main.py 의 권한 확인, app/guide.py 의 맥 페이지, packaging/capture
    winId→NSView, Retina 에서 mss 크기, Carbon 단축키 수신(Option+~), 키체인 프롬프트, 메뉴 막대 아이콘·메뉴,
    붙여넣기(미리보기·Keynote·메모).
 6. ./build.sh — dist/CaptureTool.app 과 installer/Output/CaptureTool-<v>-mac.dmg 가 나오는지, dmg 의 앱을 응용 프로그램
-   폴더로 끌어 넣고 우클릭>열기 로 실행되는지 사용자와 확인.
+   폴더로 끌어 넣고 (경고가 나오면 그래도 열기로) 실행되는지 사용자와 확인.
 7. 고친 것마다 테스트 먼저, docs/bugs.md(버그만), docs/test-cases.md, 필요하면 guide.py / USER_GUIDE, 커밋·푸시.
    작은 단위로 자주 커밋.
 8. 전부 되면 capture_tool/__init__.py 를 0.10.0 으로 올리고 docs/release-notes/v0.10.0.md 를 마무리해 보고해.
@@ -118,7 +118,7 @@ Paseo 의 **Changes** 탭에서 바뀐 파일을, **New terminal** 에서 직접
 
 - 태그 `v0.10.0` 을 올리면 GitHub Actions 가 Windows 설치 파일 2종과 `CaptureTool-0.10.0-mac.dmg` 를 capture-tool 과
   capture_dist 의 릴리스에 올립니다(맥 잡은 `macos-latest`, 약 20분).
-- 맥 설치: dmg → 응용 프로그램으로 끌기 → 우클릭 > 열기 → 화면 기록 권한 → 메뉴 막대 아이콘 → `Option + ~`.
+- 맥 설치: dmg → 응용 프로그램으로 끌기 → 열기(경고면 시스템 설정의 그래도 열기) → 화면 기록 권한 → 메뉴 막대 아이콘 → `Option + ~`.
 - Windows PC 설치는 그쪽에서 버전마다 승인 뒤에만(기존 규칙).
 
 ## 5. 막히면
