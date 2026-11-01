@@ -172,9 +172,10 @@ def test_MAC_10_exclude_from_capture_is_a_no_op_without_a_native_window(qt_app):
 
 def test_MAC_11_file_link_on_the_mac_is_a_posix_path_and_file_url(mac):
     # 맥 파일 링크는 맥 경로 그대로여야 한다(Windows 역슬래시로 바꾸면 붙여넣은 경로가 깨진다).
-    from pathlib import Path
+    from pathlib import PurePosixPath
     from capture_tool.core.share import file_link
-    text, url = file_link(Path("/Users/eun/Pictures/캡처 1.png"))
+    # PurePosixPath: a Mac path on any OS (Path() on Windows would turn it into \Users\...)
+    text, url = file_link(PurePosixPath("/Users/eun/Pictures/캡처 1.png"))
     assert text == "/Users/eun/Pictures/캡처 1.png"
     assert url == "file:///Users/eun/Pictures/%EC%BA%A1%EC%B2%98%201.png"
 
