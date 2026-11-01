@@ -231,3 +231,11 @@ def test_MAC_15_builds_are_signed_with_the_same_local_identity():
     assert "/usr/bin/openssl pkcs12 -export" in signing                  # Homebrew OpenSSL's .p12 cannot be imported
     assert "login.keychain" not in signing and "capturetool-signing.keychain-db" in signing
     assert "sh tools/mac_signing.sh setup" in (ROOT / "tools" / "mac_bootstrap.sh").read_text(encoding="utf-8")
+
+
+def test_MAC_16_the_startup_checkbox_names_the_mac(mac, qt_app, monkeypatch):
+    from capture_tool.app.settings_dialog import SettingsDialog
+    from capture_tool.core.settings import Settings
+    assert SettingsDialog(Settings()).startup.text() == "맥 시작 시 자동 실행"
+    monkeypatch.setenv("CAPTURE_PLATFORM", "win32")
+    assert SettingsDialog(Settings()).startup.text() == "Windows 시작 시 자동 실행"          # Windows unchanged

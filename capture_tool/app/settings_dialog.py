@@ -117,7 +117,8 @@ class SettingsDialog(QDialog):
         self.auto_save.setChecked(settings.auto_save)
         self.redact = QCheckBox("텍스트 복사 시 개인정보 자동 가림")
         self.redact.setChecked(settings.redact_pii)
-        self.startup = QCheckBox("Windows 시작 시 자동 실행")
+        from .. import platform as pf
+        self.startup = QCheckBox("맥 시작 시 자동 실행" if pf.is_mac() else "Windows 시작 시 자동 실행")
         self.startup.setChecked(settings.launch_at_startup)
         self.ppt_new_slide = QCheckBox("PPT로 보낼 때 새 슬라이드에 넣기 (끄면 보고 있는 슬라이드에)")
         self.ppt_new_slide.setChecked(settings.ppt_new_slide)
