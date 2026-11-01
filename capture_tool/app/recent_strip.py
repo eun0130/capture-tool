@@ -39,6 +39,8 @@ def image_paths(urls) -> list[str]:
 class RecentStrip(QWidget):
     open_path = Signal(str)
     delete_path = Signal(str)                     # 🗑 on a thumbnail: the owner sends it to the Trash
+    enable_auto_save = Signal()                   # the hint's "자동 저장 켜기"
+    stop_showing = Signal()                       # the hint's "다시 보지 않기" (the strip's setting off)
 
     def __init__(self, parent, sync: bool = False, thumb_source=None):
         super().__init__(parent)
@@ -65,11 +67,39 @@ class RecentStrip(QWidget):
         self.row = QHBoxLayout()
         self.row.setSpacing(8)
         v.addLayout(self.row)
+        # nothing saved because auto-save is off: say why instead of not appearing at all
+        self.hint = QWidget()
+        h = QHBoxLayout(self.hint)
+        h.setContentsMargins(0, 0, 0, 0)
+        self.hint_label = QLabel("자동 저장이 꺼져 있어 아직 보여 줄 캡처가 없습니다. "
+                                 "켜면 캡처할 때마다 저장되고, 여기에서 다시 쓰거나 🗑 로 지울 수 있습니다.")
+        self.hint_label.setWordWrap(True)
+        self.hint_label.setMinimumWidth(360)
+        h.addWidget(self.hint_label, 1)
+        self.enable_button = QToolButton()
+        self.enable_button.setText("자동 저장 켜기")
+        self.enable_button.clicked.connect(self.enable_auto_save.emit)
+        self.stop_button = QToolButton()
+        self.stop_button.setText("다시 보지 않기")
+        self.stop_button.setToolTip("최근 캡처 줄을 끕니다 (설정에서 다시 켤 수 있습니다)")
+        self.stop_button.clicked.connect(self.stop_showing.emit)
+        for b in (self.enable_button, self.stop_button):
+            b.setFocusPolicy(Qt.NoFocus)
+            h.addWidget(b)
+        v.addWidget(self.hint)
+        self.hint.hide()
         self.buttons: list[QToolButton] = []
         self.delete_buttons: list[QToolButton] = []
         self.paths: list[Path] = []
 
+    def show_hint(self) -> None:
+        """No saved captures and auto-save off: the reason and the way to turn it on."""
+        self.set_paths([])
+        self.hint.show()
+        self.adjustSize()
+
     def set_paths(self, paths: list[Path]) -> None:
+        self.hint.hide()
         for b in self.buttons:
             self.row.removeWidget(b)
             b.deleteLater()

@@ -78,6 +78,7 @@ def test_REUSE_04_strip_hides_when_selecting_and_can_be_turned_off(saved):
 
 def test_REUSE_05_no_saved_captures_no_strip(saved):
     c, _ = saved
+    c.settings.auto_save = True       # with auto-save off the strip explains itself instead (REUSE_19)
     c.start_capture()
     assert c.overlays[0].recent is None or not c.overlays[0].recent.isVisible()
 
@@ -230,3 +231,41 @@ def test_REUSE_18_deleting_the_last_one_hides_the_strip_and_the_edit_window_stri
     assert not paths[0].exists() and ed.recent.paths == [paths[1]]
     ed.recent.delete_buttons[0].click()
     assert not paths[1].exists() and not ed.recent.isVisible()
+
+
+def test_REUSE_19_with_auto_save_off_and_nothing_saved_the_strip_says_why_and_turns_it_on(saved):
+    """User (v0.10.0, Mac): the recent strip never appeared - auto-save was off, so the folder was
+    empty and the strip silently stayed away. It now says so, with a button to turn auto-save on."""
+    c, folder = saved
+    c.settings.auto_save = False
+    c.start_capture()
+    strip = c.overlays[0].recent
+    assert strip is not None and strip.isVisible() and strip.hint.isVisible() and strip.buttons == []
+    assert "자동 저장" in strip.hint_label.text()
+    strip.enable_button.click()
+    assert c.settings.auto_save is True and not strip.isVisible()
+    assert any("자동 저장을 켰습니다" in m for m in c.messages)
+
+
+def test_REUSE_20_never_again_turns_the_strip_off(saved):
+    c, folder = saved
+    c.settings.auto_save = False
+    c.start_capture()
+    c.overlays[0].recent.stop_button.click()
+    assert c.settings.show_recent is False and not c.overlays[0].recent.isVisible()
+    c.cancel()
+    c.start_capture()
+    assert c.overlays[0].recent is None or not c.overlays[0].recent.isVisible()
+
+
+def test_REUSE_21_no_hint_when_auto_save_is_on_or_there_are_captures(saved):
+    c, folder = saved
+    c.settings.auto_save = True                                          # on, nothing saved yet: nothing to say
+    c.start_capture()
+    assert c.overlays[0].recent is None or not c.overlays[0].recent.isVisible()
+    c.cancel()
+    _save_images(folder, 2)
+    c.settings.auto_save = False                                         # off, but pictures there: the thumbnails
+    c.start_capture()
+    strip = c.overlays[0].recent
+    assert strip.isVisible() and len(strip.buttons) == 2 and not strip.hint.isVisible()

@@ -818,6 +818,8 @@ class Controller(QObject):
         recent = self.recent_captures()
         if recent:
             self.overlays[0].show_recent(recent)
+        elif not self.settings.auto_save:                 # nothing saved because auto-save is off: say so
+            self.overlays[0].show_recent_hint()
 
     def recent_captures(self, n: int = RECENT_COUNT) -> list[Path]:
         """Newest saved captures (pictures in the save folder), newest first."""
@@ -838,6 +840,17 @@ class Controller(QObject):
             if len(out) >= n:
                 break
         return out
+
+    def enable_auto_save(self) -> None:
+        """The recent strip's "자동 저장 켜기": the same switch as the bar's 자동저장 button."""
+        if not self.settings.auto_save:
+            self._bar_action("autosave")
+
+    def stop_recent_strip(self) -> None:
+        """The recent strip's "다시 보지 않기": its setting off (설정 brings it back)."""
+        self.settings.show_recent = False
+        self._persist()
+        self.notify("최근 캡처 줄을 껐습니다. 설정에서 다시 켤 수 있습니다.")
 
     def delete_recent(self, path) -> bool:
         """The recent strip's 🗑: the saved capture goes to the Trash (it can come back from there) and

@@ -437,16 +437,38 @@ class OverlayWindow(QWidget):
         sb.raise_()
 
     # --- mouse -----------------------------------------------------------------
-    def show_recent(self, paths) -> None:
+    def _recent_strip(self):
         from .recent_strip import RecentStrip
         if self.recent is None:
             self.recent = RecentStrip(self, sync=self.c.sync, thumb_source=getattr(self.c, "thumb_for", None))
             self.recent.open_path.connect(self.c.open_image_file)
             self.recent.delete_path.connect(self._delete_recent)
-        self.recent.set_paths(paths)
+            self.recent.enable_auto_save.connect(self._recent_enable_auto_save)
+            self.recent.stop_showing.connect(self._recent_stop_showing)
+        return self.recent
+
+    def show_recent(self, paths) -> None:
+        strip = self._recent_strip()
+        strip.set_paths(paths)
+        self._raise_recent()
+
+    def show_recent_hint(self) -> None:
+        """Nothing saved and auto-save off: the strip says why, with a button to turn it on."""
+        self._recent_strip().show_hint()
+        self._raise_recent()
+
+    def _raise_recent(self) -> None:
         self.recent.place(self.mapFromGlobal(QCursor.pos()))
         self.recent.show()
         self.recent.raise_()
+
+    def _recent_enable_auto_save(self) -> None:
+        self.c.enable_auto_save()
+        self.hide_recent()
+
+    def _recent_stop_showing(self) -> None:
+        self.c.stop_recent_strip()
+        self.hide_recent()
 
     def _delete_recent(self, path: str) -> None:
         if self.c.delete_recent(path):
