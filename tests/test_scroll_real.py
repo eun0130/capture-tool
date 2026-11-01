@@ -77,19 +77,21 @@ HTML = """<!doctype html><html><head><meta charset="utf-8"><title>SCROLLTEST-%s<
 COLORS = ["#%02x%02x%02x" % (40 + (i * 53) % 200, 60 + (i * 97) % 180, 80 + (i * 29) % 160) for i in range(30)]
 
 
-def _profile(kind: str) -> Path:
-    """A fresh Chrome profile folder for one test, under %TEMP% (Chrome makes it itself, with the
-    folder's normal permissions). Never under tmp_path: pytest creates those with mode 0o700, which
-    Python 3.12.4+ turns into an owner-only ACL on Windows - Chrome then refused the folder ("데이터
-    디렉터리를 읽고 쓸 수 없습니다"), WSCR_04 failed and WSCR_02 / 05 silently skipped."""
+def _scratch(kind: str) -> Path:
+    """A fresh folder for what the browser opens - its profile and the test page / PDF - under %TEMP%,
+    with that folder's normal permissions. Never tmp_path: pytest makes those with mode 0o700, which
+    Python 3.12.4+ turns into an owner-only ACL on Windows, and Chrome can use nothing inside - the
+    profile ("데이터 디렉터리를 읽고 쓸 수 없습니다") nor the page (ERR_FILE_NOT_FOUND). WSCR_04
+    failed and WSCR_02 / 05 silently skipped (BUG-136)."""
     import tempfile
-    return Path(tempfile.gettempdir()) / f"capturetool-{kind}-{os.getpid()}-{time.time_ns()}"
+    p = Path(tempfile.gettempdir()) / f"capturetool-{kind}-{os.getpid()}-{time.time_ns()}"
+    os.makedirs(p)                                         # default mode: no owner-only ACL
+    return p
 
 
-def _drop_profiles(base: Path) -> None:
+def _drop(work: Path) -> None:
     import shutil
-    for p in base.parent.glob(base.name + "*"):
-        shutil.rmtree(p, ignore_errors=True)
+    shutil.rmtree(work, ignore_errors=True)
 
 
 def _browser():
@@ -122,9 +124,10 @@ def test_WSCR_02_real_browser_whole_page_from_the_top(tmp_path):
     screen.set_dpi_awareness()
     tag = str(os.getpid())
     body = "".join(f'<div class="s" style="background:{c}">SECTION {i}</div>' for i, c in enumerate(COLORS))
-    html = tmp_path / "page.html"
+    work = _scratch("page")
+    html = work / "page.html"
     html.write_text(HTML % (tag, body), encoding="utf-8")
-    profile = _profile("page")                                       # never shared with a closing browser
+    profile = work / f"profile-{time.time_ns()}"                     # never shared with a closing browser
     proc = subprocess.Popen([exe, f"--user-data-dir={profile}", "--no-first-run",
                              "--no-default-browser-check", "--disable-sync", "--new-window", "--window-position=80,40",
                              "--window-size=900,760", html.as_uri()])
@@ -190,7 +193,7 @@ def test_WSCR_02_real_browser_whole_page_from_the_top(tmp_path):
                         "Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -and "
                         f"$_.CommandLine.Contains('{marker}') }} | ForEach-Object {{ Stop-Process -Id $_.ProcessId -Force "
                         "-ErrorAction SilentlyContinue }"], capture_output=True)
-        _drop_profiles(profile)
+        _drop(work)
 
 
 PROTECT = r'''
@@ -280,11 +283,11 @@ def test_WSCR_04_page_view_found_even_while_the_browser_is_covered(tmp_path):
         pytest.skip("no Chromium browser")
     from tests.conftest import run_on_desktop
     ok = lambda o: "same True" in o
-    profile = _profile("cover")                                     # the script adds "-<time>"
+    work = _scratch("cover")                                        # the script adds "-<time>" to the profile
     try:
-        out = run_on_desktop(COVER % (ROOT, tmp_path / "c.html", exe, profile), ok)
+        out = run_on_desktop(COVER % (ROOT, work / "c.html", exe, work / "profile"), ok)
     finally:
-        _drop_profiles(profile)
+        _drop(work)
     if "NO_BROWSER_WINDOW" in out:
         pytest.skip("the browser did not open a window (desktop / network busy)")
     assert ok(out), out
@@ -302,9 +305,10 @@ def test_WSCR_05_real_pdf_viewer_with_images_rules_thumbnails_and_a_blank_page(t
     if exe is None:
         pytest.skip("no Chromium browser")
     screen.set_dpi_awareness()
-    pdf = tmp_path / f"report{os.getpid()}.pdf"
+    work = _scratch("pdf")
+    pdf = work / f"report{os.getpid()}.pdf"
     colors = make_pdf(pdf)
-    profile = _profile("pdf")
+    profile = work / "profile"
     proc = subprocess.Popen([exe, f"--user-data-dir={profile}", "--no-first-run", "--no-default-browser-check",
                              "--disable-sync", "--new-window", "--window-position=80,40", "--window-size=1000,800",
                              pdf.as_uri()])
@@ -354,4 +358,4 @@ def test_WSCR_05_real_pdf_viewer_with_images_rules_thumbnails_and_a_blank_page(t
                         "Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -and "
                         f"$_.CommandLine.Contains('{marker}') }} | ForEach-Object {{ Stop-Process -Id $_.ProcessId -Force "
                         "-ErrorAction SilentlyContinue }"], capture_output=True)
-        _drop_profiles(profile)
+        _drop(work)
