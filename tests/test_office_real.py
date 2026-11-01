@@ -184,3 +184,14 @@ def test_OFFICE_14_styled_text_into_powerpoint_is_one_filled_text_box(tmp_path):
     words = eval(out.split("WORDS ")[1].splitlines()[0])
     assert _near(words["from"], (249, 38, 114)) and _near(words["pathlib"], (248, 248, 242)), words
     assert _near(words["outlines"], (230, 219, 116)), words
+
+
+@excel
+def test_OFFICE_15_a_table_sent_to_excel_can_be_undone():
+    """User (v0.10.0): Ctrl+Z did nothing after 표 → 엑셀 (a COM paste clears Excel's undo list).
+    Pasted with Ctrl+V in Excel instead, Undo brings the old cell back; the COM paste is the control."""
+    out = flow("excel_undo", ok=lambda o: "UNDO_KEYS ('새 값', 'old')" in o)
+    assert "HOW keys" in out, out                                    # Excel came to the front
+    assert "UNDO_KEYS ('새 값', 'old')" in out, out                  # pasted, then undone back to the old cell
+    assert "UNDO_COM ('새 값', '새 값')" in out or "UNDO_ERROR com" in out, out   # the old way: no undo
+

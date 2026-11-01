@@ -31,6 +31,19 @@ class FakeExcelApp:
         self.ActiveCell = FakeCell()
         self.Visible = False
         self.ActiveWindow = type("W", (), {"Activate": lambda s: None})()
+        self.Hwnd = 4242
+        self.Ready = True                               # False while a cell is being edited
+
+
+def as_user(front_ok=True):
+    """The person-style paste with stand-ins for 'bring Excel to the front' and 'press Ctrl+V'."""
+    from capture_tool.platform import excel
+    done = []
+
+    def paste(app, sheet):
+        return excel._paste_as_user(app, sheet, front=lambda hwnd: (done.append(("front", hwnd)), front_ok)[1],
+                                    press=lambda: (done.append("ctrl+v"), app.calls.append("ctrl+v")))
+    return paste, done
 
 
 pytestmark = pytest.mark.windows_contract
@@ -38,7 +51,9 @@ pytestmark = pytest.mark.windows_contract
 
 def test_EXCEL_01_paste_at_the_selected_cell():
     app = FakeExcelApp()
-    assert paste_into_open_excel(app_factory=lambda: app) == "Sheet1!B3" and app.calls == ["paste"]
+    paste, _ = as_user()
+    assert paste_into_open_excel(app_factory=lambda: app, paste_as_user=paste) == "Sheet1!B3"
+    assert app.calls == ["ctrl+v"]                                                # like the person: undo kept
 
 
 def test_EXCEL_02_no_workbook_means_not_open():
@@ -83,8 +98,9 @@ def test_EXCEL_06_closed_excel_is_started_and_gets_the_table():
 
     def not_running():
         raise excel.ExcelNotOpen("x")
-    where = excel.paste_into_excel(running=not_running, start=start, installed=lambda: True)
-    assert started and app.calls == ["paste"] and where == "Sheet1!B3"
+    paste, _ = as_user()
+    where = excel.paste_into_excel(running=not_running, start=start, installed=lambda: True, paste_as_user=paste)
+    assert started and app.calls == ["ctrl+v"] and where == "Sheet1!B3"
 
 
 def test_EXCEL_07_no_excel_installed_stays_on_the_clipboard(make):
@@ -100,3 +116,40 @@ def test_EXCEL_07_no_excel_installed_stays_on_the_clipboard(make):
                              "busy": False})()
     c._deliver_table([["a", "b"], ["c", "d"]], None, None, [], target="excel")
     assert "Ctrl+V" in c.messages[-1] and "설치" in c.messages[-1]
+
+
+def test_EXCEL_08_the_table_is_pasted_with_ctrl_v_so_excel_can_undo_it():
+    """User (v0.10.0): after 표 → 엑셀, Ctrl+Z did nothing in Excel. A change made through COM
+    (sheet.Paste) clears Excel's whole undo list; Ctrl+V pressed in Excel is a paste Excel can undo."""
+    from capture_tool.platform import excel
+    app = FakeExcelApp()
+    paste, done = as_user()
+    assert excel.paste_into_excel(running=lambda: app, paste_as_user=paste) == "Sheet1!B3"
+    assert done == [("front", 4242), "ctrl+v"] and "paste" not in app.calls         # Excel in front first, then Ctrl+V
+
+
+def test_EXCEL_09_excel_that_will_not_come_to_the_front_still_gets_the_table():
+    from capture_tool.platform import excel
+    app = FakeExcelApp()
+    paste, done = as_user(front_ok=False)
+    assert excel.paste_into_excel(running=lambda: app, paste_as_user=paste) == "Sheet1!B3"
+    assert "ctrl+v" not in done and app.calls == ["paste"]       # never types into some other window
+
+
+def test_EXCEL_10_a_cell_being_edited_is_never_typed_into():
+    from capture_tool.platform import excel
+    app = FakeExcelApp()
+    app.Ready = False                                             # the person is typing in a cell
+    paste, done = as_user()
+    with pytest.raises(excel.ExcelUnavailable, match="편집"):
+        excel.paste_into_excel(running=lambda: app, paste_as_user=paste)
+    assert done == [] and app.calls == []
+
+
+def test_EXCEL_11_the_real_sender_pastes_like_the_person(monkeypatch):
+    from capture_tool.platform import excel
+    used = []
+    monkeypatch.setattr(excel, "_paste_as_user", lambda app, sheet: used.append(app))
+    app = FakeExcelApp()
+    excel.paste_into_excel(running=lambda: app)                   # no paste_as_user given: the default
+    assert used == [app] and app.calls == []

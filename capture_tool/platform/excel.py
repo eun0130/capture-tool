@@ -4,6 +4,7 @@ Without Excel installed the table simply waits on the clipboard. Time-limited, o
 from __future__ import annotations
 
 import threading
+import time
 from typing import Callable
 
 from .. import platform as pf
@@ -58,10 +59,62 @@ def _start_app():
     return app
 
 
+def _bring_excel_front(hwnd: int) -> bool:
+    from .powerpoint import bring_to_front               # the same tested switch PowerPoint and KakaoTalk use
+    if not bring_to_front(hwnd):
+        return False
+    import ctypes
+    time.sleep(0.15)                                     # let Excel take the keyboard
+    return int(ctypes.WinDLL("user32").GetForegroundWindow() or 0) == hwnd
+
+
+def _press_ctrl_v() -> None:
+    import ctypes
+    u32 = ctypes.WinDLL("user32")
+    VK_CONTROL, V, UP = 0x11, 0x56, 0x0002
+    u32.keybd_event(VK_CONTROL, 0, 0, 0)
+    u32.keybd_event(V, 0, 0, 0)
+    u32.keybd_event(V, 0, UP, 0)
+    u32.keybd_event(VK_CONTROL, 0, UP, 0)
+
+
+def _wait_ready(app, limit: float = 5.0) -> None:
+    """Until Excel has taken the paste (Ready again) - a busy Excel refuses COM calls meanwhile."""
+    end = time.time() + limit
+    while time.time() < end:
+        try:
+            if app.Ready:
+                return
+        except Exception:  # noqa: BLE001 - "call was rejected by callee" while it pastes
+            pass
+        time.sleep(0.05)
+
+
+def _paste_as_user(app, sheet, front: Callable | None = None, press: Callable | None = None) -> str:
+    """Paste like the person: Excel in front, then Ctrl+V. Excel can undo that paste (Ctrl+Z brings the
+    cells back) - a change made through COM (sheet.Paste) clears Excel's whole undo list instead.
+    When Excel will not come to the front, the COM paste still delivers the table (no keys are ever
+    pressed in another window). Returns "keys" or "com"."""
+    if not app.Ready:
+        raise ExcelUnavailable("Excel에서 셀을 편집 중입니다. Enter 나 Esc 로 편집을 끝낸 뒤 다시 해 보세요.")
+    try:
+        app.Visible = True
+    except Exception:  # noqa: BLE001
+        pass
+    if (front or _bring_excel_front)(int(app.Hwnd)):
+        (press or _press_ctrl_v)()
+        _wait_ready(app)
+        return "keys"
+    sheet.Paste()
+    return "com"
+
+
 def paste_into_excel(running: Callable | None = None, start: Callable | None = None,
-                     installed: Callable | None = None, timeout: float = DEFAULT_TIMEOUT) -> str:
+                     installed: Callable | None = None, timeout: float = DEFAULT_TIMEOUT,
+                     paste_as_user: Callable | None = None) -> str:
     """-> the cell it went to (e.g. "Sheet1!B3"). running() gives the open Excel or raises
-    ExcelNotOpen; start() opens Excel with a new workbook; installed() says whether it exists."""
+    ExcelNotOpen; start() opens Excel with a new workbook; installed() says whether it exists.
+    The paste itself is `_paste_as_user` (Ctrl+V in Excel, so Ctrl+Z works); tests give a stand-in."""
     real = running is None
     if real and pf.is_mac():                    # no Excel COM on the Mac: refuse before any worker thread starts
         raise ExcelMissing("Excel 붙여넣기는 Windows에서만 됩니다. 맥에서는 Cmd+V 로 붙여넣으세요.")
@@ -86,7 +139,7 @@ def paste_into_excel(running: Callable | None = None, start: Callable | None = N
             sheet = app.ActiveSheet
             cell = app.ActiveCell
             where = f"{sheet.Name}!{_address(cell)}"
-            sheet.Paste()                                   # at the selected cell, like Ctrl+V
+            (paste_as_user or _paste_as_user)(app, sheet)   # at the selected cell, with Ctrl+V
             try:
                 app.Visible = True
                 app.ActiveWindow.Activate()
@@ -114,7 +167,8 @@ def paste_into_excel(running: Callable | None = None, start: Callable | None = N
     return box.get("where", "")
 
 
-def paste_into_open_excel(app_factory: Callable | None = None, timeout: float = DEFAULT_TIMEOUT) -> str:
+def paste_into_open_excel(app_factory: Callable | None = None, timeout: float = DEFAULT_TIMEOUT,
+                          paste_as_user: Callable | None = None) -> str:
     """Only into an Excel that is already open (no starting)."""
     def never_start():
         raise ExcelNotOpen("Excel이 열려 있지 않습니다.")
@@ -125,7 +179,8 @@ def paste_into_open_excel(app_factory: Callable | None = None, timeout: float = 
             raise ExcelNotOpen("Excel에 열린 통합 문서가 없습니다.")
         return app
     try:
-        return paste_into_excel(running=check, start=never_start, installed=lambda: True, timeout=timeout)
+        return paste_into_excel(running=check, start=never_start, installed=lambda: True, timeout=timeout,
+                                paste_as_user=paste_as_user)
     except ExcelUnavailable as e:
         if "열려 있지 않" in str(e) or "통합 문서가 없" in str(e):
             raise ExcelNotOpen(str(e)) from e

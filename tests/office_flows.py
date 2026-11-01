@@ -550,6 +550,48 @@ def styled_ppt(src_png: str, out_png: str = "") -> None:
 _OWN: list[int] = []        # process ids of the Excel instances this flow started
 
 
+def excel_undo() -> None:
+    """User (v0.10.0): after 표 → 엑셀, Ctrl+Z did nothing. Our paste (Excel in front + Ctrl+V) must be
+    undoable - Application.Undo brings the old cells back. The old COM paste (ws.Paste) is the control:
+    Excel clears its undo list after it."""
+    import time
+    import pythoncom
+    from capture_tool.core.clipboard_payload import text_payload
+    from capture_tool.platform import excel, win_clipboard
+    grid = [["새 값", "1"], ["둘째", "2"]]
+    pythoncom.CoInitialize()
+    xl = _own_excel()
+    xl.Visible = True
+    wb = xl.Workbooks.Add()
+    ws = wb.Worksheets(1)
+    out = {}
+    try:
+        for how in ("keys", "com"):
+            ws.Range("A1").Value = "old"
+            ws.Range("A1").Select()
+            win_clipboard.set_formats(text_payload("", table=grid), retries=10, delay=0.05)
+            if how == "keys":
+                out["HOW"] = excel._paste_as_user(xl, ws)
+            else:
+                ws.Paste()
+            time.sleep(0.5)
+            pasted = ws.Range("A1").Value
+            try:
+                xl.Undo()
+            except Exception as e:  # noqa: BLE001 - "Undo method failed": nothing to undo
+                print("UNDO_ERROR", how, type(e).__name__)
+            time.sleep(0.3)
+            out[how] = (pasted, ws.Range("A1").Value)
+    finally:
+        wb.Saved = True
+        wb.Close(False)
+        xl.Quit()
+        win_clipboard.set_formats({"CF_UNICODETEXT": ""}, retries=10, delay=0.05)
+    print("HOW", out.get("HOW"))
+    print("UNDO_KEYS", out.get("keys"))
+    print("UNDO_COM", out.get("com"))
+
+
 def _own_excel():
     """A separate Excel of our own, its process id remembered so _reap can make sure it is gone."""
     import ctypes
