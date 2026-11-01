@@ -77,6 +77,21 @@ HTML = """<!doctype html><html><head><meta charset="utf-8"><title>SCROLLTEST-%s<
 COLORS = ["#%02x%02x%02x" % (40 + (i * 53) % 200, 60 + (i * 97) % 180, 80 + (i * 29) % 160) for i in range(30)]
 
 
+def _profile(kind: str) -> Path:
+    """A fresh Chrome profile folder for one test, under %TEMP% (Chrome makes it itself, with the
+    folder's normal permissions). Never under tmp_path: pytest creates those with mode 0o700, which
+    Python 3.12.4+ turns into an owner-only ACL on Windows - Chrome then refused the folder ("데이터
+    디렉터리를 읽고 쓸 수 없습니다"), WSCR_04 failed and WSCR_02 / 05 silently skipped."""
+    import tempfile
+    return Path(tempfile.gettempdir()) / f"capturetool-{kind}-{os.getpid()}-{time.time_ns()}"
+
+
+def _drop_profiles(base: Path) -> None:
+    import shutil
+    for p in base.parent.glob(base.name + "*"):
+        shutil.rmtree(p, ignore_errors=True)
+
+
 def _browser():
     for p in [r"C:\Program Files\Google\Chrome\Application\chrome.exe",   # fresh Chrome profile: no dialogs
               r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
@@ -109,7 +124,7 @@ def test_WSCR_02_real_browser_whole_page_from_the_top(tmp_path):
     body = "".join(f'<div class="s" style="background:{c}">SECTION {i}</div>' for i, c in enumerate(COLORS))
     html = tmp_path / "page.html"
     html.write_text(HTML % (tag, body), encoding="utf-8")
-    profile = tmp_path / f"profile-{os.getpid()}-{time.time_ns()}"   # never shared with a closing browser
+    profile = _profile("page")                                       # never shared with a closing browser
     proc = subprocess.Popen([exe, f"--user-data-dir={profile}", "--no-first-run",
                              "--no-default-browser-check", "--disable-sync", "--new-window", "--window-position=80,40",
                              "--window-size=900,760", html.as_uri()])
@@ -175,6 +190,7 @@ def test_WSCR_02_real_browser_whole_page_from_the_top(tmp_path):
                         "Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -and "
                         f"$_.CommandLine.Contains('{marker}') }} | ForEach-Object {{ Stop-Process -Id $_.ProcessId -Force "
                         "-ErrorAction SilentlyContinue }"], capture_output=True)
+        _drop_profiles(profile)
 
 
 PROTECT = r'''
@@ -240,6 +256,9 @@ try:
         if seen:
             break
         time.sleep(0.2)
+    if win is None:
+        print("NO_BROWSER_WINDOW")
+        sys.exit(0)
     cover = QWidget(None, Qt.WindowStaysOnTopHint | Qt.FramelessWindowHint)
     cover.setGeometry(app.primaryScreen().geometry())
     cover.show()
@@ -261,7 +280,13 @@ def test_WSCR_04_page_view_found_even_while_the_browser_is_covered(tmp_path):
         pytest.skip("no Chromium browser")
     from tests.conftest import run_on_desktop
     ok = lambda o: "same True" in o
-    out = run_on_desktop(COVER % (ROOT, tmp_path / "c.html", exe, tmp_path / "profile"), ok)
+    profile = _profile("cover")                                     # the script adds "-<time>"
+    try:
+        out = run_on_desktop(COVER % (ROOT, tmp_path / "c.html", exe, profile), ok)
+    finally:
+        _drop_profiles(profile)
+    if "NO_BROWSER_WINDOW" in out:
+        pytest.skip("the browser did not open a window (desktop / network busy)")
     assert ok(out), out
 
 
@@ -279,7 +304,7 @@ def test_WSCR_05_real_pdf_viewer_with_images_rules_thumbnails_and_a_blank_page(t
     screen.set_dpi_awareness()
     pdf = tmp_path / f"report{os.getpid()}.pdf"
     colors = make_pdf(pdf)
-    profile = tmp_path / f"profile-{time.time_ns()}"
+    profile = _profile("pdf")
     proc = subprocess.Popen([exe, f"--user-data-dir={profile}", "--no-first-run", "--no-default-browser-check",
                              "--disable-sync", "--new-window", "--window-position=80,40", "--window-size=1000,800",
                              pdf.as_uri()])
@@ -329,3 +354,4 @@ def test_WSCR_05_real_pdf_viewer_with_images_rules_thumbnails_and_a_blank_page(t
                         "Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -and "
                         f"$_.CommandLine.Contains('{marker}') }} | ForEach-Object {{ Stop-Process -Id $_.ProcessId -Force "
                         "-ErrorAction SilentlyContinue }"], capture_output=True)
+        _drop_profiles(profile)

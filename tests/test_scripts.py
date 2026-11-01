@@ -18,3 +18,13 @@ def test_PS1_01_powershell_scripts_with_korean_start_with_a_utf8_bom():
         if any(b > 0x7F for b in data) and not data.startswith(b"\xef\xbb\xbf"):
             bad.append(name)
     assert not bad, f"save these as UTF-8 with BOM: {bad}"
+
+
+def test_PS1_02_browser_tests_never_give_chrome_a_profile_under_tmp_path():
+    """pytest makes tmp_path with mode 0o700 = an owner-only ACL on Windows (Python 3.12.4+); Chrome
+    refused such a profile folder, so the real browser tests failed (WSCR_04) or skipped (WSCR_02/05)."""
+    import re
+    for name in ("tests/test_scroll_real.py",):
+        text = (ROOT / name).read_text(encoding="utf-8")
+        assert not re.search(r"tmp_path\s*/\s*f?[\"']profile", text), name
+        assert "_drop_profiles(" in text
