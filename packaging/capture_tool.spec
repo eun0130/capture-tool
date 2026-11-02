@@ -34,6 +34,11 @@ MAC_EXCLUDES = ["win32com", "pythoncom", "pywintypes", "win32api", "win32gui", "
                 "capture_tool.platform.kakao", "capture_tool.platform.lens", "capture_tool.platform.excel",
                 "capture_tool.platform.word", "capture_tool.platform.security_software"]
 WIN_HIDDEN = ["win32com.client", "pythoncom", "pywintypes"]
+# platform.backend() imports these by name (importlib), so PyInstaller cannot find them itself - without
+# them the installed v0.10.0 stopped at start: "No module named capture_tool.platform.win_hotkey"
+WIN_BACKEND = ["capture_tool.platform.screen", "capture_tool.platform.win_clipboard", "capture_tool.platform.win_hotkey",
+               "capture_tool.platform.windows", "capture_tool.platform.scroll", "capture_tool.platform.startup",
+               "capture_tool.platform.secret", "capture_tool.platform.shell"]
 MAC_HIDDEN = ["AppKit", "Foundation", "Quartz", "ApplicationServices", "objc"]
 # platform.backend() imports these by name (importlib), so PyInstaller cannot find them itself
 MAC_BACKEND = ["capture_tool.platform.mac.clipboard", "capture_tool.platform.mac.hotkey", "capture_tool.platform.mac.permissions", "capture_tool.platform.mac.screen", "capture_tool.platform.mac.scroll", "capture_tool.platform.mac.secret", "capture_tool.platform.mac.shell", "capture_tool.platform.mac.startup", "capture_tool.platform.mac.windows"]
@@ -55,7 +60,7 @@ a = Analysis(
     binaries=binaries,
     datas=datas,
     hiddenimports=["rapidocr", "onnxruntime", "PySide6.QtSvg", "PySide6.QtNetwork",
-                   *(MAC_HIDDEN + MAC_BACKEND if MAC else WIN_HIDDEN),
+                   *(MAC_HIDDEN + MAC_BACKEND if MAC else WIN_HIDDEN + WIN_BACKEND),
                    "ctranslate2", "sentencepiece", "onnxruntime_genai", "sacremoses", "subword_nmt.apply_bpe"],
     excludes=excludes,
     noarchive=False,

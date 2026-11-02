@@ -24,6 +24,8 @@ else
     codesign --force --deep -s - dist/CaptureTool.app        # ad-hoc: no developer account
 fi
 codesign -v dist/CaptureTool.app
+# the built app must load every OS module it imports by name (v0.10.0 Windows stopped at start without them)
+dist/CaptureTool.app/Contents/MacOS/CaptureTool --check-backend
 mkdir -p dist/dmg installer/Output
 cp -R dist/CaptureTool.app dist/dmg/
 ln -s /Applications dist/dmg/Applications

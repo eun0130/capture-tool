@@ -77,3 +77,33 @@ def test_PB_06_app_layer_never_names_an_os_module():
         if "os.startfile" in src or '"explorer"' in src:
             bad.append(f"{f.name}: os.startfile/explorer")
     assert bad == [], bad
+
+
+def test_PB_07_every_module_the_backend_loads_by_name_is_bundled_on_its_os():
+    """v0.10.0 (Windows): the installed app stopped at start - "No module named
+    capture_tool.platform.win_hotkey". backend() imports its modules by name (importlib), which
+    PyInstaller cannot see; each OS's list in the spec must name every one of them (the Mac had the
+    same failure, MAC-13)."""
+    spec = (ROOT / "packaging" / "capture_tool.spec").read_text(encoding="utf-8")
+    hidden_expr = spec.split("hiddenimports=")[1].split(")")[0]
+    for listname, backend in (("WIN_BACKEND", pf.WINDOWS), ("MAC_BACKEND", pf.MAC)):
+        listed = spec.split(f"{listname} = ")[1].split("]")[0]
+        for mod in sorted(set(backend._names.values())):
+            full = f"{backend._package}.{mod}"
+            assert f'"{full}"' in listed, f"{full} missing from {listname} in packaging/capture_tool.spec"
+    assert "WIN_HIDDEN + WIN_BACKEND" in hidden_expr and "MAC_HIDDEN + MAC_BACKEND" in hidden_expr
+
+
+def test_PB_08_check_backend_loads_every_os_module_and_reports_it(capsys):
+    """The build scripts run the built app with --check-backend before packaging: a module the bundle
+    lacks then stops the build instead of the person's installed app (v0.10.0, win_hotkey)."""
+    from capture_tool.app import main
+    assert main.main(["CaptureTool", "--check-backend"]) == 0
+    assert "BACKEND OK" in capsys.readouterr().out
+    broken = pf.Backend("capture_tool.platform", {n: "no_such_module" for n in pf._NAMES})
+    before = pf.use(broken)
+    try:
+        assert main.check_backend() == 1
+        assert "BACKEND MISSING" in capsys.readouterr().out
+    finally:
+        pf.use(before)

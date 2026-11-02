@@ -21,6 +21,11 @@ try {
 } finally {
     if (Test-Path $marker) { [IO.File]::Delete($marker) }   # never left in the source tree
 }
+# the built app must load every OS module it imports by name - v0.10.0 shipped without them and stopped at
+# start ("No module named capture_tool.platform.win_hotkey"). A hang (an error box) also fails the build.
+$check = Start-Process -FilePath "dist\CaptureTool\CaptureTool.exe" -ArgumentList "--check-backend" -PassThru -WindowStyle Hidden
+if (-not $check.WaitForExit(60000)) { $check.Kill(); throw "the built app did not finish --check-backend (error box?)" }
+if ($check.ExitCode -ne 0) { throw "the built app misses modules: run dist\CaptureTool\CaptureTool.exe --check-backend" }
 
 $version = (& $py -c "import capture_tool; print(capture_tool.__version__)").Trim()
 $iscc = @("$env:LOCALAPPDATA\Programs\Inno Setup 6\ISCC.exe", "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe") |

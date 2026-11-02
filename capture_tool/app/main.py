@@ -651,8 +651,26 @@ def _selftest_recognition(tray: TrayApp) -> tuple[bool, bool]:
     return ok_text, kinds == ["arrow", "rect", "rect"]
 
 
+def check_backend() -> int:
+    """`--check-backend`: load every OS module platform.backend() imports by name and exit - the build
+    scripts run the built app this way, so a module missing from the bundle stops the build instead of
+    the installed app (v0.10.0: "No module named capture_tool.platform.win_hotkey"). No window needed."""
+    from .. import platform as pf
+    b = pf.backend()
+    missing = []
+    for n in pf._NAMES:
+        try:
+            getattr(b, n)
+        except Exception as e:  # noqa: BLE001 - reported, the exit code says it
+            missing.append(f"{n}: {e}")
+    print("BACKEND OK" if not missing else "BACKEND MISSING " + "; ".join(missing), flush=True)
+    return 1 if missing else 0
+
+
 def main(argv=None) -> int:
     argv = list(sys.argv if argv is None else argv)
+    if "--check-backend" in argv:
+        return check_backend()
     setup_logging()
     app = QApplication(argv)
     app.setQuitOnLastWindowClosed(False)

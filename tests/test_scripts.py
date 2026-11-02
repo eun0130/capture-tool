@@ -28,3 +28,14 @@ def test_PS1_02_browser_tests_never_give_chrome_a_profile_under_tmp_path():
     text = (ROOT / "tests" / "test_scroll_real.py").read_text(encoding="utf-8")
     assert not re.search(r"tmp_path\s*/\s*f?[\"'](profile|page\.html|c\.html|report)", text)
     assert text.count("_scratch(") >= 4 and "os.makedirs(p)" in text and "_drop(work)" in text
+
+
+def test_PS1_03_both_build_scripts_start_the_built_app_once_before_packaging():
+    """v0.10.0 (Windows) was released without the OS modules the app loads by name and stopped at start;
+    nothing had run the built app. Both build scripts now run it with --check-backend."""
+    ps1 = (ROOT / "build.ps1").read_text(encoding="utf-8-sig")
+    sh = (ROOT / "build.sh").read_text(encoding="utf-8")
+    assert '"dist\\CaptureTool\\CaptureTool.exe" -ArgumentList "--check-backend"' in ps1 and "ExitCode -ne 0" in ps1
+    assert ps1.index("--check-backend") < ps1.index("ISCC.exe")              # before the installer is made
+    assert "dist/CaptureTool.app/Contents/MacOS/CaptureTool --check-backend" in sh
+    assert sh.index("--check-backend") < sh.index("hdiutil create")
