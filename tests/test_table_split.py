@@ -113,3 +113,12 @@ def test_SPL_15_garbled_separator_rows_are_dropped_for_every_rule():
     assert rows == [["품목", "수량"], ["사과", "3"]]
     # a lone "-" cell is data, not a rule line
     assert split_table(["a | -", "b | 2"], "pipe", title_first=False)[1] == [["a", "-"], ["b", "2"]]
+
+
+def test_SPL_09_pipe_rows_from_a_picture_are_fitted_like_the_ai_text():
+    # the same | rules as an AI answer: too few cells counted back from the last bar, a wrapped row joined
+    lines = ["| 구분 | 항목 | 값 |", "| 보안 | 접근 통제 | 상 |", "| 계정 관리 | 중 |",
+             "| 기타 | 아주 긴 항목이 줄을", "넘어갑니다 | 하 |"]
+    title, rows = split_table(lines, "pipe")
+    assert rows == [["구분", "항목", "값"], ["보안", "접근 통제", "상"], ["", "계정 관리", "중"],
+                    ["기타", "아주 긴 항목이 줄을 넘어갑니다", "하"]]

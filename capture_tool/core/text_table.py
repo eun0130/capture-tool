@@ -62,6 +62,88 @@ def _pipe_cells(line: str) -> list[str] | None:
     return [_clean(c) for c in cells] if len(cells) >= 2 else None
 
 
+def _join_wrapped(lines: list[str]) -> list[str]:
+    """A | row cut by the screen width goes on in the next line(s) that do not start with a bar:
+    "| 1 | a long text that" + "goes on | note |" is one row. A blank line always ends a row."""
+    out: list[str] = []
+    open_row = False
+    for line in lines:
+        s = normalize_pipes(line).strip()
+        if open_row and s and not s.startswith("|"):
+            out[-1] = out[-1].rstrip() + " " + line.strip()
+            open_row = not s.endswith("|")
+            continue
+        out.append(line)
+        open_row = s.startswith("|") and not s.endswith("|") and not _SEPARATOR.fullmatch(s)
+    return out
+
+
+def _common_width(rows: list[tuple[list[str], bool, bool]]) -> int:
+    """The usual cell count of rows that have a bar at both ends (all rows when none has)."""
+    closed = [len(c) for c, left, right in rows if left and right] or [len(c) for c, _, _ in rows]
+    return max(set(closed), key=lambda n: (closed.count(n), n))
+
+
+def _long_column(rows: list[tuple[list[str], bool, bool]], width: int) -> int:
+    """The column with the longest text on average (description-like): where a stray bar most
+    likely sits."""
+    fit = [c for c, _, _ in rows if len(c) == width]
+    if not fit:
+        return width - 1
+    return max(range(width), key=lambda i: sum(len(r[i]) for r in fit) / len(fit))
+
+
+def _fit(cells: list[str], left: bool, right: bool, width: int, long_col: int) -> list[str]:
+    n = len(cells)
+    if n < width:                                     # counted back from the last bar when there is one
+        pad = [""] * (width - n)
+        return pad + cells if right else cells + pad
+    if n > width:                                     # a bar inside a cell: put that cell back together
+        k, extra = min(long_col, width - 1), n - width
+        return cells[:k] + ["|".join(cells[k:k + extra + 1])] + cells[k + extra + 1:]
+    return cells
+
+
+def pipe_grid(lines: list[str]) -> list[list[str]]:
+    """Rows of | text (an AI answer, or OCR of one) as a grid whose columns line up although some
+    rows have a bar too few or too many: the width is the |---| row's, or the usual one; a short row
+    is counted back from its last bar (the last cells stay in the last columns); a row with a bar
+    in its text has that cell put back together; a row wrapped onto the next line is joined."""
+    rows: list[tuple[list[str], bool, bool]] = []
+    sep_width = None
+    for line in _join_wrapped(lines):
+        n = normalize_pipes(line)
+        s = n.strip()
+        if not s:
+            continue
+        if (_SEPARATOR.fullmatch(n) and "-" in n) or ("|" in n and is_rule_line(n)):
+            if sep_width is None and _SEPARATOR.fullmatch(n) and "-" in n:
+                sep_width = len(_pipe_cells(n) or []) or None
+            continue
+        cells = _pipe_cells(n)
+        if cells is None:                             # no bar (or one cell): a one-cell row, as before
+            rows.append(([_clean(s.strip("|"))], True, False))
+            continue
+        rows.append((cells, s.startswith("|"), s.endswith("|") and not s.endswith("\\|")))
+    if not rows:
+        return []
+    width = sep_width or _common_width(rows)
+    long_col = _long_column(rows, width)
+    return [_fit(c, left, right, width, long_col) for c, left, right in rows]
+
+
+def _pipe_blocks(lines: list[str]) -> list[list[list[str]]]:
+    """Runs of | lines (wrapped rows joined first), each fitted into one grid."""
+    groups, cur = [], []
+    for line in _join_wrapped(lines) + [""]:
+        if line.strip() and _pipe(line) is not None:
+            cur.append(line)
+        elif cur:
+            groups.append(cur)
+            cur = []
+    return [g for g in (pipe_grid(b) for b in groups) if g]
+
+
 def _blocks(lines: list[str], parse) -> list[list[list[str]]]:
     """Runs of consecutive lines that `parse` turns into cells (None ends a run)."""
     out, cur = [], []
@@ -116,7 +198,7 @@ def find_text_table(text: str) -> TextTable | None:
     found: list[tuple[list[list[str]], str]] = []
     for parse, kind, min_rows in [(_pipe, "grid", 2), (_tabs, "grid", 2), (_aligned, "grid", 3),
                                   (_pair, "pairs", MIN_PAIRS)]:
-        for block in _blocks(lines, parse):
+        for block in (_pipe_blocks(lines) if parse is _pipe else _blocks(lines, parse)):
             if len(block) < min_rows:
                 continue
             if kind == "grid" and parse is _aligned and len({len(r) for r in block}) != 1:

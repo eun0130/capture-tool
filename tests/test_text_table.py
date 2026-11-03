@@ -87,3 +87,67 @@ def test_TXT_10_ocr_garbled_separator_row_is_not_a_data_row():
 def test_TXT_11_bar_lookalikes_from_ocr_split_columns():
     t = find_text_table("|열 | 제목 |\n|1ㅣ 가\n|2│나\n")
     assert t.rows == [["열", "제목"], ["1", "가"], ["2", "나"]]
+
+
+# --- rows whose | count is off (user, v0.10.1: LLM tables often came out shifted) ------------------
+
+def test_TXT_12_a_row_with_too_few_cells_is_counted_back_from_its_last_bar():
+    t = find_text_table("| 구분 | 항목 | 값 |\n|---|---|---|\n| 보안 | 접근 통제 | 상 |\n| 계정 관리 | 중 |")
+    assert t.rows[2] == ["", "계정 관리", "중"]              # last cells stay in the last columns
+
+
+def test_TXT_13_a_bar_inside_a_cell_rejoins_the_long_text_column():
+    text = ("| 번호 | 제목 | 설명 |\n|---|---|---|\n"
+            "| 1 | 로그인 | 아이디와 비밀번호로 들어가는 기본 화면입니다 |\n"
+            "| 2 | 비교 | A|B 두 방식을 나란히 비교한 결과를 보여 줍니다 |\n"
+            "| 3 | 설정 | 알림과 저장 위치를 바꾸는 화면입니다 |")
+    t = find_text_table(text)
+    assert len(t.rows[0]) == 3
+    assert t.rows[2] == ["2", "비교", "A|B 두 방식을 나란히 비교한 결과를 보여 줍니다"]
+
+
+def test_TXT_14_a_row_wrapped_onto_the_next_line_is_one_row_again():
+    text = ("| 번호 | 설명 | 비고 |\n|---|---|---|\n"
+            "| 1 | 아주 긴 설명이 화면 폭을 넘어\n가서 다음 줄로 이어집니다 | 확인 |\n"
+            "| 2 | 짧은 설명 | 완료 |")
+    t = find_text_table(text)
+    assert t.rows == [["번호", "설명", "비고"],
+                      ["1", "아주 긴 설명이 화면 폭을 넘어 가서 다음 줄로 이어집니다", "확인"],
+                      ["2", "짧은 설명", "완료"]]
+
+
+def test_TXT_15_a_row_cut_off_at_the_end_fills_from_the_left():
+    t = find_text_table("| 번호 | 이름 | 상태 |\n|---|---|---|\n| 1 | 서버 | 정상 |\n| 2 | 백업")
+    assert t.rows[2] == ["2", "백업", ""]                      # no last bar to count from
+
+
+def test_TXT_16_the_separator_row_sets_the_width_not_a_stray_wide_row():
+    text = ("| 이름 | 부서 | 내선 |\n|---|---|---|\n| 김민수 | 정보보안팀 | 2041 |\n"
+            "| 이영희 | 인사|총무 | 2042 |\n| 박철수 | 재무팀 | 2043 |")
+    t = find_text_table(text)
+    assert all(len(r) == 3 for r in t.rows)
+    assert t.rows[2] == ["이영희", "인사|총무", "2042"]
+
+
+def test_TXT_17_messy_bar_tables_always_come_out_rectangular_and_keep_every_word():
+    import random
+    from capture_tool.core.text_table import pipe_grid
+    rnd = random.Random(7)
+    words = ["보안", "계정", "A", "1,250", "설명이 긴 칸", "x", "값"]
+    for _ in range(3000):
+        lines = []
+        for _ in range(rnd.randint(1, 7)):
+            cells = [rnd.choice(words) for _ in range(rnd.randint(1, 5))]
+            line = " | ".join(cells)
+            if rnd.random() < 0.8:
+                line = "| " + line
+            if rnd.random() < 0.8:
+                line += " |"
+            lines.append(line)
+        if rnd.random() < 0.3:
+            lines.insert(1, "|---|---|---|")
+        grid = pipe_grid(lines)
+        assert grid and len({len(r) for r in grid}) == 1
+        text_in = sorted(w for l in lines if "---" not in l for w in l.replace("|", " ").split())
+        text_out = sorted(w for r in grid for c in r for w in c.replace("|", " ").split())
+        assert text_in == text_out, (lines, grid)

@@ -6,7 +6,7 @@ from __future__ import annotations
 import re
 
 from .ocr import _cy, estimate_tilt, same_row
-from .text_table import find_text_table, is_rule_line, normalize_pipes
+from .text_table import find_text_table, is_rule_line, normalize_pipes, pipe_grid
 
 RULES = ["auto", "pipe", "pair", "spaces", "comma", "line", "custom:|"]
 MAX_ROWS = 200
@@ -71,7 +71,11 @@ def split_table(lines: list[str], rule: str = "auto", title_first: bool = True, 
     title = None
     if title_first and len(lines) > 1 and not _has_sep(lines[0], rule) and _has_sep(lines[1], rule):
         title, lines = lines[0].strip(), lines[1:]
-    rows = [[c for c in _cells(l, rule)][:MAX_COLS] for l in lines[:MAX_ROWS]]
+    rows = []
+    if rule == "pipe":                                  # the same | fitting as an AI answer
+        rows = [r[:MAX_COLS] for r in pipe_grid(lines[:MAX_ROWS * 2])][:MAX_ROWS]
+    if not rows:                                        # (nothing but "---" lines: one cell each, as before)
+        rows = [[c for c in _cells(l, rule)][:MAX_COLS] for l in lines[:MAX_ROWS]]
     if header:
         head = ["항목", "내용"] if rule == "pair" else [f"열 {i + 1}" for i in range(max(len(r) for r in rows))]
         rows = [head] + rows[:MAX_ROWS - 1]
