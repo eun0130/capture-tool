@@ -40,13 +40,14 @@ class FakePage:
     """Viewport of `vh` rows over `page`; wheel(notches) scrolls by px_per_notch (negative = down)."""
 
     def __init__(self, page, vh=500, px_per_notch=40, header=0, footer=0, scrollbar=0, start=0,
-                 grows_to=None, stuck=False):
+                 grows_to=None, stuck=False, busy=()):
         self.page, self.vh = page, vh
         self.px = px_per_notch
         self.header, self.footer, self.scrollbar = header, footer, scrollbar
         self.offset = start
         self.grows_to = grows_to      # lazy loading: the page gets longer once the end is reached
         self.stuck = stuck            # a window that ignores the wheel (e.g. admin window)
+        self.busy = set(busy)         # wheel calls (1 = the first) a busy page ignores (loading, BUG-139)
         self.wheels = []
         self.grabs = 0
 
@@ -56,7 +57,7 @@ class FakePage:
 
     def wheel(self, notches: int) -> None:
         self.wheels.append(notches)
-        if self.stuck:
+        if self.stuck or len(self.wheels) in self.busy:
             return
         if self.grows_to and self.offset >= self.max_offset and self.page.shape[0] < self.grows_to:
             extra = make_page(self.grows_to - self.page.shape[0], self.page.shape[1], seed=99)

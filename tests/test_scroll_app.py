@@ -300,3 +300,16 @@ def test_SAPP_20_browser_without_a_known_page_view_still_goes_from_the_top(make)
     ov.side_bar.trigger("scroll")
     assert any(n > 0 for n in fp.wheels)
     assert np.array_equal(clip_img(c), fp.expected())
+
+
+def test_SAPP_21_every_scroll_capture_logs_why_it_stopped(make, caplog):
+    """BUG-139: an early stop could not be told apart afterwards (the page end, a size limit, a lost
+    match). The log line names the reason, the steps and the size."""
+    import logging
+    fp = FakePage(make_page(1500), vh=400, start=200)
+    c = make(ScrollScreen(fp, wins=(NOTEPAD,), browsers=()))
+    ov = select_view(c)
+    with caplog.at_level(logging.INFO, logger="capture_tool"):
+        ov.side_bar.trigger("scroll")
+    line = next(r.getMessage() for r in caplog.records if "scroll capture finished" in r.getMessage())
+    assert "reason=end" in line and "steps=" in line and "1300" in line

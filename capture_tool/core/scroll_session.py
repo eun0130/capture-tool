@@ -24,6 +24,8 @@ STEP_FRACTION = 0.7        # scroll ~70% of the view per step: the rest overlaps
 TOP_TRIES = 60
 LATE_TRIES = 3             # x WAIT_LAZY: a page viewer may draw newly revealed pages late
 BLOCK_TRIES = 10           # x WAIT_LAZY: how long a blanked-out screen grab is waited out
+END_PROBES = 3             # wheel turns without movement before it is the end (2 cut busy pages short)
+BUSY_WAIT = 2              # x WAIT_LAZY before the last of them: a page busy loading ignores the wheel
 
 
 def looks_blocked(frame: np.ndarray) -> bool:
@@ -167,6 +169,9 @@ class ScrollCapture:
                 self.reason = "covered"
                 return
             before = self._f
+            if same >= END_PROBES - 1:                 # last look before "the end": a busy page gets a moment
+                for _ in range(BUSY_WAIT):
+                    yield WAIT_LAZY
             self.wheel(-notches)
             self.steps += 1
             # after one "didn't move", the last probe waits longer: pages that load more at the end
@@ -177,7 +182,7 @@ class ScrollCapture:
             r = self.stitcher.add(self._f, expected)
             if r.status == SAME:
                 same += 1
-                if same >= 2:
+                if same >= END_PROBES:
                     self.reason = "end" if self.stitcher.pieces else "noscroll"
                     return
                 continue

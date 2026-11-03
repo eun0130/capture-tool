@@ -262,4 +262,29 @@ def test_SCR_22_fewer_steps_for_the_same_page():
     fp = FakePage(make_page(6000), vh=500, px_per_notch=20)
     sc = cap(fp)
     drive(sc)
-    assert sc.reason == "end" and sc.steps <= 20                 # was 22: ~70% of the view per step
+    assert sc.reason == "end" and sc.steps <= 21                 # was 22: ~70% of the view per step
+    # (+1 since BUG-139: a third wheel turn confirms the end, so a busy page is not cut short)
+
+
+def test_SCR_23_a_page_busy_for_two_wheel_turns_mid_way_is_not_taken_for_the_end():
+    """User (v0.10.1): a long scroll capture sometimes stopped part way with no message. Two wheel turns
+    in a row without movement counted as the page end - a page busy loading ignores the wheel that long."""
+    fp = FakePage(make_page(4000), vh=500, px_per_notch=40, busy=(4, 5))
+    sc = cap(fp)
+    drive(sc)
+    assert sc.reason == "end" and sc.result().shape[0] == 4000                 # the whole page
+
+
+def test_SCR_24_the_real_end_is_still_found_and_quickly():
+    fp = FakePage(make_page(2000), vh=500)
+    sc = cap(fp)
+    waits = drive(sc)
+    assert sc.reason == "end" and sc.result().shape[0] == 2000
+    assert all(0 < w <= 500 for w in waits) and sum(waits) < 12000              # the end check stays bounded
+
+
+def test_SCR_25_a_window_that_never_scrolls_is_still_reported():
+    fp = FakePage(make_page(2000), vh=500, stuck=True)
+    sc = cap(fp)
+    drive(sc)
+    assert sc.reason == "noscroll"

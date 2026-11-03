@@ -765,6 +765,8 @@ class Controller(QObject):
     def _finish_scroll(self, sc, what, dpi, error, pos) -> None:
         img = sc.result()
         h, w = img.shape[:2]
+        log.info("scroll capture finished: %s reason=%s steps=%d size=%dx%d%s", what, sc.reason, sc.steps, w, h,
+                 f" error={error}" if error is not None else "")      # BUG-139: why it stopped, from the log
         payload = self._image_payload(img, dpi)
         if payload:
             self._set_clipboard(payload)
