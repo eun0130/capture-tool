@@ -199,6 +199,10 @@ class Controller(QObject):
         shell = pf.backend().shell                   # Explorer / Finder, the browser, the mail app
         self.open_url, self.reveal_file, self.open_folder = shell.open_url, shell.reveal, shell.open_path
         self.trash_file = _move_to_trash             # tests replace it: never the real Trash
+        # Esc while another app kept the keyboard (BUG-140): checked every 60 ms while a capture screen is up
+        self._esc_timer = QTimer(self)
+        self._esc_timer.setInterval(60)
+        self._esc_timer.timeout.connect(self._esc_watch)
         self.ask_resize = self._resize_dialog   # tests replace it
         self.ask_border = self._border_dialog   # tests replace it
         self.ask_transparent = self._transparent_dialog
@@ -305,6 +309,8 @@ class Controller(QObject):
         self.session.hotkey(virtual_bounds(mons))
         self.mode = mode
         self._open_overlay(ordered[0], wins, focus=True)
+        self._screen("esc_pressed")                       # forget an Esc pressed before this capture
+        self._esc_timer.start()
         log.info("overlay shown in %.0f ms", (time.perf_counter() - t0) * 1000)
         if mode == "draw" and getattr(self.settings, "show_recent", True):
             if self.sync:
@@ -367,6 +373,7 @@ class Controller(QObject):
         """deferred: only the active overlay is hidden now; the other monitors' (16-55 ms each) on the
         next event-loop turn - for the copy path, where nothing waits for them. A capture started
         before that turn keeps its windows."""
+        self._esc_timer.stop()
         later = []
         for ov in self.overlays:
             if deferred and ov is not self.active_overlay:
@@ -572,6 +579,20 @@ class Controller(QObject):
         ov.show_toolbar()
         ov.update()
         self.auto_copy_soon()
+
+    def _esc_watch(self) -> None:
+        """Windows may refuse to hand the keyboard to the capture screen (Alt + ~ pressed in Windows
+        Terminal running herdr): Esc then went to the terminal and the capture screen stayed, as if
+        frozen (BUG-140). The key state is read whoever has the focus; it only acts while no window of
+        ours has the keyboard - then our own window (a dialog too) handles Esc itself."""
+        from PySide6.QtWidgets import QApplication
+        if self.session.state is State.IDLE or not self.overlays or self.scrolling:
+            self._esc_timer.stop()
+            return
+        pressed = bool(self._screen("esc_pressed", default=False))
+        if pressed and QApplication.activeWindow() is None:
+            log.info("Esc with the keyboard elsewhere: capture cancelled")
+            self.cancel()
 
     def cancel(self) -> None:
         ov, sel, doc = self.active_overlay, self.session.selection, self.session.document

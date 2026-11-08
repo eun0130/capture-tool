@@ -1297,3 +1297,47 @@ def test_PREWARM_01_prewarm_also_warms_a_screen_grab(make):
     c = make(FakeScreen())
     c.prewarm()
     assert len(c.screen.grabs) == 1
+
+
+class EscScreen(FakeScreen):
+    """A screen whose Escape key state can be pressed from the test (GetAsyncKeyState on Windows)."""
+    def __init__(self, **kw):
+        super().__init__(**kw)
+        self.esc = False
+
+    def esc_pressed(self):
+        pressed, self.esc = self.esc, False
+        return pressed
+
+
+def test_ESC_01_esc_ends_the_capture_even_when_another_app_kept_the_keyboard(make, monkeypatch):
+    """User (v0.10.2, Windows + herdr in Windows Terminal): after Alt + ~ the capture screen did not
+    take the keyboard, so Esc went to the terminal and the capture screen stayed - looked frozen."""
+    from PySide6.QtWidgets import QApplication
+    from capture_tool.core.session import State
+    scr = EscScreen()
+    c = make(scr)
+    c.start_capture()
+    assert c.session.state is not State.IDLE and c._esc_timer.isActive()
+    monkeypatch.setattr(QApplication, "activeWindow", staticmethod(lambda: None))   # the terminal has the focus
+    c._esc_watch()
+    assert c.session.state is not State.IDLE                     # no Esc yet: nothing happens
+    scr.esc = True
+    c._esc_watch()
+    assert c.session.state is State.IDLE and c.overlays == [] and not c._esc_timer.isActive()
+
+
+def test_ESC_02_with_the_focus_ours_the_capture_screen_handles_esc_itself(make, monkeypatch):
+    # e.g. our colour dialog is open: its Esc closes the dialog, never the whole capture
+    from PySide6.QtWidgets import QApplication, QWidget
+    from capture_tool.core.session import State
+    scr = EscScreen()
+    c = make(scr)
+    c.start_capture()
+    ours = QWidget()
+    monkeypatch.setattr(QApplication, "activeWindow", staticmethod(lambda: ours))
+    scr.esc = True
+    c._esc_watch()
+    assert c.session.state is not State.IDLE
+    c.cancel()
+    assert not c._esc_timer.isActive()
