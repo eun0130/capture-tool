@@ -273,3 +273,23 @@ def test_WPPT_04_new_slide_after_the_viewed_slide_in_an_open_deck():
     finally:
         mine.Saved = True
         mine.Close()
+
+
+def test_PWIN_30_a_korean_folder_gets_an_english_path_to_the_same_files(tmp_path):
+    """BUG-141: the AI engine could not open its model under C:\\Users\\<Korean name>. ascii_path gives
+    an English-only path (short name or a folder link under Public) that reaches the same file."""
+    import os
+    import shutil
+    from capture_tool.platform import shell
+    d = tmp_path / "홍길동 모델"
+    d.mkdir()
+    (d / "genai_config.json").write_text('{"model": {}}', encoding="utf-8")
+    p = shell.ascii_path(d)
+    try:
+        assert p.isascii(), p
+        with open(os.path.join(p, "genai_config.json"), "rb") as f:     # a narrow-string open, like the engine
+            assert f.read() == b'{"model": {}}'
+    finally:
+        if "Public" in p:
+            os.rmdir(p)                                                     # the link only, never the folder
+        shutil.rmtree(d, ignore_errors=True)

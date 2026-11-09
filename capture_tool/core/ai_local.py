@@ -175,6 +175,16 @@ class _GenaiLLM:
         return out
 
 
+def _engine_path(model_dir) -> str:
+    """The model folder as the AI engine opens it: English letters only on Windows, where its file
+    opening failed under a Korean user name ("Error opening ...genai_config.json", BUG-141)."""
+    from .. import platform as pf
+    try:
+        return pf.backend().shell.ascii_path(model_dir)
+    except Exception:  # noqa: BLE001 - the plain path then
+        return str(model_dir)
+
+
 def _find_llm():
     return ms.installed_dir(ms.CATALOG[ms.LLM_PACK])
 
@@ -182,7 +192,7 @@ def _find_llm():
 class LocalSummarizer:
     def __init__(self, find: Callable | None = None, loader: Callable | None = None, threads: int = LLM_THREADS):
         self.find = find or _find_llm
-        self.loader = loader or (lambda d, t: _GenaiLLM(d, t))
+        self.loader = loader or (lambda d, t: _GenaiLLM(_engine_path(d), t))
         self.threads = threads
         self._llm = None
         self._lock = threading.Lock()

@@ -28,3 +28,9 @@ def open_url(url: str, runner=None) -> bool:
         return True
     except OSError:
         return False
+
+
+def ascii_path(path, **_) -> str:
+    """macOS opens UTF-8 paths everywhere: the folder as it is (the Windows backend may rename it)."""
+    return str(path)
+

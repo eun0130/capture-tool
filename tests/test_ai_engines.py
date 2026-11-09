@@ -314,3 +314,40 @@ def test_AIE_26_preload_skips_missing_models_and_busy_service():
         svc.preload("Hello.")                                    # busy: skipped, no deadlock
     finally:
         svc._lock.release()
+
+
+# --- the summary model under a Korean user name (BUG-141) ---------------------------------------------
+
+def test_AIE_30_a_korean_model_path_is_handed_to_the_engine_as_an_english_one(tmp_path):
+    """User (v0.10.2, company PC): 요약 failed - "Error opening ...genai_config.json" - after the free
+    model was downloaded. The model sits under %LOCALAPPDATA% = C:\\Users\\<Korean name>\\..., and the
+    engine's file opening is not safe with such letters; it gets an English-only path to the same folder."""
+    from capture_tool.platform import shell as win_shell
+    korean = r"C:\Users\홍길동\AppData\Local\CaptureTool\models\llm-qwen3-1.7b"
+    assert win_shell.ascii_path(r"C:\Program Files\CaptureTool\m", short=None, link=None) == r"C:\Program Files\CaptureTool\m"
+    # 1) the folder's Windows short name, when it has one
+    assert win_shell.ascii_path(korean, short=lambda p: r"C:\Users\HONG~1\AppData\Local\CAPTUR~1\models\LLM-QW~1",
+                                link=None) == r"C:\Users\HONG~1\AppData\Local\CAPTUR~1\models\LLM-QW~1"
+    # 2) no short name: a folder link under Public (no admin rights needed), made once
+    made = []
+    out = win_shell.ascii_path(korean, short=lambda p: p, link=lambda target, at: made.append((target, at)) or True,
+                               public=r"C:\Users\Public")
+    assert out.isascii() and out.startswith(r"C:\Users\Public\CaptureTool\link-") and made == [(korean, out)]
+    # 3) neither works: the path as it is (the engine's own error then names it)
+    assert win_shell.ascii_path(korean, short=lambda p: p, link=lambda t, a: False, public=r"C:\Users\Public") == korean
+
+
+def test_AIE_31_the_summary_model_is_loaded_through_the_english_path(monkeypatch):
+    from types import SimpleNamespace
+    from capture_tool import platform as pf
+    from capture_tool.core import ai_local
+    seen = []
+    monkeypatch.setattr(pf, "_override", SimpleNamespace(shell=SimpleNamespace(ascii_path=lambda p: "C:/ASCII/llm")))
+    monkeypatch.setattr(ai_local, "_GenaiLLM", lambda d, t: seen.append(d) or "llm")
+    s = ai_local.LocalSummarizer(find=lambda: r"C:\Users\홍길동\models\llm")
+    assert s._get() == "llm" and seen == ["C:/ASCII/llm"]
+
+
+def test_AIE_32_the_mac_keeps_its_path():
+    from capture_tool.platform.mac import shell as mac_shell
+    assert mac_shell.ascii_path("/Users/홍길동/Library/x") == "/Users/홍길동/Library/x"
