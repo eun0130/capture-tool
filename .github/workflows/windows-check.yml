@@ -1,0 +1,37 @@
+name: windows-check
+
+# Real Windows checks that need no desktop or Office, run before a release: a folder with Korean letters
+# reaches the AI engine through an English-only path (BUG-141). Runs on pushes that touch that code and
+# from the Actions tab.
+on:
+  workflow_dispatch:
+  push:
+    branches: ["feat/**"]
+    paths:
+      - "capture_tool/platform/shell.py"
+      - "capture_tool/core/ai_local.py"
+      - "tests/test_platform_win.py"
+      - ".github/workflows/windows-check.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  korean-paths:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install
+        run: python -m pip install -e .[dev]
+
+      - name: Korean folder paths for the AI engine
+        shell: pwsh
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: python -X utf8 -m pytest tests/test_platform_win.py -k "PWIN_30 or PWIN_31" -q -s -rs

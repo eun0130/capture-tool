@@ -293,3 +293,31 @@ def test_PWIN_30_a_korean_folder_gets_an_english_path_to_the_same_files(tmp_path
         if "Public" in p:
             os.rmdir(p)                                                     # the link only, never the folder
         shutil.rmtree(d, ignore_errors=True)
+
+
+def test_PWIN_31_the_ai_engine_opens_its_config_through_the_english_path(tmp_path):
+    """BUG-141 on real Windows with the real engine: onnxruntime-genai reads the summary model's own
+    genai_config.json (tests/data, the pinned file) from a folder with Korean letters through ascii_path.
+    What the plain Korean path does is printed for the record (the cause)."""
+    import os
+    import shutil
+    from pathlib import Path
+    og = pytest.importorskip("onnxruntime_genai")
+    from capture_tool.platform import shell
+    d = tmp_path / "홍길동 모델"
+    d.mkdir()
+    shutil.copy(Path(__file__).parent / "data" / "genai_config_qwen3.json", d / "genai_config.json")
+    try:
+        og.Config(str(d))
+        print("KOREAN_PATH ok")
+    except Exception as e:  # noqa: BLE001 - recorded, not asserted
+        print("KOREAN_PATH failed:", e)
+    p = shell.ascii_path(d)
+    try:
+        assert p.isascii(), p
+        assert og.Config(p) is not None
+        print("ASCII_PATH ok:", p)
+    finally:
+        if "Public" in p:
+            os.rmdir(p)                                                     # the link only
+        shutil.rmtree(d, ignore_errors=True)
