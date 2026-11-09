@@ -206,7 +206,17 @@ class LocalSummarizer:
                 d = self.find()
                 if d is None:
                     raise ModelMissing([ms.LLM_PACK])
-                self._llm = self.loader(d, self.threads)
+                try:
+                    self._llm = self.loader(d, self.threads)
+                except Exception as e:
+                    why = None
+                    try:                                      # say why, when the files show it (BUG-141)
+                        why = ms.diagnose(ms.CATALOG[ms.LLM_PACK], d)
+                    except Exception:  # noqa: BLE001 - the engine's own error then
+                        pass
+                    if why:
+                        raise RuntimeError(f"{why} ({e})") from e
+                    raise
             return self._llm
 
     @staticmethod

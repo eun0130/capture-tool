@@ -351,3 +351,18 @@ def test_AIE_31_the_summary_model_is_loaded_through_the_english_path(monkeypatch
 def test_AIE_32_the_mac_keeps_its_path():
     from capture_tool.platform.mac import shell as mac_shell
     assert mac_shell.ascii_path("/Users/홍길동/Library/x") == "/Users/홍길동/Library/x"
+
+
+def test_AIE_33_a_summary_model_that_does_not_open_says_why(monkeypatch):
+    """BUG-141: the engine's own "Error opening ...genai_config.json" did not say why. When loading
+    fails, the files are checked and the message names the problem (here: changed after download)."""
+    from capture_tool.core import ai_local
+    from capture_tool.core import model_store as ms
+    monkeypatch.setattr(ms, "diagnose", lambda pack, d: "model.onnx 파일이 받은 뒤 바뀌었습니다 (보안 프로그램?)")
+
+    def broken(d, t):
+        raise RuntimeError("Error opening C:/x/genai_config.json")
+    s = ai_local.LocalSummarizer(find=lambda: "C:/x", loader=broken)
+    with pytest.raises(RuntimeError) as e:
+        s._get()
+    assert "바뀌었습니다" in str(e.value) and "Error opening" in str(e.value)

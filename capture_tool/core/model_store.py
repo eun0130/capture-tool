@@ -143,6 +143,31 @@ def installed_dir(pack: Pack, search: list[Path] | None = None) -> Path | None:
     return None
 
 
+def diagnose(pack: Pack, folder) -> str | None:
+    """Why an installed pack may not open, checked only after the engine failed (BUG-141: a company PC
+    said only "Error opening ...genai_config.json"): a file missing, unreadable (a security program
+    blocking it) or no longer as downloaded (changed on disk, e.g. encrypted by document security).
+    None when every file is exactly as downloaded - the engine's own error is then the whole story."""
+    folder = Path(folder)
+    advice = f"회사 보안 프로그램 때문일 수 있습니다 — 보안 담당자에게 {folder} 폴더 예외를 요청하세요."
+    for f in pack.files:
+        if f.unzip:                                    # unpacked from a zip: the files differ from it by design
+            continue
+        p = folder / f.name
+        if not p.exists():
+            return f"{f.name} 파일이 없습니다. 설정에서 모델을 다시 받아 주세요."
+        h = hashlib.sha256()
+        try:
+            with open(p, "rb") as fh:
+                for chunk in iter(lambda: fh.read(1 << 20), b""):
+                    h.update(chunk)
+        except OSError as e:
+            return f"{f.name} 파일을 읽을 수 없습니다({e.strerror or e}). {advice}"
+        if h.hexdigest() != f.sha256:
+            return f"{f.name} 파일이 받은 뒤 바뀌었습니다. {advice} (또는 설정에서 모델을 다시 받아 주세요.)"
+    return None
+
+
 def free_bytes(path: Path) -> int:
     p = Path(path)
     while not p.exists():

@@ -147,3 +147,33 @@ def test_MS_12_clip_pack_is_pinned_and_its_files_are_found(tmp_path):
         (tmp_path / f.name).write_bytes(b"x")
     vision, text, vocab, dense = ms.clip_files(tmp_path)
     assert (vision.name, text.name, vocab.name, dense.name) == ("vision.onnx", "text.onnx", "vocab.txt", "dense.safetensors")
+
+
+# --- why an installed pack does not open (BUG-141, company PC: "Error opening ...genai_config.json") --
+
+def _pack(tmp_path, blobs: dict):
+    files = tuple(ms.ModelFile(f"https://x/{n}", hashlib.sha256(b).hexdigest(), len(b), n) for n, b in blobs.items())
+    d = tmp_path / "llm"
+    d.mkdir()
+    for n, b in blobs.items():
+        (d / n).write_bytes(b)
+    return ms.Pack("llm", "요약", "llm", files), d
+
+
+def test_MS_13_diagnose_names_what_is_wrong_with_an_installed_pack(tmp_path, monkeypatch):
+    pack, d = _pack(tmp_path, {"genai_config.json": b'{"model": {}}', "model.onnx": b"weights"})
+    assert ms.diagnose(pack, d) is None                                          # all as downloaded
+    (d / "model.onnx").write_bytes(b"something else")                           # e.g. encrypted on disk
+    msg = ms.diagnose(pack, d)
+    assert "model.onnx" in msg and "바뀌" in msg and "보안" in msg
+    (d / "model.onnx").unlink()
+    assert "model.onnx" in ms.diagnose(pack, d) and "없" in ms.diagnose(pack, d)
+    real_open = open
+
+    def denied(path, *a, **kw):
+        if str(path).endswith("genai_config.json"):
+            raise PermissionError(13, "Access is denied")
+        return real_open(path, *a, **kw)
+    monkeypatch.setattr("builtins.open", denied)
+    msg = ms.diagnose(pack, d)
+    assert "genai_config.json" in msg and "읽" in msg and "보안" in msg         # a security program blocks it
