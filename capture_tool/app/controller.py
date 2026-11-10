@@ -341,14 +341,20 @@ class Controller(QObject):
         import numpy as np
         mons = self.screen.monitors()
         if mons:
-            self.screen.grab(mons[0].rect)  # the first grab loads the capture library (slow once)
+            self._frame(mons[0].rect)  # the first grab loads the capture library (slow once)
         for m in mons:
             ov = self._overlay_for(m, np.zeros((8, 8, 3), np.uint8), [])
             ov.place()
             ov.winId()  # force native window creation now
 
+    def _frame(self, rect):
+        """The still picture of a monitor for the capture screen: the still-frame grab (DXGI on Windows -
+        sees GPU-drawn windows that the plain grab misses, BUG-142) when the screen has one."""
+        img = self._screen("grab_frame", rect)
+        return img if img is not None else self.screen.grab(rect)
+
     def _open_overlay(self, monitor, wins, focus=False) -> None:
-        img = self.screen.grab(monitor.rect)
+        img = self._frame(monitor.rect)
         if focus and looks_blocked(img):
             self.notify("화면 캡처가 막혔습니다: 화면 전체가 한 가지 색으로만 찍힙니다. 보안 프로그램이나 "
                         "보호된 영상(DRM)이 캡처를 막는 중일 수 있습니다. 그 창을 닫거나 잠시 뒤 다시 해 보세요.")

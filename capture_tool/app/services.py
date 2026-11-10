@@ -21,6 +21,9 @@ class RealScreen:
     def grab(self, rect):
         return _b().screen.grab(rect)
 
+    def grab_frame(self, rect):
+        return _b().screen.grab_frame(rect)
+
     # scroll capture & capture-protection checks
     def wheel(self, x, y, notches):
         _b().scroll.wheel(x, y, notches)

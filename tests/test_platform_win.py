@@ -321,3 +321,58 @@ def test_PWIN_31_the_ai_engine_opens_its_config_through_the_english_path(tmp_pat
         if "Public" in p:
             os.rmdir(p)                                                     # the link only
         shutil.rmtree(d, ignore_errors=True)
+
+
+DXGI_FLOW = r"""
+import sys, time
+sys.path.insert(0, r"%s")
+from PySide6.QtCore import Qt
+from PySide6.QtGui import QColor, QPainter
+from PySide6.QtWidgets import QApplication, QWidget
+app = QApplication([])
+from capture_tool.core.geometry import Rect
+from capture_tool.platform import screen
+screen.set_dpi_awareness()
+
+
+class Halves(QWidget):
+    def paintEvent(self, e):
+        p = QPainter(self)
+        p.fillRect(0, 0, 100, 100, QColor(255, 0, 0))      # red left
+        p.fillRect(100, 0, 100, 100, QColor(0, 0, 255))    # blue right
+        p.end()
+
+
+w = Halves(None, Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint)
+w.setGeometry(120, 120, 200, 100)
+w.show()
+for _ in range(40):
+    app.processEvents()
+    time.sleep(0.03)
+k = w.devicePixelRatioF()
+g = w.geometry()
+r = Rect(int(g.x() * k), int(g.y() * k), int(200 * k), int(100 * k))
+try:
+    dx = screen._dxgi_grab(r)
+except Exception as e:
+    print("DXGI_ERROR", type(e).__name__, e)
+    dx = None
+print("DXGI", None if dx is None else tuple(dx.shape))
+if dx is not None:
+    print("LEFT", dx[int(50 * k), int(50 * k)][:3].tolist(), "RIGHT", dx[int(50 * k), int(150 * k)][:3].tolist())
+f = screen.grab_frame(r)
+print("FRAME", tuple(f.shape), "LEFTF", f[int(50 * k), int(50 * k)][:3].tolist())
+"""
+
+
+def test_PWIN_32_the_dxgi_still_frame_reads_the_right_place_in_the_right_colours():
+    """BUG-142: the capture screen's still picture comes through DXGI desktop duplication. A window of a
+    red and a blue half: DXGI must see it where it is, in BGR order like the GDI grab."""
+    from pathlib import Path
+    from tests.conftest import run_on_desktop
+    out = run_on_desktop(DXGI_FLOW % Path(__file__).resolve().parents[1], lambda o: "FRAME" in o, attempts=1)
+    print(out)
+    if "DXGI None" in out:
+        pytest.skip("DXGI desktop duplication not available here: " + out.strip()[-200:])
+    assert "LEFT [0, 0, 255]" in out and "RIGHT [255, 0, 0]" in out, out          # BGR: red, blue
+    assert "LEFTF [0, 0, 255]" in out, out                                        # grab_frame took it

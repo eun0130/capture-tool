@@ -60,3 +60,10 @@ def grab(r: Rect) -> np.ndarray:
         import cv2
         img = cv2.resize(img, (r.w, r.h), interpolation=cv2.INTER_AREA)
     return np.ascontiguousarray(img)
+
+
+def grab_frame(r: Rect) -> np.ndarray:
+    """The still picture for the capture screen: Quartz already sees every window (the Windows backend
+    needs DXGI for GPU-drawn ones, BUG-142)."""
+    return grab(r)
+

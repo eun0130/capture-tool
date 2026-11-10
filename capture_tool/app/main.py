@@ -660,7 +660,10 @@ def check_backend() -> int:
     missing = []
     for n in pf._NAMES:
         try:
-            getattr(b, n)
+            mod = getattr(b, n)
+            check = getattr(mod, "self_check", None)          # e.g. the Windows screen needs dxcam (BUG-142)
+            if check is not None:
+                missing += [f"{n}: {p}" for p in check()]
         except Exception as e:  # noqa: BLE001 - reported, the exit code says it
             missing.append(f"{n}: {e}")
     print("BACKEND OK" if not missing else "BACKEND MISSING " + "; ".join(missing), flush=True)

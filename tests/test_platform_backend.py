@@ -107,3 +107,22 @@ def test_PB_08_check_backend_loads_every_os_module_and_reports_it(capsys):
         assert "BACKEND MISSING" in capsys.readouterr().out
     finally:
         pf.use(before)
+
+
+def test_PB_09_check_backend_also_runs_each_modules_own_check(capsys):
+    """The Windows screen module needs dxcam (DXGI, BUG-142) in the bundle; its self_check imports it,
+    so a build without it stops at --check-backend instead of capturing white again."""
+    import types
+    from capture_tool.app import main
+    good = types.SimpleNamespace(self_check=lambda: [])
+    bad = types.SimpleNamespace(self_check=lambda: ["dxcam: No module named 'dxcam'"])
+    fake = types.SimpleNamespace(**{n: good for n in pf._NAMES})
+    fake.screen = bad
+    before = pf.use(fake)
+    try:
+        assert main.check_backend() == 1
+        assert "dxcam" in capsys.readouterr().out
+    finally:
+        pf.use(before)
+    spec = (ROOT / "packaging" / "capture_tool.spec").read_text(encoding="utf-8")
+    assert 'collect_submodules("dxcam")' in spec and '"comtypes"' in spec

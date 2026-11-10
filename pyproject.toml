@@ -19,6 +19,7 @@ dependencies = [
     "rapidocr>=3.0",
     "mss>=9.0",
     "pywin32>=306; sys_platform == 'win32'",
+    "dxcam==0.3.0; sys_platform == 'win32'",          # DXGI desktop duplication: GPU-drawn windows (BUG-142)
     "pyobjc-framework-Cocoa>=10; sys_platform == 'darwin'",      # NSPasteboard, NSRunningApplication, NSWindow
     "pyobjc-framework-Quartz>=10; sys_platform == 'darwin'",     # CGWindowList, CGEvent, screen-recording checks
     "pyobjc-framework-ApplicationServices>=10; sys_platform == 'darwin'",   # AXIsProcessTrusted (Accessibility)

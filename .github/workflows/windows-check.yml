@@ -1,7 +1,7 @@
 name: windows-check
 
-# Real Windows checks that need no desktop or Office, run before a release: a folder with Korean letters
-# reaches the AI engine through an English-only path (BUG-141). Runs on pushes that touch that code and
+# Real Windows checks run before a release: a folder with Korean letters reaches the AI engine through an
+# English-only path (BUG-141); the capture screen's DXGI still frame reads the right place and colours (BUG-142). Runs on pushes that touch that code and
 # from the Actions tab.
 on:
   workflow_dispatch:
@@ -10,6 +10,8 @@ on:
     paths:
       - "capture_tool/platform/shell.py"
       - "capture_tool/core/ai_local.py"
+      - "capture_tool/platform/screen.py"
+      - "capture_tool/core/frames.py"
       - "tests/test_platform_win.py"
       - ".github/workflows/windows-check.yml"
 
@@ -35,3 +37,8 @@ jobs:
         env:
           QT_QPA_PLATFORM: offscreen
         run: python -X utf8 -m pytest tests/test_platform_win.py -k "PWIN_30 or PWIN_31" -q -s -rs
+
+      - name: DXGI still frame on the real desktop (BUG-142)
+        shell: pwsh
+        run: python -X utf8 -m pytest tests/test_platform_win.py -k "PWIN_32" -q -s -rs
+

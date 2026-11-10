@@ -90,3 +90,53 @@ def grab(r: Rect) -> np.ndarray:
     Callers convert only the pixels they need; converting a whole 4K frame costs ~30 ms."""
     shot = _mss().grab({"left": r.x, "top": r.y, "width": r.w, "height": r.h})
     return np.frombuffer(shot.raw, dtype=np.uint8).reshape(shot.height, shot.width, 4)
+
+
+# --- the still picture behind the capture screen (BUG-142) ------------------------------------------
+_cams: dict = {}
+
+
+def _dxgi_grab(r: Rect):
+    """BGRA picture of `r` through DXGI desktop duplication - what the monitor really shows, GPU-drawn
+    windows included - or None. The whole output is grabbed (duplication hands out the latest frame of
+    an output, not of a region) and cut to `r`."""
+    import time
+    import dxcam
+    factory = vars(dxcam)["__factory"]
+    for d, outputs in enumerate(factory.outputs):
+        for o, out in enumerate(outputs):
+            out.update_desc()
+            c = out.desc.DesktopCoordinates
+            if not (c.left <= r.x and c.top <= r.y and r.x + r.w <= c.right and r.y + r.h <= c.bottom):
+                continue
+            cam = _cams.get((d, o))
+            if cam is None or getattr(cam, "is_released", False):
+                cam = _cams[(d, o)] = dxcam.create(device_idx=d, output_idx=o, output_color="BGRA")
+            frame = None
+            for _ in range(10):                           # the very first frame can take a moment
+                frame = cam.grab(new_frame_only=False)
+                if frame is not None:
+                    break
+                time.sleep(0.01)
+            if frame is None:
+                return None
+            x, y = r.x - c.left, r.y - c.top
+            return np.ascontiguousarray(frame[y:y + r.h, x:x + r.w])
+    return None
+
+
+def grab_frame(r: Rect) -> np.ndarray:
+    """The still picture for the capture screen (BGRA, like grab): DXGI when it has the picture, the
+    GDI grab otherwise - GDI gave white for Windows Terminal (herdr) and other GPU-drawn windows."""
+    from ..core.frames import still_frame
+    return still_frame(r, _dxgi_grab, lambda rr: np.ascontiguousarray(grab(rr)))
+
+
+def self_check() -> list[str]:
+    """For --check-backend: what the built app must be able to load beyond the module itself."""
+    try:
+        import dxcam  # noqa: F401
+        return []
+    except Exception as e:  # noqa: BLE001
+        return [f"dxcam: {e}"]
+

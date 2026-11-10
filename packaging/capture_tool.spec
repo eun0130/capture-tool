@@ -4,7 +4,7 @@ import os
 import re
 import sys
 
-from PyInstaller.utils.hooks import collect_data_files, collect_dynamic_libs
+from PyInstaller.utils.hooks import collect_data_files, collect_dynamic_libs, collect_submodules
 
 ROOT = os.path.abspath(os.path.join(SPECPATH, ".."))
 MAC = sys.platform == "darwin"
@@ -36,6 +36,8 @@ MAC_EXCLUDES = ["win32com", "pythoncom", "pywintypes", "win32api", "win32gui", "
 WIN_HIDDEN = ["win32com.client", "pythoncom", "pywintypes"]
 # platform.backend() imports these by name (importlib), so PyInstaller cannot find them itself - without
 # them the installed v0.10.0 stopped at start: "No module named capture_tool.platform.win_hotkey"
+# DXGI desktop duplication for the capture screen's still picture (BUG-142); it picks processors by name
+WIN_DXGI = ([] if MAC else collect_submodules("dxcam")) + ["comtypes"]
 WIN_BACKEND = ["capture_tool.platform.screen", "capture_tool.platform.win_clipboard", "capture_tool.platform.win_hotkey",
                "capture_tool.platform.windows", "capture_tool.platform.scroll", "capture_tool.platform.startup",
                "capture_tool.platform.secret", "capture_tool.platform.shell"]
@@ -60,7 +62,7 @@ a = Analysis(
     binaries=binaries,
     datas=datas,
     hiddenimports=["rapidocr", "onnxruntime", "PySide6.QtSvg", "PySide6.QtNetwork",
-                   *(MAC_HIDDEN + MAC_BACKEND if MAC else WIN_HIDDEN + WIN_BACKEND),
+                   *(MAC_HIDDEN + MAC_BACKEND if MAC else WIN_HIDDEN + WIN_BACKEND + WIN_DXGI),
                    "ctranslate2", "sentencepiece", "onnxruntime_genai", "sacremoses", "subword_nmt.apply_bpe"],
     excludes=excludes,
     noarchive=False,

@@ -1341,3 +1341,23 @@ def test_ESC_02_with_the_focus_ours_the_capture_screen_handles_esc_itself(make, 
     assert c.session.state is not State.IDLE
     c.cancel()
     assert not c._esc_timer.isActive()
+
+
+class FrameScreen(FakeScreen):
+    """A screen with the still-frame grab (DXGI on Windows) next to the plain one."""
+    def __init__(self, **kw):
+        super().__init__(**kw)
+        self.frames = []
+
+    def grab_frame(self, r):
+        self.frames.append(r)
+        img = np.full((r.h, r.w, 4), 255, np.uint8)
+        img[:, :, 0] = 7                                      # a picture only this grab gives
+        return img
+
+
+def test_FRAME_10_the_capture_screen_freezes_the_still_frame_grab(make):
+    scr = FrameScreen()
+    c = make(scr)
+    c.start_capture()
+    assert scr.frames and c.overlays[0].image[5, 5, 0] == 7
