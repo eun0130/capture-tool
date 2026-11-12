@@ -22,7 +22,7 @@ def bitrate(width: int, height: int, fps: int) -> int:
 
 
 class AVWriter:
-    def __init__(self, path, width: int, height: int, fps: int, audio: dict | None):
+    def __init__(self, path, width: int, height: int, fps: int, audio: dict | None, realtime: bool = True):
         import AVFoundation as av
         import Quartz
         from Foundation import NSURL
@@ -39,7 +39,8 @@ class AVWriter:
                  av.AVVideoCompressionPropertiesKey: {av.AVVideoAverageBitRateKey: bitrate(self.w, self.h, fps),
                                                       av.AVVideoExpectedSourceFrameRateKey: fps}}
         self.vin = av.AVAssetWriterInput.assetWriterInputWithMediaType_outputSettings_(av.AVMediaTypeVideo, video)
-        self.vin.setExpectsMediaDataInRealTime_(True)
+        self.realtime = realtime                          # recording: drop a late frame; export: wait for it
+        self.vin.setExpectsMediaDataInRealTime_(realtime)
         attrs = {Quartz.kCVPixelBufferPixelFormatTypeKey: Quartz.kCVPixelFormatType_32BGRA,
                  Quartz.kCVPixelBufferWidthKey: self.w, Quartz.kCVPixelBufferHeightKey: self.h}
         self.adaptor = av.AVAssetWriterInputPixelBufferAdaptor.assetWriterInputPixelBufferAdaptorWithAssetWriterInput_sourcePixelBufferAttributes_(  # noqa: E501
@@ -52,7 +53,7 @@ class AVWriter:
             sound = {av.AVFormatIDKey: CoreAudio.kAudioFormatMPEG4AAC, av.AVSampleRateKey: self.rate,
                      av.AVNumberOfChannelsKey: self.channels, av.AVEncoderBitRateKey: 128_000}
             self.ain = av.AVAssetWriterInput.assetWriterInputWithMediaType_outputSettings_(av.AVMediaTypeAudio, sound)
-            self.ain.setExpectsMediaDataInRealTime_(True)
+            self.ain.setExpectsMediaDataInRealTime_(realtime)
             writer.addInput_(self.ain)
             self._fmt = self._audio_format()
         if not writer.startWriting():
@@ -66,7 +67,14 @@ class AVWriter:
         import CoreMedia
         import Quartz
         if not self.vin.isReadyForMoreMediaData():
-            return False
+            if self.realtime:
+                return False
+            for _ in range(500):                          # exporting: wait (<= 5 s), never drop
+                time.sleep(0.01)
+                if self.vin.isReadyForMoreMediaData():
+                    break
+            else:
+                raise OSError("the video encoder stopped taking frames")
         err, pb = Quartz.CVPixelBufferPoolCreatePixelBuffer(None, self.adaptor.pixelBufferPool(), None)
         if err != 0 or pb is None:
             raise OSError(f"no pixel buffer ({err})")
@@ -139,5 +147,5 @@ class AVWriter:
             raise OSError(f"the video file was not finished: {self.writer.error()}")
 
 
-def open_writer(path, width: int, height: int, fps: int, audio: dict | None = None) -> AVWriter:
-    return AVWriter(path, width, height, fps, audio)
+def open_writer(path, width: int, height: int, fps: int, audio: dict | None = None, realtime: bool = True) -> AVWriter:
+    return AVWriter(path, width, height, fps, audio, realtime)

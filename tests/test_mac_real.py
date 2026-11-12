@@ -331,3 +331,35 @@ def test_MACR_12_the_microphone_comes_through_soundcard():
     time.sleep(1.0)
     src.stop()
     assert src.error is None and got and all(s[1] == 2 for s in got)
+
+
+def test_MACR_13_a_recording_is_trimmed_into_a_new_mp4_and_a_gif(tmp_path):
+    """Export on the Mac: record 2 s, keep 0.5-1.5 s through the same writer (not real time: nothing
+    dropped), sound cut from the kept WAV; and a GIF of it."""
+    import time
+    from PIL import Image
+    from capture_tool.core.geometry import Rect
+    from capture_tool.core.recording import RATE, RecordOptions, RecordingSession
+    from capture_tool.core.recording_export import read_frames, read_wav, write_gif, write_trimmed
+    from capture_tool.platform.mac.recorder import open_writer
+    r = Rect(0, 0, 320, 240)
+    mic = type("Mic", (), {})()
+    s = RecordingSession(lambda rect: np.full((rect.h, rect.w, 4), 200, np.uint8), open_writer, r,
+                         RecordOptions(fps=15), path=tmp_path / "rec.mp4", sources=(mic,))
+    s.begin(now=0.0)
+    s.feed(mic, np.full((2 * RATE, 2), 0.2, np.float32), RATE)
+    for i in range(30):
+        s.tick(i / 15)
+        time.sleep(1 / 15)
+    s.finish(2.0)
+    out = tmp_path / "cut.mp4"
+    write_trimmed(read_frames(s.path), read_wav(s.wav_path), 0.5, 1.5,
+                  open_writer(out, 320, 240, 15, {"rate": RATE, "channels": 2}, realtime=False))
+    frames, shape, dur, nv, na, pcm = _mp4_facts(out)
+    assert 14 <= frames <= 16 and abs(dur - 1.0) < 0.15 and nv == 1 and na == 1
+    gif = write_gif(read_frames(out), tmp_path / "cut.gif", 0.0, 1.0, fps=5)
+    im, total = Image.open(gif), 0                           # Pillow merges identical frames: count play time
+    for k in range(im.n_frames):
+        im.seek(k)
+        total += im.info["duration"]
+    assert 900 <= total <= 1100
