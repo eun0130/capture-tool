@@ -126,3 +126,27 @@ def test_PB_09_check_backend_also_runs_each_modules_own_check(capsys):
         pf.use(before)
     spec = (ROOT / "packaging" / "capture_tool.spec").read_text(encoding="utf-8")
     assert 'collect_submodules("dxcam")' in spec and '"comtypes"' in spec
+
+
+def test_PB_10_both_screens_offer_the_recording_grab_and_the_mouse_reader():
+    """Recording reads the screen and the mouse on its own thread: each OS hands over ready-made
+    functions (built on the GUI thread, where the Mac asks Qt for the display scale)."""
+    import ast
+    for path in ("capture_tool/platform/screen.py", "capture_tool/platform/mac/screen.py"):
+        tree = ast.parse((ROOT / path).read_text(encoding="utf-8"))
+        fns = {n.name: [a.arg for a in n.args.args] for n in tree.body if isinstance(n, ast.FunctionDef)}
+        for fn in ("recording_grabber", "mouse_reader"):
+            assert fns.get(fn) == ["rect"], (path, fn)
+
+
+def test_PB_11_the_recorders_check_their_own_parts():
+    """--check-backend runs each module's self_check: the Mac writer needs AVFoundation / CoreMedia /
+    CoreAudio / Quartz in the bundle. The Windows writer only uses ctypes; Media Foundation itself is
+    part of Windows (missing on Windows Server, where the build runs, so it is not a build error)."""
+    import ast
+    for path, needs in (("capture_tool/platform/mac/recorder.py", ("AVFoundation", "CoreMedia", "CoreAudio", "Quartz")),
+                        ("capture_tool/platform/mf_recorder.py", ())):
+        src = (ROOT / path).read_text(encoding="utf-8")
+        fn = next(n for n in ast.parse(src).body if isinstance(n, ast.FunctionDef) and n.name == "self_check")
+        body = ast.get_source_segment(src, fn)
+        assert all(n in body for n in needs), path

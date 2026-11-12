@@ -132,6 +132,21 @@ def grab_frame(r: Rect) -> np.ndarray:
     return still_frame(r, _dxgi_grab, lambda rr: np.ascontiguousarray(grab(rr)))
 
 
+def recording_grabber(rect: Rect):
+    """A grab for the recording thread: the still-frame way (DXGI, so GPU-drawn windows are not white,
+    BUG-142; GDI when DXGI has no picture). Our own windows marked exclude-from-capture stay out."""
+    return grab_frame
+
+
+def mouse_reader(rect: Rect):
+    """(x, y in physical px, left button down) - GetCursorPos / GetAsyncKeyState work on any thread."""
+    def read() -> tuple[int, int, bool]:
+        p = wintypes.POINT()
+        u32.GetCursorPos(ctypes.byref(p))
+        return p.x, p.y, bool(u32.GetAsyncKeyState(0x01) & 0x8000)          # VK_LBUTTON
+    return read
+
+
 def self_check() -> list[str]:
     """For --check-backend: what the built app must be able to load beyond the module itself."""
     try:

@@ -29,6 +29,15 @@ def _skip_if_display_asleep():
         pytest.skip("the display is asleep - wake the screen and run again")
 
 
+def _wait(seconds, done=lambda: False):
+    """Run Qt events and let other threads have Python meanwhile."""
+    from PySide6.QtCore import QCoreApplication
+    end = time.monotonic() + seconds
+    while time.monotonic() < end and not done():
+        QCoreApplication.processEvents()
+        time.sleep(0.01)
+
+
 def test_MACR_01_pasteboard_round_trip(mac_env):
     from capture_tool.core.clipboard_payload import HTML, PNG, UNICODE, cf_html
     from capture_tool.platform.mac import clipboard
@@ -376,3 +385,54 @@ def test_MACR_14_a_recording_is_copied_to_the_pasteboard_as_a_file(tmp_path):
     urls = NSPasteboard.generalPasteboard().readObjectsForClasses_options_([NSURL], None)
     import unicodedata                                     # macOS keeps Korean names decomposed (NFD)
     assert urls and unicodedata.normalize("NFC", urls[0].path()) == unicodedata.normalize("NFC", str(f))
+
+
+def test_MACR_15_the_recording_grab_and_mouse_work_on_the_recording_thread(mac_env, qt_app):
+    """Built on the GUI thread, used on another one (no Qt there): real pixels, the real pointer."""
+    import threading
+    from capture_tool.core.geometry import Rect
+    from capture_tool.platform.mac import screen
+    _skip_if_display_asleep()
+    m = screen.monitors()[0]
+    rect = Rect(m.rect.x + 100, m.rect.y + 100, 320, 200)
+    grab, mouse = screen.recording_grabber(rect), screen.mouse_reader(rect)
+    out = {}
+
+    def work():
+        out["a"], out["b"], out["m"] = grab(rect), grab(rect), mouse()
+    t = threading.Thread(target=work)
+    t.start()
+    t.join(10)
+    assert out["a"].shape == (200, 320, 3) and out["b"].shape == (200, 320, 3)
+    x, y, down = out["m"]
+    from AppKit import NSEvent, NSScreen                 # Qt's cursor and screens are fake offscreen
+    k = screen._scale_at(rect)
+    loc, main_h = NSEvent.mouseLocation(), NSScreen.screens()[0].frame().size.height
+    assert abs(x - loc.x * k) <= 3 * k and abs(y - (main_h - loc.y) * k) <= 3 * k
+    assert down in (True, False)
+
+
+def test_MACR_16_the_app_recorder_makes_a_real_mp4_from_the_screen(mac_env, qt_app, tmp_path):
+    """The whole recording path with the real OS parts: grab on the recording thread, pointer drawn,
+    AVAssetWriter, the computer's sound (ScreenCaptureKit); stopped from the GUI side."""
+    from PySide6.QtCore import QRect
+    from capture_tool.app.recording_ui import Recorder
+    from capture_tool.app.services import RealScreen
+    from capture_tool.core.geometry import Rect
+    from capture_tool.core.recording_export import video_info
+    from capture_tool.core.settings import Settings
+    _skip_if_display_asleep()
+    s = Settings(record_countdown=False, record_mic=False, record_system=True, record_fps=15)
+    rec = Recorder(RealScreen(), s, Rect(100, 100, 400, 300), QRect(100, 100, 400, 300), QRect(0, 0, 1440, 900),
+                   1.0, tmp_path / "rec.mp4")
+    ended = []
+    rec.ended.connect(ended.append)
+    rec.start()
+    _wait(2.0)                      # (QTest.qWait keeps the GIL - the app's exec() does not)
+    rec.stop()
+    _wait(5.0, lambda: bool(ended))
+    ses = ended[0]
+    assert ses.state == "done" and ses.reason == "stopped" and ses.error is None, ses.error
+    w, h, fps, length = video_info(ses.path)
+    assert (w, h) == (400, 300) and 1.5 <= length <= 2.6 and ses.frames >= 20
+    assert ses.wav_path is not None and ses.wav_path.exists()

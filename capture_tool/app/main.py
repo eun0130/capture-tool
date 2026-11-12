@@ -266,9 +266,12 @@ class TrayApp:
     def _build_menu(self) -> None:
         m = QMenu()
         hk = self.settings.hotkeys
+        from .. import edition
         for label, action in [("캡처 + 그리기", "capture"), ("텍스트 바로 복사", "ocr"),
                               ("도형 바로 복사 (PPT)", "shapes"), ("전체 화면 캡처", "fullscreen"),
-                              ("스크롤 캡처", "scroll")]:
+                              ("스크롤 캡처", "scroll"), ("화면 녹화", "record")]:
+            if not edition.has(action):
+                continue
             key = hk.get(action) or ""
             a = QAction(f"{label}\t{key}" if key else label, m)
             a.triggered.connect(lambda _=False, x=action: QTimer.singleShot(250, lambda: self.on_hotkey(x)))
@@ -280,7 +283,6 @@ class TrayApp:
         auto.toggled.connect(self._set_auto_save)
         m.addAction(auto)
         self.auto_save_action = auto
-        from .. import edition
         if not edition.is_work():                    # the work edition is always at work
             from PySide6.QtGui import QActionGroup
             from ..core.bar_layout import PLACE_NAMES, WORKPLACES
@@ -364,8 +366,15 @@ class TrayApp:
         if action == "search":
             self.controller.open_search()
             return
+        if action == "record":
+            from .. import edition
+            if not edition.has("record"):
+                return
+            if self.controller.recorder is not None:      # the same key again ends the recording
+                self.controller.recorder.stop()
+                return
         mode = {"capture": "draw", "ocr": "text", "shapes": "shapes", "fullscreen": "fullscreen",
-                "scroll": "scroll"}[action]
+                "scroll": "scroll", "record": "record"}[action]
         self.controller.start_capture(mode)
 
     def apply_hotkeys(self, first_run: bool = False) -> None:

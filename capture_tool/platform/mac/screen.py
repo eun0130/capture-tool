@@ -47,19 +47,51 @@ def _scale_at(r: Rect) -> float:
     return 1.0
 
 
-def grab(r: Rect) -> np.ndarray:
-    """BGR pixels of a physical rect. mss takes logical coordinates on the Mac and returns the
-    physical pixels of a Retina display; the result is resized to the asked size if they differ."""
+def _mss():
     import mss
-    k = _scale_at(r)
-    with (mss.MSS() if hasattr(mss, "MSS") else mss.mss()) as sct:       # mss 10 deprecates mss.mss
-        shot = sct.grab({"left": int(round(r.x / k)), "top": int(round(r.y / k)),
-                         "width": max(1, int(round(r.w / k))), "height": max(1, int(round(r.h / k)))})
+    return mss.MSS() if hasattr(mss, "MSS") else mss.mss()             # mss 10 deprecates mss.mss
+
+
+def _grab_with(sct, r: Rect, k: float) -> np.ndarray:
+    shot = sct.grab({"left": int(round(r.x / k)), "top": int(round(r.y / k)),
+                     "width": max(1, int(round(r.w / k))), "height": max(1, int(round(r.h / k)))})
     img = np.frombuffer(shot.bgra, np.uint8).reshape(shot.height, shot.width, 4)[:, :, :3]
     if img.shape[1] != r.w or img.shape[0] != r.h:
         import cv2
         img = cv2.resize(img, (r.w, r.h), interpolation=cv2.INTER_AREA)
     return np.ascontiguousarray(img)
+
+
+def grab(r: Rect) -> np.ndarray:
+    """BGR pixels of a physical rect. mss takes logical coordinates on the Mac and returns the
+    physical pixels of a Retina display; the result is resized to the asked size if they differ."""
+    with _mss() as sct:
+        return _grab_with(sct, r, _scale_at(r))
+
+
+def recording_grabber(rect: Rect):
+    """A grab for the recording thread: the display scale is read now (Qt, GUI thread); the screen
+    reader is opened on the recording thread at its first picture and kept for the next ones."""
+    k, box = _scale_at(rect), {}
+
+    def grab_(r: Rect) -> np.ndarray:
+        if "sct" not in box:
+            box["sct"] = _mss()
+        return _grab_with(box["sct"], r, k)
+    return grab_
+
+
+def mouse_reader(rect: Rect):
+    """(x, y in physical px, left button down) from Quartz - safe on any thread."""
+    k = _scale_at(rect)
+
+    def read() -> tuple[int, int, bool]:
+        from Quartz import (CGEventCreate, CGEventGetLocation, CGEventSourceButtonState,
+                            kCGEventSourceStateHIDSystemState, kCGMouseButtonLeft)
+        p = CGEventGetLocation(CGEventCreate(None))
+        down = CGEventSourceButtonState(kCGEventSourceStateHIDSystemState, kCGMouseButtonLeft)
+        return int(round(p.x * k)), int(round(p.y * k)), bool(down)
+    return read
 
 
 def grab_frame(r: Rect) -> np.ndarray:

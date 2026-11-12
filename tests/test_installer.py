@@ -44,7 +44,7 @@ def test_INST_10_mac_bundle_build_script_and_ci_job():
     ROOT = ISS.parents[1]
     spec = (ROOT / "packaging" / "capture_tool.spec").read_text(encoding="utf-8")
     assert 'BUNDLE(' in spec and 'name="CaptureTool.app"' in spec and 'bundle_identifier="com.capturetool.app"' in spec
-    for key in ("LSUIElement", "NSScreenCaptureUsageDescription", "NSAppleEventsUsageDescription",
+    for key in ("LSUIElement", "NSScreenCaptureUsageDescription", "NSAppleEventsUsageDescription", "NSMicrophoneUsageDescription",
                 "CFBundleShortVersionString", "LSMinimumSystemVersion"):
         assert key in spec, key
     assert '"capture_tool.platform.kakao"' in spec.split("MAC_EXCLUDES")[1] and "win32com" in spec.split("MAC_EXCLUDES")[1]

@@ -3,6 +3,7 @@ writer, or make a GIF. Frames are read back from the MP4 with OpenCV (its decode
 OS wrote); the sound comes from the WAV the recording kept, so no audio decoder is needed."""
 from __future__ import annotations
 
+import shutil
 import wave
 from pathlib import Path
 from typing import Iterable, Iterator
@@ -104,3 +105,22 @@ def mp4_size_estimate(width: int, height: int, seconds: float, fps: int, sound: 
     """MP4 bytes from the writers' bit rate (~0.1 bit per pixel per frame) plus 128 kbit/s of sound."""
     video = min(20_000_000, max(500_000, width * height * fps * 0.1))
     return int((video + (128_000 if sound else 0)) * seconds / 8)
+
+
+def export(src, wav, start: float, end: float, kind: str, dst, open_writer, gif_fps: int = 10,
+           max_width: int = 800) -> Path:
+    """The kept part [start, end) of recording `src` as `dst`: the file itself when nothing was cut
+    off (no second encode), a new MP4 through the OS writer (`open_writer(**kw)`, not real-time: it
+    waits for the encoder) or a GIF."""
+    src, dst = Path(src), Path(dst)
+    w, h, fps, length = video_info(src)
+    if kind == "gif":
+        return write_gif(read_frames(src), dst, start, end, gif_fps, max_width)
+    if start <= 0.05 and (length <= 0 or end >= length - 0.05):
+        shutil.copyfile(src, dst)
+        return dst
+    pcm = read_wav(wav)
+    writer = open_writer(path=dst, width=w, height=h, fps=int(round(fps)),
+                         audio={"rate": RATE, "channels": 2} if pcm is not None else None, realtime=False)
+    write_trimmed(read_frames(src), pcm, start, end, writer)
+    return dst

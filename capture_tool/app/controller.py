@@ -191,6 +191,11 @@ class Controller(QObject):
         self._picked_window = None          # the window the capture was taken from (app, title)
         self._capture_kind = "area"         # area / window / fullscreen / scroll / pin / file
         self.scroll_limits: dict = {}   # tests: max_height / max_pixels / max_steps
+        self.recorder = None                # screen recording in progress (recording_ui.Recorder)
+        self.recording_result = None        # the window after a recording
+        self.recordings_dir = None          # temporary recordings (None: the system temp folder)
+        self.rec_clock = self.rec_sleep = None   # tests: a fake clock for the recording loop
+        self.ask_recording_path = self._ask_recording_path_dialog
         self.ask_save_path = self._ask_save_path_dialog
         # 메일: address book (per Windows user, encrypted), compose page, paste helper
         self.contacts_path = self.settings_path.parent / "contacts.dat"
@@ -420,9 +425,11 @@ class Controller(QObject):
         self.close_pins()
         if self.text_panel:
             self.text_panel.close()
-        for w in (self.pin_manager, self.mail_helper, self.guide_window):
+        for w in (self.pin_manager, self.mail_helper, self.guide_window, self.recording_result):
             if w is not None:
                 w.close()
+        if self.recorder is not None:
+            self.recorder.stop()
 
     # --- selection ---------------------------------------------------------------
     def _clamp_point(self, p, mon):
@@ -461,8 +468,8 @@ class Controller(QObject):
         for o in self.overlays:
             o.update()
         self._warn_protected(ov, self.session.selection)
-        if self.mode == "scroll":
-            self.on_toolbar_action("scroll")
+        if self.mode in ("scroll", "record"):
+            self.on_toolbar_action(self.mode)
             return
         if self.mode in ("text", "shapes"):
             self.on_toolbar_action(self.mode)
@@ -669,6 +676,8 @@ class Controller(QObject):
             self._send_capture_to_ppt()
         elif name == "scroll":
             self._start_scroll()
+        elif name == "record":
+            self._start_recording()
         elif name == "ppt_shapes":
             self._run_recognition("ppt")
         elif name == "resize":
@@ -810,6 +819,121 @@ class Controller(QObject):
                                "있습니다). 막히기 전까지 "}.get(sc.reason, "")
             self.notify(f"스크롤 캡처({what}) {w}×{h}px를 {note}복사했습니다. 원하는 곳에 Ctrl+V")
         self.open_editor(img, dpi, f"스크롤 캡처 · {what}", kind="scroll")
+
+    # --- screen recording ----------------------------------------------------------------------------
+    def _start_recording(self) -> None:
+        """녹화: the chosen area becomes a video (recording_ui.Recorder), then the result window."""
+        if not edition.has("record"):
+            self.notify("회사용에는 화면 녹화가 없습니다.")
+            return
+        if self.session.state is not State.EDITING:
+            return
+        if self.recorder is not None:
+            self.notify("이미 녹화 중입니다. 조작 막대의 끝내기(Esc)로 끝낸 뒤 다시 하세요.")
+            return
+        ov, sel = self.active_overlay, self.session.selection
+        if sel is None or sel.w < 16 or sel.h < 16:
+            self.notify("녹화할 영역이 너무 작습니다. 조금 더 크게 골라 주세요.")
+            return
+        local = ov.local_rect(sel)
+        area = QRect(ov.mapToGlobal(local.topLeft().toPoint()), local.size().toSize())
+        screen_geo, scale = ov.geometry(), float(getattr(ov, "scale", 1.0) or 1.0)
+        if self.editor is not None:
+            self.notify("편집 창의 그림은 녹화할 수 없습니다. Alt + ~ 로 화면에서 영역을 골라 주세요.")
+            return
+        self._take(autosave=False)
+        from .recording_ui import Recorder, clean_old_recordings, new_recording_path, recordings_dir
+        folder = Path(self.recordings_dir) if self.recordings_dir else recordings_dir()
+        folder.mkdir(parents=True, exist_ok=True)
+        clean_old_recordings(folder)
+        if self.recording_result is not None:
+            self.recording_result.close()
+            self.recording_result = None
+        self._check_mic_permission()
+        extra = {k: v for k, v in (("clock", self.rec_clock), ("sleep", self.rec_sleep)) if v is not None}
+        self.recorder = Recorder(self.screen, self.settings, sel, area, screen_geo, scale,
+                                 new_recording_path(folder), sync=self.sync, **extra)
+        self.recorder.ended.connect(self._recording_ended)
+        if self.sync:
+            self.recorder.start()
+        else:
+            QTimer.singleShot(150, self.recorder.start)      # let the capture screen leave the picture first
+
+    def _check_mic_permission(self) -> None:
+        if not getattr(self.settings, "record_mic", True):
+            return
+        state = self._screen("mic_permission", default="granted")
+        if state == "denied":
+            from .. import platform as pf
+            where = ("시스템 설정 > 개인정보 보호 및 보안 > 마이크" if pf.is_mac()
+                     else "Windows 설정 > 개인 정보 > 마이크")
+            self.notify(f"마이크 권한이 꺼져 있어 마이크 소리는 녹음되지 않습니다. {where}에서 캡처 도구를 켜 주세요.")
+
+    def _recording_ended(self, ses) -> None:
+        self.recorder, rec = None, self.recorder
+        if ses is None:
+            self.notify("녹화를 취소했습니다.")
+            return
+        log.info("recording ended: state=%s reason=%s frames=%d dropped=%d error=%s", ses.state, ses.reason,
+                 ses.frames, ses.dropped, ses.error)
+        if ses.state == "failed" and ses.frames == 0:
+            self.notify(f"녹화하지 못했습니다: {ses.error}")
+            return
+        notes = []
+        if ses.state == "failed":
+            notes.append(f"녹화 중 오류가 나서 그때까지만 남겼습니다({ses.error}).")
+        if ses.reason == "limit":
+            notes.append(f"최대 길이({self.settings.record_max_minutes}분)에 닿아 녹화를 끝냈습니다.")
+        for src in (rec.sources if rec is not None else []):
+            if getattr(src, "error", None):
+                what = "마이크" if src.name == "mic" else "컴퓨터 소리"
+                notes.append(f"{what}는 녹음되지 않았습니다({src.error}).")
+        if ses.frames and ses.dropped > ses.frames // 4:
+            notes.append("컴퓨터가 바빠 일부 장면이 빠졌습니다. 설정에서 초당 장면 수를 낮추거나 영역을 작게 해 보세요.")
+        self.show_recording_result(ses.path, ses.wav_path, " ".join(notes))
+
+    def show_recording_result(self, path, wav=None, note: str = ""):
+        from .recording_result import RecordingResult
+        win = RecordingResult(Path(path), wav, self._recording_deps(), fmt=self.settings.record_format,
+                              sync=self.sync, note=note)
+        self.recording_result = win
+        win.show()
+        win.raise_()
+        win.activateWindow()
+        return win
+
+    def _recording_deps(self) -> dict:
+        from functools import partial
+        from ..core.clipboard_payload import files_payload
+        from .recording_ui import recordings_dir
+
+        def save_folder() -> Path:
+            folder, _ = resolve_save_dir(self.settings.save_dir, self.fallback_dir)
+            return Path(folder)
+
+        def share_dir() -> Path:
+            d = (Path(self.recordings_dir) if self.recordings_dir else recordings_dir()) / "share"
+            d.mkdir(parents=True, exist_ok=True)
+            return d
+
+        def unique(folder, ext) -> Path:          # (unique_path knows picture types only)
+            base = "녹화_" + self.now().strftime("%y%m%d_%H%M%S")
+            p, i = Path(folder) / f"{base}{ext}", 1
+            while p.exists():
+                p, i = Path(folder) / f"{base}_{i}{ext}", i + 1
+            return p
+
+        def again() -> None:
+            QTimer.singleShot(0, lambda: self.start_capture("record"))
+        return {"open_writer": partial(self.screen.open_recorder), "set_clipboard": self._set_clipboard,
+                "save_folder": save_folder, "share_dir": share_dir, "unique": unique,
+                "ask_path": self.ask_recording_path, "open_folder": self.open_folder, "notify": self.notify,
+                "again": again, "files_payload": files_payload}
+
+    def _ask_recording_path_dialog(self, default: Path, filt: str) -> Path | None:
+        from PySide6.QtWidgets import QFileDialog
+        chosen, _ = QFileDialog.getSaveFileName(self.recording_result, "저장할 위치 선택", str(default), filt)
+        return Path(chosen) if chosen else None
 
     # --- edit window ---------------------------------------------------------------------------------
     def open_editor(self, img, dpi: float, title: str, save: bool = True, kind: str = "window") -> None:

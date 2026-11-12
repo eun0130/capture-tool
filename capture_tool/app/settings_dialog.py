@@ -12,7 +12,8 @@ from ..core.hotkey import HotkeyError, find_duplicates, is_reserved, known_confl
 from ..core.settings import Settings
 
 ACTIONS = [("capture", "캡처 + 그리기"), ("ocr", "텍스트 바로 복사"), ("shapes", "도형 바로 복사 (PPT)"),
-           ("fullscreen", "전체 화면 캡처"), ("scroll", "스크롤 캡처"), ("search", "캡처 찾기")]
+           ("fullscreen", "전체 화면 캡처"), ("scroll", "스크롤 캡처"), ("search", "캡처 찾기"),
+           ("record", "화면 녹화")]
 _KEYNAMES = {Qt.Key_QuoteLeft: "`", Qt.Key_AsciiTilde: "`", Qt.Key_Print: "PrintScreen", Qt.Key_Space: "Space",
              Qt.Key_Tab: "Tab", Qt.Key_Insert: "Insert", Qt.Key_Delete: "Delete", Qt.Key_Home: "Home",
              Qt.Key_End: "End", Qt.Key_PageUp: "PageUp", Qt.Key_PageDown: "PageDown", Qt.Key_Left: "Left",
@@ -80,7 +81,10 @@ class SettingsDialog(QDialog):
         v.addWidget(QLabel("<b>단축키</b> — 입력칸을 클릭하고 원하는 키 조합을 누르면 됩니다."))
         form = QFormLayout()
         self.edits: dict[str, HotkeyEdit] = {}
+        from .. import edition
         for action, label in ACTIONS:
+            if action == "record" and not edition.has("record"):
+                continue
             ed = HotkeyEdit(settings.hotkeys.get(action, ""))
             ed.textChanged.connect(self._show_problems)
             self.edits[action] = ed
@@ -204,6 +208,50 @@ class SettingsDialog(QDialog):
         reset_row.addStretch(1)
         v.addLayout(reset_row)
         self._load_bar_lists()
+        # --- screen recording ----------------------------------------------------------------
+        self.has_record_section = edition.has("record")
+        rec_box = QWidget(self)
+        rv = QVBoxLayout(rec_box)
+        rv.setContentsMargins(0, 0, 0, 0)
+        rv.addWidget(QLabel("<b>녹화</b> — [전체 → 녹화] 와 화면 녹화 단축키로 고른 영역을 동영상으로 찍습니다."))
+        rrow = QHBoxLayout()
+        rrow.addWidget(QLabel("기본 형식"))
+        self.rec_format = QComboBox()
+        self.rec_format.addItem("MP4 동영상 (소리 있음)", "mp4")
+        self.rec_format.addItem("GIF 움짤 (소리 없음)", "gif")
+        self.rec_format.setCurrentIndex(max(0, self.rec_format.findData(settings.record_format)))
+        rrow.addWidget(self.rec_format)
+        rrow.addWidget(QLabel("초당 장면"))
+        self.rec_fps = QComboBox()
+        for fps, name in ((10, "10 (작은 파일)"), (15, "15 (보통)"), (30, "30 (부드럽게)")):
+            self.rec_fps.addItem(name, fps)
+        self.rec_fps.setCurrentIndex(max(0, self.rec_fps.findData(settings.record_fps)))
+        rrow.addWidget(self.rec_fps)
+        rrow.addWidget(QLabel("최대"))
+        self.rec_max = QSpinBox()
+        self.rec_max.setRange(1, 60)
+        self.rec_max.setSuffix("분")
+        self.rec_max.setValue(settings.record_max_minutes)
+        rrow.addWidget(self.rec_max)
+        rrow.addStretch(1)
+        rv.addLayout(rrow)
+        crow = QHBoxLayout()
+        self.rec_mic = QCheckBox("마이크")
+        self.rec_system = QCheckBox("컴퓨터 소리")
+        self.rec_cursor = QCheckBox("마우스 포인터")
+        self.rec_clicks = QCheckBox("클릭 표시")
+        self.rec_countdown = QCheckBox("3초 세고 시작")
+        for box, on in ((self.rec_mic, settings.record_mic), (self.rec_system, settings.record_system),
+                        (self.rec_cursor, settings.record_cursor), (self.rec_clicks, settings.record_clicks),
+                        (self.rec_countdown, settings.record_countdown)):
+            box.setChecked(bool(on))
+            crow.addWidget(box)
+        crow.addStretch(1)
+        rv.addLayout(crow)
+        if self.has_record_section:
+            v.addWidget(rec_box)
+        else:
+            rec_box.hide()
         # --- mail ------------------------------------------------------------------------------
         from ..core.mailcompose import PROVIDERS
         self.has_mail_section = edition.has("mail")      # the work edition has no 메일 button (nor mail_ui): nothing to set
@@ -483,6 +531,13 @@ class SettingsDialog(QDialog):
         s.ai_key = self._ai_key
         s.ai_endpoint, s.ai_model = self._ai_endpoint, self._ai_model
         s.share_expiry = self.share_expiry.currentData()
+        if self.has_record_section:
+            s.record_format = self.rec_format.currentData()
+            s.record_fps = int(self.rec_fps.currentData())
+            s.record_max_minutes = self.rec_max.value()
+            s.record_mic, s.record_system = self.rec_mic.isChecked(), self.rec_system.isChecked()
+            s.record_cursor, s.record_clicks = self.rec_cursor.isChecked(), self.rec_clicks.isChecked()
+            s.record_countdown = self.rec_countdown.isChecked()
         from ..core import bar_layout as bl
         self._collect_bar()
         s.workplace = self._place

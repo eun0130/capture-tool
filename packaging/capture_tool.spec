@@ -96,5 +96,6 @@ if MAC:
             "LSMinimumSystemVersion": "14.0",
             "NSScreenCaptureUsageDescription": "화면을 캡처하기 위해 화면 기록 권한이 필요합니다.",
             "NSAppleEventsUsageDescription": "스크롤 캡처에서 화면을 넘기기 위해 필요합니다.",
+            "NSMicrophoneUsageDescription": "화면 녹화에 마이크 소리를 함께 넣기 위해 필요합니다.",
         },
     )

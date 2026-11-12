@@ -263,3 +263,9 @@ class MFWriter:
 def open_writer(path, width: int, height: int, fps: int, audio: dict | None = None, realtime: bool = True) -> MFWriter:
     """`realtime` matches the Mac writer; the Sink Writer always waits for its encoder (never drops)."""
     return MFWriter(path, width, height, fps, audio)
+
+
+def self_check() -> list[str]:
+    """Nothing to bundle: the writer is plain ctypes on Media Foundation, which is part of Windows
+    (Windows Server - where the build runs - lacks it until the feature is switched on)."""
+    return []

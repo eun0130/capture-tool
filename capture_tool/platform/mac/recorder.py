@@ -149,3 +149,13 @@ class AVWriter:
 
 def open_writer(path, width: int, height: int, fps: int, audio: dict | None = None, realtime: bool = True) -> AVWriter:
     return AVWriter(path, width, height, fps, audio, realtime)
+
+
+def self_check() -> list[str]:
+    problems = []
+    for name in ("AVFoundation", "CoreMedia", "CoreAudio", "Quartz"):
+        try:
+            __import__(name)
+        except Exception as e:  # noqa: BLE001
+            problems.append(f"{name}: {e}")
+    return problems

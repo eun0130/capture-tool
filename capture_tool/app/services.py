@@ -24,6 +24,22 @@ class RealScreen:
     def grab_frame(self, rect):
         return _b().screen.grab_frame(rect)
 
+    # screen recording: functions for the recording thread, the OS writer, the sound sources
+    def recording_grabber(self, rect):
+        return _b().screen.recording_grabber(rect)
+
+    def mouse_reader(self, rect):
+        return _b().screen.mouse_reader(rect)
+
+    def open_recorder(self, **kw):
+        return _b().recorder.open_writer(**kw)
+
+    def sound_sources(self, mic, system):
+        return _b().audio.sources(mic=mic, system=system)
+
+    def mic_permission(self):
+        return _b().audio.mic_permission()
+
     # scroll capture & capture-protection checks
     def wheel(self, x, y, notches):
         _b().scroll.wheel(x, y, notches)

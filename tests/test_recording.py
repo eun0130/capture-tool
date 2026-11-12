@@ -180,3 +180,72 @@ def test_REC_12_a_frame_the_encoder_refuses_counts_as_dropped(tmp_path):
         s.tick(i * 0.1)
     s.finish(1.0)
     assert s.frames == 5 and s.dropped == 5
+
+
+# --- the mouse in the video ----------------------------------------------------------------------
+def _gray(w=200, h=120, ch=3):
+    return np.full((h, w, ch), 128, np.uint8)
+
+
+def test_REC_13_frames_become_bgra_whatever_the_grab_gives():
+    from capture_tool.core.recording import to_bgra
+    a = to_bgra(_gray(ch=3))
+    assert a.shape == (120, 200, 4) and (a[..., 3] == 255).all() and (a[..., :3] == 128).all()
+    b = to_bgra(_gray(ch=4))
+    assert b.shape == (120, 200, 4)
+
+
+def test_REC_14_the_pointer_is_drawn_where_the_mouse_is_inside_the_area():
+    from capture_tool.core.recording import MousePainter
+    rect = Rect(1000, 500, 200, 120)
+    p = MousePainter(lambda: (1050, 560, False), cursor=True, clicks=True, clock=lambda: 0.0)
+    img = p(_gray(), rect)
+    assert img.shape == (120, 200, 4)
+    assert (img[60:75, 50:56, :3] != 128).any()                        # the arrow hangs from its tip
+    assert (img[0:30, 120:200, :3] == 128).all()                         # nothing elsewhere
+    outside = MousePainter(lambda: (10, 10, False), cursor=True, clicks=True, clock=lambda: 0.0)
+    assert (outside(_gray(), rect)[..., :3] == 128).all()
+
+
+def test_REC_15_a_click_leaves_a_ring_for_half_a_second():
+    from capture_tool.core.recording import MousePainter
+    rect = Rect(0, 0, 200, 120)
+    t = {"now": 0.0, "down": False}
+    p = MousePainter(lambda: (100, 60, t["down"]), cursor=False, clicks=True, clock=lambda: t["now"])
+    assert (p(_gray(), rect)[..., :3] == 128).all()                     # no click yet: nothing
+    t["down"] = True
+    p(_gray(), rect)                                                     # the button went down at 0.0
+    t["down"], t["now"] = False, 0.2
+    ring = p(_gray(), rect)
+    assert (ring[..., :3] != 128).any() and (ring[60, 100, :3] == 128).all()     # a ring, its middle open
+    t["now"] = 0.8
+    assert (p(_gray(), rect)[..., :3] == 128).all()                     # gone after the half second
+
+
+def test_REC_16_without_pointer_or_clicks_the_frame_is_untouched():
+    from capture_tool.core.recording import MousePainter
+    p = MousePainter(lambda: (50, 50, True), cursor=False, clicks=False, clock=lambda: 0.0)
+    assert (p(_gray(), Rect(0, 0, 200, 120))[..., :3] == 128).all()
+
+
+def test_REC_17_a_retina_pointer_is_drawn_bigger():
+    from capture_tool.core.recording import MousePainter
+    rect = Rect(0, 0, 200, 120)
+    small = MousePainter(lambda: (20, 20, False), clock=lambda: 0.0)(_gray(), rect)
+    big = MousePainter(lambda: (20, 20, False), clock=lambda: 0.0, scale=2.0)(_gray(), rect)
+    assert (big[..., :3] != 128).sum() > 2 * (small[..., :3] != 128).sum()
+
+
+def test_REC_18_a_muted_microphone_records_silence_while_the_computer_sound_goes_on(tmp_path):
+    mic, system = Source("mic"), Source("system")
+    s, w = session(tmp_path, sources=(mic, system))
+    s.begin(now=0.0)
+    s.mute("mic", True)
+    s.feed(mic, np.full((RATE, 2), 0.5, np.float32), RATE)
+    s.feed(system, np.full((RATE, 2), 0.25, np.float32), RATE)
+    s.mute("mic", False)
+    s.feed(mic, np.full((RATE, 2), 0.5, np.float32), RATE)          # back on: heard in the next second
+    s.feed(system, np.full((RATE, 2), 0.25, np.float32), RATE)
+    s.finish(2.0)
+    out = w.samples()
+    assert len(out) == 2 * RATE and np.allclose(out[:RATE], 0.25) and np.allclose(out[RATE:], 0.75)
