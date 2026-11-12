@@ -18,6 +18,38 @@ BLOCK = 4800                      # 0.1 s per read
 log = logging.getLogger("capture_tool")
 
 
+_soundcard_module = None
+
+
+def _import():
+    import soundcard
+    return soundcard
+
+
+def import_soundcard(importer=_import):
+    """The `soundcard` module, imported on a new thread the first time: on Windows its import runs
+    CoInitializeEx(MTA) and raises unless that returns S_OK or RPC_E_CHANGED_MODE - a thread that
+    already has MTA COM (S_FALSE) makes the import fail. A fresh thread has no COM yet."""
+    global _soundcard_module
+    if _soundcard_module is None:
+        box: dict = {}
+
+        def run():
+            try:
+                box["m"] = importer()
+            except Exception as e:  # noqa: BLE001 - handed to the caller
+                box["e"] = e
+        t = threading.Thread(target=run, daemon=True, name="import-soundcard")
+        t.start()
+        t.join(10)
+        if "e" in box:
+            raise box["e"]
+        if "m" not in box:
+            raise OSError("the sound library did not load")
+        _soundcard_module = box["m"]
+    return _soundcard_module
+
+
 class SoundcardSource:
     def __init__(self, name: str, device: Callable):
         self.name, self._device = name, device

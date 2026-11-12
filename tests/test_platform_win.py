@@ -528,6 +528,7 @@ def test_PWIN_36_the_app_recorder_records_the_real_screen_on_its_own_thread(qt_a
     print("STATE", ses.state, ses.reason, "FRAMES", ses.frames, "DROPPED", ses.dropped, "ERROR", ses.error,
           "SOURCES", [(x.name, getattr(x, "error", None)) for x in rec.sources])
     assert ses.state == "done" and ses.reason == "stopped" and ses.error is None
+    assert [x.name for x in rec.sources] == ["mic", "system"]     # made even where no device answers
     vw, vh, fps, length = video_info(ses.path)
     print("VIDEO", vw, vh, fps, length)
     assert (vw, vh) == (320, 240) and 1.4 <= length <= 2.8 and ses.frames >= 18

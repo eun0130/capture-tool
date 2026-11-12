@@ -81,3 +81,29 @@ def test_SND_04_screencapturekit_planar_float_blocks_become_frames_by_2():
     packed = np.stack([left, right], axis=1).tobytes()
     assert interleave(packed, 4, 2, False).tolist() == [[0, 10], [1, 11], [2, 12], [3, 13]]
     assert interleave(left.tobytes(), 4, 1, True).tolist() == [[0, 0], [1, 1], [2, 2], [3, 3]]
+
+
+def test_SND_05_soundcard_is_imported_on_a_fresh_thread_once():
+    """soundcard initialises COM when it is imported and raises if the importing thread already has
+    COM in the other mode's S_FALSE case (seen on the Windows runner: PWIN-36 recorded without sound).
+    The import runs on a new thread with no COM yet; an import error comes back to the caller."""
+    from capture_tool.platform import sound_common
+    seen = []
+
+    def importer():
+        seen.append(threading.get_ident())
+        return "module"
+    sound_common._soundcard_module = None
+    assert sound_common.import_soundcard(importer) == "module"
+    assert sound_common.import_soundcard(importer) == "module" and len(seen) == 1     # kept
+    assert seen[0] != threading.get_ident()
+    sound_common._soundcard_module = None
+
+    def broken():
+        raise RuntimeError("Error 0x100000001")
+    try:
+        sound_common.import_soundcard(broken)
+        raise AssertionError("no error")
+    except RuntimeError as e:
+        assert "0x100000001" in str(e)
+    sound_common._soundcard_module = None

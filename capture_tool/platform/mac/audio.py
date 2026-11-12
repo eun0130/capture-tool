@@ -12,7 +12,7 @@ from typing import Callable
 
 import numpy as np
 
-from ..sound_common import RATE, SoundcardSource
+from ..sound_common import RATE, SoundcardSource, import_soundcard
 
 log = logging.getLogger("capture_tool")
 _AUTHORIZED = 3                       # AVAuthorizationStatusAuthorized
@@ -118,8 +118,7 @@ class ScreenAudioSource:
 def sources(mic: bool = True, system: bool = True) -> list:
     out = []
     if mic:
-        import soundcard
-        out.append(SoundcardSource("mic", soundcard.default_microphone))
+        out.append(SoundcardSource("mic", lambda: import_soundcard().default_microphone()))
     if system:
         out.append(ScreenAudioSource("system"))
     return out
