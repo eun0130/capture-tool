@@ -233,3 +233,72 @@ def test_MACR_09_a_test_session_ends_without_a_segfault():
                         "--basetemp", str(root / ".pytest_tmp" / "macr09"), "tests/test_app.py"],
                        cwd=root, env=env, capture_output=True, text=True, timeout=600)
     assert r.returncode == 0, (r.returncode, r.stdout[-800:], r.stderr[-800:])
+
+
+def _mp4_facts(path):
+    """(frames decoded, frame shape, duration s, video tracks, audio tracks, audio float32 [n, 2])."""
+    import cv2
+    import AVFoundation as av
+    import CoreAudio
+    import CoreMedia
+    from Foundation import NSURL
+    cap = cv2.VideoCapture(str(path))
+    frames, shape = 0, None
+    while True:
+        ok, f = cap.read()
+        if not ok:
+            break
+        frames, shape = frames + 1, f.shape
+    asset = av.AVURLAsset.URLAssetWithURL_options_(NSURL.fileURLWithPath_(str(path)), None)
+    v = asset.tracksWithMediaType_(av.AVMediaTypeVideo)
+    a = asset.tracksWithMediaType_(av.AVMediaTypeAudio)
+    pcm = np.zeros((0, 2), np.float32)
+    if a:
+        reader, _ = av.AVAssetReader.assetReaderWithAsset_error_(asset, None)
+        out = av.AVAssetReaderTrackOutput.assetReaderTrackOutputWithTrack_outputSettings_(a[0], {
+            av.AVFormatIDKey: CoreAudio.kAudioFormatLinearPCM, av.AVLinearPCMBitDepthKey: 32,
+            av.AVLinearPCMIsFloatKey: True, av.AVLinearPCMIsNonInterleaved: False})
+        reader.addOutput_(out)
+        reader.startReading()
+        chunks = []
+        while (sb := out.copyNextSampleBuffer()) is not None:
+            bb = CoreMedia.CMSampleBufferGetDataBuffer(sb)
+            _, data = CoreMedia.CMBlockBufferCopyDataBytes(bb, 0, CoreMedia.CMBlockBufferGetDataLength(bb), None)
+            chunks.append(np.frombuffer(bytes(data), np.float32))
+        pcm = np.concatenate(chunks).reshape(-1, 2)
+    return frames, shape, CoreMedia.CMTimeGetSeconds(asset.duration()), len(v), len(a), pcm
+
+
+def test_MACR_10_a_recording_session_writes_an_mp4_with_picture_and_sound(tmp_path):
+    """Screen recording on the Mac: the session (frame timing, sound mixing) into AVAssetWriter's
+    H.264 + AAC - the encoder that comes with macOS. Read back: frames, length, both tracks, the tone."""
+    from capture_tool.core.geometry import Rect
+    from capture_tool.core.recording import RATE, RecordOptions, RecordingSession
+    from capture_tool.platform.mac.recorder import open_writer
+    r = Rect(0, 0, 321, 241)                                   # odd sizes: H.264 needs even ones
+    n = {"i": 0}
+
+    def grab(rect):
+        img = np.zeros((rect.h, rect.w, 4), np.uint8)
+        img[..., 3] = 255
+        img[:, : 10 * n["i"] % rect.w, 2] = 255                # a red bar that grows
+        n["i"] += 1
+        return img
+    mic = type("Mic", (), {})()
+    s = RecordingSession(grab, open_writer, r, RecordOptions(fps=15), path=tmp_path / "rec.mp4", sources=(mic,))
+    s.begin(now=0.0)
+    tone = (0.3 * np.sin(2 * np.pi * 440 * np.arange(2 * RATE) / RATE)).astype(np.float32)
+    s.feed(mic, np.stack([tone, tone], axis=1), RATE)
+    import time
+    for i in range(30):                                    # real time, like a recording: 1/15 s apart
+        s.tick(i / 15)
+        time.sleep(1 / 15)
+    s.finish(2.0)
+    assert s.state == "done", s.error
+    frames, shape, dur, nv, na, pcm = _mp4_facts(tmp_path / "rec.mp4")
+    assert frames == s.frames and s.frames + s.dropped == 30 and s.dropped <= 1 and shape == (240, 320, 3)
+    assert abs(dur - 2.0) < 0.15 and nv == 1 and na == 1
+    mid = pcm[len(pcm) // 4: 3 * len(pcm) // 4, 0]
+    spec = np.abs(np.fft.rfft(mid))
+    assert abs(np.fft.rfftfreq(len(mid), 1 / RATE)[spec.argmax()] - 440) < 5
+    assert 0.18 < float(np.sqrt((mid ** 2).mean())) < 0.24                 # 0.3 / sqrt 2

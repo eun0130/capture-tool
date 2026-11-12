@@ -167,3 +167,16 @@ def test_REC_11_the_recording_loop_runs_until_asked_to_stop(tmp_path):
     s.begin(now=0.0)
     s.run(should_stop=lambda: clock["t"] >= 1.0, clock=lambda: clock["t"], sleep=sleep)
     assert s.state == "done" and s.reason == "stopped" and 10 <= len(w.frames) <= 11
+
+
+def test_REC_12_a_frame_the_encoder_refuses_counts_as_dropped(tmp_path):
+    class Busy(FakeWriter):
+        def add_frame(self, bgra, t):
+            super().add_frame(bgra, t)
+            return len(self.frames) % 2 == 1                  # every other frame: still encoding
+    s, w = session(tmp_path, fps=10, writer=Busy())
+    s.begin(now=0.0)
+    for i in range(10):
+        s.tick(i * 0.1)
+    s.finish(1.0)
+    assert s.frames == 5 and s.dropped == 5

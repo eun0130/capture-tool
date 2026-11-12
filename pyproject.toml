@@ -23,6 +23,11 @@ dependencies = [
     "pyobjc-framework-Cocoa>=10; sys_platform == 'darwin'",      # NSPasteboard, NSRunningApplication, NSWindow
     "pyobjc-framework-Quartz>=10; sys_platform == 'darwin'",     # CGWindowList, CGEvent, screen-recording checks
     "pyobjc-framework-ApplicationServices>=10; sys_platform == 'darwin'",   # AXIsProcessTrusted (Accessibility)
+    "pyobjc-framework-AVFoundation>=10; sys_platform == 'darwin'",     # screen recording: AVAssetWriter (H.264 + AAC)
+    "pyobjc-framework-CoreMedia>=10; sys_platform == 'darwin'",
+    "pyobjc-framework-CoreAudio>=10; sys_platform == 'darwin'",
+    "pyobjc-framework-ScreenCaptureKit>=10; sys_platform == 'darwin'",  # screen recording: the computer's sound
+    "soundcard>=0.4",           # screen recording: microphone (and, on Windows, the computer's sound)
     "ctranslate2>=4.5",         # offline translation (Argos Translate models)
     "sentencepiece>=0.2",
     "sacremoses>=0.1",          # tokenizer of a few newer Argos packs

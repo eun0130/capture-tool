@@ -41,9 +41,9 @@ WIN_DXGI = ([] if MAC else collect_submodules("dxcam")) + ["comtypes"]
 WIN_BACKEND = ["capture_tool.platform.screen", "capture_tool.platform.win_clipboard", "capture_tool.platform.win_hotkey",
                "capture_tool.platform.windows", "capture_tool.platform.scroll", "capture_tool.platform.startup",
                "capture_tool.platform.secret", "capture_tool.platform.shell"]
-MAC_HIDDEN = ["AppKit", "Foundation", "Quartz", "ApplicationServices", "objc"]
+MAC_HIDDEN = ["AppKit", "Foundation", "Quartz", "ApplicationServices", "objc", "AVFoundation", "CoreMedia", "CoreAudio", "ScreenCaptureKit"]
 # platform.backend() imports these by name (importlib), so PyInstaller cannot find them itself
-MAC_BACKEND = ["capture_tool.platform.mac.clipboard", "capture_tool.platform.mac.hotkey", "capture_tool.platform.mac.permissions", "capture_tool.platform.mac.screen", "capture_tool.platform.mac.scroll", "capture_tool.platform.mac.secret", "capture_tool.platform.mac.shell", "capture_tool.platform.mac.startup", "capture_tool.platform.mac.windows"]
+MAC_BACKEND = ["capture_tool.platform.mac.clipboard", "capture_tool.platform.mac.hotkey", "capture_tool.platform.mac.permissions", "capture_tool.platform.mac.recorder", "capture_tool.platform.mac.screen", "capture_tool.platform.mac.scroll", "capture_tool.platform.mac.secret", "capture_tool.platform.mac.shell", "capture_tool.platform.mac.startup", "capture_tool.platform.mac.windows"]
 if MAC:
     excludes += MAC_EXCLUDES
 binaries = collect_dynamic_libs("onnxruntime")

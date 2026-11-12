@@ -116,7 +116,9 @@ ROOT = Path(__file__).resolve().parents[1]
 # be a darwin dependency (a missing one only shows up as ImportError on the Mac, at run time).
 _PYOBJC_PACKAGE = {"AppKit": "pyobjc-framework-Cocoa", "Foundation": "pyobjc-framework-Cocoa",
                    "objc": "pyobjc-framework-Cocoa", "Quartz": "pyobjc-framework-Quartz",
-                   "ApplicationServices": "pyobjc-framework-ApplicationServices"}
+                   "ApplicationServices": "pyobjc-framework-ApplicationServices",
+                   "AVFoundation": "pyobjc-framework-AVFoundation", "CoreMedia": "pyobjc-framework-CoreMedia",
+                   "CoreAudio": "pyobjc-framework-CoreAudio", "ScreenCaptureKit": "pyobjc-framework-ScreenCaptureKit"}
 
 
 def test_MAC_08_every_framework_the_mac_backend_imports_is_a_darwin_dependency():

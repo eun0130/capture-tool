@@ -112,11 +112,14 @@ class RecordingSession:
             self.dropped += max(0, missed)
             try:
                 frame = self.grab(self.rect)
-                self.writer.add_frame(np.ascontiguousarray(frame), t)
+                taken = self.writer.add_frame(np.ascontiguousarray(frame), t)
             except Exception as e:  # noqa: BLE001 - any writer / grab failure ends the recording
                 self._fail(e)
                 return
-            self.frames += 1
+            if taken is False:                            # the encoder is still busy: this one is lost
+                self.dropped += 1
+            else:
+                self.frames += 1
             self._next = (np.floor(t * self.opts.fps + 1e-9) + 1) / self.opts.fps
         self._last_t = max(self._last_t, t)
         self._pump(t - AUDIO_LAG)
