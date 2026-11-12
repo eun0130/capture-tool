@@ -376,3 +376,73 @@ def test_PWIN_32_the_dxgi_still_frame_reads_the_right_place_in_the_right_colours
         pytest.skip("DXGI desktop duplication not available here: " + out.strip()[-200:])
     assert "LEFT [0, 0, 255]" in out and "RIGHT [255, 0, 0]" in out, out          # BGR: red, blue
     assert "LEFTF [0, 0, 255]" in out, out                                        # grab_frame took it
+
+
+def _mp4_tracks(path):
+    """(handler types of the tracks, duration in s) read from the MP4 boxes themselves."""
+    import struct
+    data = open(path, "rb").read()
+    handlers, duration = [], None
+
+    def walk(start, end):
+        nonlocal duration
+        i = start
+        while i + 8 <= end:
+            size, kind = struct.unpack(">I4s", data[i:i + 8])
+            if size < 8:
+                break
+            if kind in (b"moov", b"trak", b"mdia"):
+                walk(i + 8, i + size)
+            elif kind == b"mvhd":
+                v = data[i + 8]
+                if v == 0:
+                    scale, dur = struct.unpack(">II", data[i + 20:i + 28])
+                else:
+                    scale, dur = struct.unpack(">IQ", data[i + 28:i + 40])
+                duration = dur / scale
+            elif kind == b"hdlr":
+                handlers.append(data[i + 16:i + 20].decode("ascii"))
+            i += size
+    walk(0, len(data))
+    return handlers, duration
+
+
+def test_PWIN_33_media_foundation_writes_an_mp4_with_picture_and_sound(tmp_path):
+    """Screen recording on Windows: H.264 + AAC through Media Foundation's Sink Writer (Windows'
+    own encoder, no GPL). Frames with a red top and a blue bottom half (the picture must not come out
+    upside down), a 440 Hz tone; read back: frames, orientation, both tracks, the length."""
+    import cv2
+    from capture_tool.platform import mf_recorder
+    out = tmp_path / "rec.mp4"
+    W, H, FPS = 320, 240, 15
+    try:
+        w = mf_recorder.open_writer(out, W, H, FPS, {"rate": 48000, "channels": 2})
+    except OSError as e:
+        pytest.skip(f"Media Foundation not usable here: {e}")
+    img = np.zeros((H, W, 4), np.uint8)
+    img[: H // 2, :, 2] = 255                                   # red top (B, G, R, A)
+    img[H // 2:, :, 0] = 255                                    # blue bottom
+    img[..., 3] = 255
+    for i in range(30):
+        w.add_frame(img, i / FPS)
+    tone = (0.3 * np.sin(2 * np.pi * 440 * np.arange(2 * 48000) / 48000)).astype(np.float32)
+    pcm = np.stack([tone, tone], axis=1)
+    for k in range(0, len(pcm), 4800):
+        w.add_audio(pcm[k:k + 4800], k / 48000)
+    w.close()
+    cap = cv2.VideoCapture(str(out))
+    frames, first = 0, None
+    while True:
+        ok, f = cap.read()
+        if not ok:
+            break
+        frames += 1
+        first = f if first is None else first
+    print("FRAMES", frames, None if first is None else first.shape)
+    handlers, duration = _mp4_tracks(out)
+    print("TRACKS", handlers, "DURATION", duration)
+    assert frames >= 28 and first.shape == (H, W, 3)
+    top, bottom = first[H // 4, W // 2], first[3 * H // 4, W // 2]
+    print("TOP", top.tolist(), "BOTTOM", bottom.tolist())
+    assert top[2] > 200 and top[0] < 60 and bottom[0] > 200 and bottom[2] < 60        # red over blue
+    assert sorted(handlers) == ["soun", "vide"] and abs(duration - 2.0) < 0.2

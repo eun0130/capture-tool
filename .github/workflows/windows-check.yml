@@ -12,6 +12,7 @@ on:
       - "capture_tool/core/ai_local.py"
       - "capture_tool/platform/screen.py"
       - "capture_tool/core/frames.py"
+      - "capture_tool/platform/mf_recorder.py"
       - "tests/test_platform_win.py"
       - ".github/workflows/windows-check.yml"
 
@@ -41,4 +42,16 @@ jobs:
       - name: DXGI still frame on the real desktop (BUG-142)
         shell: pwsh
         run: python -X utf8 -m pytest tests/test_platform_win.py -k "PWIN_32" -q -s -rs
+
+      - name: Media Foundation (a feature to switch on on Windows Server)
+        shell: pwsh
+        continue-on-error: true
+        run: |
+          $f = Get-WindowsFeature Server-Media-Foundation -ErrorAction SilentlyContinue
+          if ($f) { "installed before: $($f.Installed)"; if (-not $f.Installed) { Install-WindowsFeature Server-Media-Foundation | Format-List } }
+          "mfplat: $(Test-Path C:\Windows\System32\mfplat.dll)  mfreadwrite: $(Test-Path C:\Windows\System32\mfreadwrite.dll)  h264 encoder: $(Test-Path C:\Windows\System32\mfh264enc.dll)"
+
+      - name: Media Foundation writer for screen recording
+        shell: pwsh
+        run: python -X utf8 -m pytest tests/test_platform_win.py -k "PWIN_33" -q -s -rs
 
