@@ -144,7 +144,7 @@ def test_RUI_04_trimmed_mp4_goes_through_the_writer_and_gif_through_pillow(recor
     c, screen = recording()
     res = c.recording_result
     res.timeline.set_range(10.0, 20.0)
-    assert "10초" in res.size_label.text()
+    assert res.size_label.text().startswith("10.0~20.0초 → 10초 · 약 ")
     res.trigger("save")
     w = screen.writers[-1]
     assert w.realtime is False and 90 <= w.frames <= 110                      # 10 s at 10 fps

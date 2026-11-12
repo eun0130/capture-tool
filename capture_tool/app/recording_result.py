@@ -190,6 +190,7 @@ class RecordingResult(QWidget):
         self.status = QLabel("")
         v.addWidget(self.status)
         self._cap = None
+        self._last = None
         self._play = QTimer(self)
         self._play.timeout.connect(self._next_frame)
         self._update_size()
@@ -212,10 +213,20 @@ class RecordingResult(QWidget):
         return out
 
     def _show(self, img) -> None:
-        pm = bgr_to_pixmap(np.ascontiguousarray(img))
+        """The frame fitted into the preview, sharp on a Retina / high-DPI screen."""
+        self._last = img
+        dpr = self.preview.devicePixelRatioF() or 1.0
         size = self.preview.size()
-        self.preview.setPixmap(pm.scaled(size.width() - 8, size.height() - 8, Qt.KeepAspectRatio,
-                                         Qt.SmoothTransformation))
+        pm = bgr_to_pixmap(np.ascontiguousarray(img)).scaled(
+            max(1, int((size.width() - 8) * dpr)), max(1, int((size.height() - 8) * dpr)), Qt.KeepAspectRatio,
+            Qt.SmoothTransformation)
+        pm.setDevicePixelRatio(dpr)
+        self.preview.setPixmap(pm)
+
+    def resizeEvent(self, e):
+        super().resizeEvent(e)
+        if getattr(self, "_last", None) is not None:
+            self._show(self._last)
 
     def show_at(self, t: float) -> None:
         import cv2
@@ -289,8 +300,10 @@ class RecordingResult(QWidget):
 
     def _update_size(self) -> None:
         self.gif_quality.setVisible(self.kind == "gif")
-        secs = self.timeline.end - self.timeline.start
-        self.size_label.setText(f"{secs:.0f}초 · 약 {size_text(self.estimate())}")
+        tl = self.timeline
+        secs = tl.end - tl.start
+        cut = "" if tl.start <= 0.05 and tl.end >= self.duration - 0.05 else f"{tl.start:.1f}~{tl.end:.1f}초 → "
+        self.size_label.setText(f"{cut}{secs:.0f}초 · 약 {size_text(self.estimate())}")
 
     # --- actions -------------------------------------------------------------------------------------
     def trigger(self, name: str) -> None:
