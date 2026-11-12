@@ -13,6 +13,9 @@ on:
       - "capture_tool/platform/screen.py"
       - "capture_tool/core/frames.py"
       - "capture_tool/platform/mf_recorder.py"
+      - "capture_tool/platform/win_audio.py"
+      - "capture_tool/platform/sound_common.py"
+      - "capture_tool/platform/win_clipboard.py"
       - "tests/test_platform_win.py"
       - ".github/workflows/windows-check.yml"
 
@@ -54,4 +57,8 @@ jobs:
       - name: Media Foundation writer for screen recording
         shell: pwsh
         run: python -X utf8 -m pytest tests/test_platform_win.py -k "PWIN_33" -q -s -rs
+
+      - name: Recording sound and the file on the clipboard
+        shell: pwsh
+        run: python -X utf8 -m pytest tests/test_platform_win.py -k "PWIN_34 or PWIN_35" -q -s -rs
 

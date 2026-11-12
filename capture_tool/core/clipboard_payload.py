@@ -14,6 +14,22 @@ PNG = "PNG"
 DIB = "CF_DIB"
 GVML = "Art::GVML ClipFormat"
 SVG = "image/svg+xml"
+FILES = "CF_HDROP"                         # value: a list of file paths (a recording's video / GIF)
+DROP_EFFECT = "Preferred DropEffect"       # 1 = copy: Explorer copies the pasted file, never moves it
+
+
+def hdrop_bytes(paths) -> bytes:
+    """Windows CF_HDROP: DROPFILES {pFiles=20, pt=(0,0), fNC=0, fWide=1}, then the paths as UTF-16,
+    each ending in a NUL, and one more NUL at the end."""
+    import struct
+    names = "".join(str(p) + "\0" for p in paths) + "\0"
+    return struct.pack("<IiiII", 20, 0, 0, 0, 1) + names.encode("utf-16-le")
+
+
+def files_payload(paths) -> dict:
+    """The clipboard content for pasting files (a messenger, Explorer / Finder, a mail)."""
+    import struct
+    return {FILES: [str(p) for p in paths], DROP_EFFECT: struct.pack("<I", 1)}
 
 _HEADER = ("Version:0.9\r\nStartHTML:{0:010d}\r\nEndHTML:{1:010d}\r\n"
            "StartFragment:{2:010d}\r\nEndFragment:{3:010d}\r\n")

@@ -157,3 +157,16 @@ def test_CLIP_14_dib_from_a_view_matches_the_plain_build():
     assert dib_from_bgr(view, 120)[40:] == np.ascontiguousarray(bgra[::-1]).tobytes()
     assert dib_from_bgr(np.full((3, 2), 7, np.uint8))[40:] == bytes([7, 7, 7, 255] * 6)
     assert dib_from_bgr(np.full((1, 2, 4), 9, np.uint8))[40:] == bytes([9] * 8)
+
+
+def test_CLIP_FILES_01_a_recording_goes_on_the_clipboard_as_a_file():
+    """Windows: CF_HDROP = DROPFILES (20 bytes, wide paths) + each path NUL-ended + a final NUL; the
+    'Preferred DropEffect' says copy. A messenger or Explorer then pastes the video file itself."""
+    from capture_tool.core.clipboard_payload import DROP_EFFECT, FILES, files_payload, hdrop_bytes
+    data = hdrop_bytes([r"C:\a\녹화.mp4", r"D:\b.gif"])
+    p_files, x, y, nc, wide = struct.unpack("<IiiII", data[:20])
+    assert (p_files, nc, wide) == (20, 0, 1)
+    names = data[20:].decode("utf-16-le")
+    assert names == "C:\\a\\녹화.mp4\x00D:\\b.gif\x00\x00"
+    p = files_payload([r"C:\a\녹화.mp4"])
+    assert p[FILES] == [r"C:\a\녹화.mp4"] and p[DROP_EFFECT] == struct.pack("<I", 1)

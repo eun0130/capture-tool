@@ -469,3 +469,25 @@ def test_PWIN_34_microphone_and_computer_sound_come_through_soundcard():
     print("MIC", len(got["mic"]), "SYSTEM", len(got["system"]), [s.error for s in srcs])
     assert all(s.error is None for s in srcs), [s.error for s in srcs]
     assert got["mic"] and all(r == 48000 and sh[1] == 2 for sh, r in got["mic"])
+
+
+def test_PWIN_35_a_recording_goes_on_the_clipboard_as_a_file_explorer_can_paste(tmp_path):
+    import ctypes
+    from ctypes import wintypes
+    from capture_tool.core.clipboard_payload import files_payload
+    f = tmp_path / "녹화 1.mp4"
+    f.write_bytes(b"x")
+    win_clipboard.set_formats(files_payload([f]), retries=10, delay=0.05)
+    u32, sh = ctypes.WinDLL("user32"), ctypes.WinDLL("shell32")
+    u32.GetClipboardData.restype = wintypes.HANDLE
+    sh.DragQueryFileW.argtypes = [wintypes.HANDLE, wintypes.UINT, wintypes.LPWSTR, wintypes.UINT]
+    assert u32.OpenClipboard(None)
+    try:
+        h = u32.GetClipboardData(15)                                   # CF_HDROP
+        assert h, "no file on the clipboard"
+        count = sh.DragQueryFileW(h, 0xFFFFFFFF, None, 0)
+        buf = ctypes.create_unicode_buffer(1024)
+        sh.DragQueryFileW(h, 0, buf, 1024)
+    finally:
+        u32.CloseClipboard()
+    assert count == 1 and buf.value == str(f)

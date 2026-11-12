@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import re
 
-from ...core.clipboard_payload import HTML, PNG, UNICODE
+from ...core.clipboard_payload import FILES, HTML, PNG, UNICODE
 
 _UTI = {PNG: "public.png", HTML: "public.html", UNICODE: "public.utf8-plain-text"}
 _FRAGMENT = re.compile(r"<!--StartFragment-->(.*?)<!--EndFragment-->", re.S)
@@ -51,6 +51,9 @@ def set_formats(payload: dict, retries: int = 5, delay: float = 0.02, hwnd=None)
     from Foundation import NSData
     pb = NSPasteboard.generalPasteboard()
     pb.clearContents()
+    if payload.get(FILES):                                 # files (a recording): their URLs, for Finder and apps
+        from Foundation import NSURL
+        pb.writeObjects_([NSURL.fileURLWithPath_(str(p)) for p in payload[FILES]])
     for uti, value in pasteboard_items(payload).items():
         if isinstance(value, str):
             pb.setString_forType_(value, uti)

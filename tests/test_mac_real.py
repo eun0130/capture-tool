@@ -363,3 +363,16 @@ def test_MACR_13_a_recording_is_trimmed_into_a_new_mp4_and_a_gif(tmp_path):
         im.seek(k)
         total += im.info["duration"]
     assert 900 <= total <= 1100
+
+
+def test_MACR_14_a_recording_is_copied_to_the_pasteboard_as_a_file(tmp_path):
+    from AppKit import NSPasteboard
+    from Foundation import NSURL
+    from capture_tool.core.clipboard_payload import files_payload
+    from capture_tool.platform.mac import clipboard
+    f = tmp_path / "녹화.mp4"
+    f.write_bytes(b"x")
+    clipboard.set_formats(files_payload([f]))
+    urls = NSPasteboard.generalPasteboard().readObjectsForClasses_options_([NSURL], None)
+    import unicodedata                                     # macOS keeps Korean names decomposed (NFD)
+    assert urls and unicodedata.normalize("NFC", urls[0].path()) == unicodedata.normalize("NFC", str(f))

@@ -5,12 +5,12 @@ import ctypes
 import time
 from ctypes import wintypes
 
-from ..core.clipboard_payload import DIB, UNICODE
+from ..core.clipboard_payload import DIB, FILES, UNICODE, hdrop_bytes
 
 CF_UNICODETEXT = 13
 CF_DIB = 8
 GMEM_MOVEABLE = 0x0002
-_STANDARD = {UNICODE: CF_UNICODETEXT, DIB: CF_DIB}
+_STANDARD = {UNICODE: CF_UNICODETEXT, DIB: CF_DIB, FILES: 15}          # CF_HDROP = 15
 
 u32 = ctypes.WinDLL("user32", use_last_error=True)
 k32 = ctypes.WinDLL("kernel32", use_last_error=True)
@@ -51,6 +51,8 @@ def _open(retries: int, delay: float, hwnd=None) -> None:
 
 
 def _to_bytes(name: str, value) -> bytes:
+    if name == FILES:
+        return hdrop_bytes(value)
     if isinstance(value, str):
         return value.encode("utf-16-le") + b"\x00\x00"
     return bytes(value)
