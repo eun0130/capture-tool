@@ -504,7 +504,9 @@ def test_PWIN_36_the_app_recorder_records_the_real_screen_on_its_own_thread(qt_a
     from capture_tool.core.settings import Settings
     try:
         from capture_tool.platform import mf_recorder
-        mf_recorder.open_writer(tmp_path / "probe.mp4", 64, 64, 15, None).close()
+        probe = mf_recorder.open_writer(tmp_path / "probe.mp4", 64, 64, 15, None)
+        probe.add_frame(np.zeros((64, 64, 4), np.uint8), 0.0)          # (an empty file cannot be finished)
+        probe.close()
     except OSError as e:
         pytest.skip(f"Media Foundation not usable here: {e}")
     s = Settings(record_countdown=False, record_fps=15)
