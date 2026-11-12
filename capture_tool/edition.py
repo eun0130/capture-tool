@@ -13,7 +13,7 @@ import sys
 from pathlib import Path
 
 HOME, WORK = "home", "work"
-EXCLUDED_AT_WORK = ("kakao", "mail", "search_web", "link_web", "gemini")
+EXCLUDED_AT_WORK = ("kakao", "mail", "search_web", "link_web", "gemini", "record")
 # bar buttons and code paths the work edition has not got: KakaoTalk, web mail, web search (Google
 # Lens / Google / Naver / Papago), the internet share link, and Gemini (the company LLM takes its
 # place). The 검색 and 링크 buttons stay: they search the saved captures / copy the file link.

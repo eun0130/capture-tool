@@ -44,6 +44,8 @@ ACTIONS = [
     ("link", "link", "링크", "링크 복사 — ① 파일 링크: 저장한 파일 위치(인터넷에 올리지 않음, 같은 PC·공유 폴더에서 열림) "
                              "② 인터넷 공유 링크: 누구나 열 수 있는 주소, 정해진 시간 뒤 자동 삭제", "extra"),
     ("open_folder", "folder", "저장 폴더", "저장 폴더 열기", "extra"),
+    ("record", "record", "녹화", "고른 영역을 동영상으로 녹화 — 소리(마이크·컴퓨터 소리) 포함, MP4·GIF로 저장·복사 "
+                                 "(끝내기: Esc 또는 조작 막대)", "extra"),
     ("help", "help", "도움말", "처음 쓰는 분을 위한 따라하기 설명서 (F1)", "extra"),
 ]
 LABELS = {name: label for name, _, label, _, _ in ACTIONS}

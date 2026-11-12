@@ -55,7 +55,7 @@ def test_ED_02_the_work_edition_has_no_kakao_button(make, work):
 
 def test_ED_03_the_work_guide_never_mentions_kakao_or_mail(work):
     pages = guide.pages()
-    assert len(pages) == len(guide.PAGES) - 2                # no KakaoTalk chapter, no mail chapter
+    assert len(pages) == len(guide.PAGES) - 3                # no KakaoTalk, mail or recording chapter
     text = "\n".join(p.title + p.intro + "".join(p.steps) + p.tip for p in pages)
     assert "카톡" not in text and "카카오" not in text
     assert "메일" not in text.replace("이메일", "")           # (이메일 = the personal-data masking, stays)
@@ -101,7 +101,7 @@ def test_ED_08_the_work_edition_sends_nothing_to_the_internet(work):
     """No web search, no internet share link, no Gemini on a company PC - the modules are not
     even in the bundle; the 검색 and 링크 buttons stay (saved-capture search, file link)."""
     from capture_tool.core import bar_layout as bl
-    assert edition.excluded() == ("kakao", "mail", "search_web", "link_web", "gemini")
+    assert edition.excluded() == ("kakao", "mail", "search_web", "link_web", "gemini", "record")
     assert not edition.has_web_search() and not edition.has_share() and not edition.has_gemini()
     assert "search" in bl.available_names() and "link" in bl.available_names()
     spec = (ROOT / "packaging" / "capture_tool.spec").read_text(encoding="utf-8")
@@ -157,7 +157,7 @@ def test_ED_10_work_settings_and_guide_know_no_gemini_share_or_web_search(qt_app
     text = "\n".join(p.title + p.intro + "".join(p.steps) + p.tip for p in guide.pages())
     for word in ("구글", "네이버", "파파고", "렌즈", "Gemini", "Google", "인터넷 공유"):
         assert word not in text, word
-    assert "내 캡처" in text and len(guide.pages()) == len(guide.PAGES) - 2
+    assert "내 캡처" in text and len(guide.pages()) == len(guide.PAGES) - 3
 
 
 def test_ED_10b_the_home_guide_also_tells_about_searching_saved_captures(monkeypatch):
@@ -236,7 +236,7 @@ def test_ED_06_the_work_edition_has_no_mail_either(make, work):
     d = SettingsDialog(Settings())
     assert d.has_mail_section is False
     assert d.result_settings().mail_provider == ""
-    assert bl.default_profile("work").hidden == ["mail", "kakao"]
+    assert bl.default_profile("work").hidden == ["mail", "kakao", "record"]
 
 
 @pytest.fixture
@@ -274,3 +274,32 @@ def test_ED_12_the_controller_makes_no_office_senders_on_the_mac(mac, make):
     c._send_item_to_ppt(object(), "그림", on_done=lambda ok, msg: got.append((ok, msg)))
     assert len(c.messages) >= 3 and all("클립보드" in m for m in c.messages[-3:])
     assert got == [(False, c.messages[-1])]
+
+
+def test_ED_REC_01_screen_recording_is_home_only_for_now(monkeypatch, tmp_path):
+    """Screen recording (v0.11): the home edition has the 녹화 button, the hotkey slot and the tray
+    entry; the work edition has none of them until the company's security policy is checked."""
+    from capture_tool.app import hotkeys
+    from capture_tool.core import bar_layout as bl
+    monkeypatch.delenv("CAPTURE_EDITION", raising=False)
+    monkeypatch.setattr(edition, "_MARKER", tmp_path / "edition.txt")
+    edition.reset()
+    assert edition.has("record") and "record" in bl.available_names() and "record" in hotkeys.IDS
+    monkeypatch.setenv("CAPTURE_EDITION", "work")
+    edition.reset()
+    assert not edition.has("record") and "record" not in bl.available_names()
+    edition.reset()
+
+
+def test_ED_REC_02_the_work_edition_never_registers_the_recording_hotkey(work, qt_app):
+    from capture_tool.app.hotkeys import IDS, HotkeyManager
+    edition.reset()
+    registered = []
+    m = HotkeyManager(lambda i, hk: registered.append(i) or True, lambda i: None)
+    m.apply({"capture": "Alt + ~", "record": "Ctrl + Alt + R"})
+    assert IDS["capture"] in registered and IDS["record"] not in registered
+
+
+def test_ED_REC_03_the_work_guide_says_nothing_about_recording(work):
+    text = "\n".join(p.title + p.intro + "".join(p.steps) + p.tip for p in guide.pages())
+    assert "녹화" not in text and "화면(도움말)" in text

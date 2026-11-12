@@ -17,7 +17,7 @@ GROUPS: list[tuple[str, str, list[str]]] = [
     ("read", "글자·표", ["text", "translate", "summarize", "table"]),
     ("send", "보내기", ["ppt", "ppt_shapes", "mail", "kakao", "search", "print", "pdf"]),
     ("touch", "그림 손질", ["border", "transparent", "resize", "rotate_left", "rotate_right", "scroll"]),
-    ("screen", "화면", ["pin", "help"]),
+    ("screen", "화면", ["record", "pin", "help"]),
 ]
 NAMES: list[str] = [FIXED_FIRST] + [n for _, _, names in GROUPS for n in names] + [FIXED_LAST]
 _GROUP_OF = {n: key for key, _, names in GROUPS for n in names}

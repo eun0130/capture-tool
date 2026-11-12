@@ -9,7 +9,7 @@ def test_BL_01_defaults_are_the_old_bar_and_work_hides_kakao_and_mail():
     assert home.favourites == ["autosave", "text", "translate", "summarize", "table", "ppt", "mail", "kakao", "search", "pin"]
     assert home.hidden == []
     work = bl.default_profile("work")
-    assert "kakao" not in work.favourites and "mail" not in work.favourites and work.hidden == ["mail", "kakao"]
+    assert "kakao" not in work.favourites and "mail" not in work.favourites and work.hidden == ["mail", "kakao", "record"]
     assert set(bl.NAMES) == {"copy", "more"} | {n for _, _, names in bl.GROUPS for n in names}
     assert bl.group_label("kakao") == "보내기" and bl.group_label("border") == "그림 손질" and bl.group_label("copy") == ""
 
@@ -21,7 +21,7 @@ def test_BL_02_rows_put_copy_first_more_last_and_group_the_rest():
     assert labels == ["저장", "보내기", "그림 손질", "화면"]            # 글자·표 is all in favourites: no empty group
     flat = [n for _, names in groups for n in names]
     assert flat == ["save_as", "open_folder", "link", "ppt_shapes", "print", "pdf", "border", "transparent", "resize",
-                    "rotate_left", "rotate_right", "scroll", "help"]
+                    "rotate_left", "rotate_right", "scroll", "record", "help"]
     first, groups = bl.rows(bl.default_profile("work"))
     assert "kakao" not in first and "kakao" not in [n for _, names in groups for n in names]
     first, groups = bl.rows(bl.default_profile("home"), available=["copy", "more", "text", "kakao", "pdf"])

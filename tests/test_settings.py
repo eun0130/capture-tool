@@ -183,3 +183,19 @@ def test_SET_13_new_fields_round_trip(tmp_path):
     s, warnings = load(p)
     assert (s.ppt_new_slide, s.last_highlight_color, s.last_text_bg) == (False, "#8CE99A", "#FFEC99")
     assert not warnings
+
+
+def test_SET_REC_01_recording_settings_have_defaults_and_are_checked(tmp_path):
+    """Screen recording: MP4 at 15 fps, 10 minutes at most, microphone and computer sound on, the
+    pointer and its clicks shown, a 3-2-1 countdown; Ctrl + Alt + R. Bad values fall back."""
+    s = Settings()
+    assert (s.record_format, s.record_fps, s.record_max_minutes) == ("mp4", 15, 10)
+    assert s.record_mic and s.record_system and s.record_cursor and s.record_clicks and s.record_countdown
+    assert s.hotkeys["record"] == "Ctrl + Alt + R"
+    p = tmp_path / "settings.json"
+    p.write_text(json.dumps({"record_format": "avi", "record_fps": 7, "record_max_minutes": 999,
+                             "record_mic": "yes", "hotkeys": {"capture": "Alt + ~"}}), encoding="utf-8")
+    s, warnings = load(p)
+    assert (s.record_format, s.record_fps, s.record_max_minutes, s.record_mic) == ("mp4", 15, 60, True)
+    assert s.hotkeys["record"] == "Ctrl + Alt + R"                      # older files get the new key
+    assert any("record_format" in w for w in warnings) and any("record_mic" in w for w in warnings)

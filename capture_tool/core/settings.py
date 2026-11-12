@@ -10,10 +10,11 @@ from pathlib import Path
 from .color import normalize_hex
 from .hotkey import HotkeyError, parse
 
-DEFAULT_HOTKEYS = {"capture": "Alt + ~", "ocr": "", "shapes": "", "fullscreen": "", "scroll": "", "search": ""}
+DEFAULT_HOTKEYS = {"capture": "Alt + ~", "ocr": "", "shapes": "", "fullscreen": "", "scroll": "", "search": "",
+                   "record": "Ctrl + Alt + R"}
 # the Mac: the same keys as Alt + ~ on Windows (Option is the Mac's Alt), so one habit works on both PCs;
 # free on macOS (Cmd + ` is the window switcher, Shift+Cmd+3/4/5 are its screenshots)
-DEFAULT_HOTKEYS_MAC = {**DEFAULT_HOTKEYS, "capture": "Option + ~"}
+DEFAULT_HOTKEYS_MAC = {**DEFAULT_HOTKEYS, "capture": "Option + ~", "record": "Ctrl + Option + R"}
 
 
 def default_hotkeys() -> dict:
@@ -79,6 +80,14 @@ class Settings:
     share_expiry: str = "24h"            # internet link: deleted by the host after 1h/12h/24h/72h
     share_consent: bool = False          # agreed that internet links upload the picture
     tip_count: int = 0                   # "click a title bar = whole window" tip shown this often
+    record_format: str = "mp4"           # screen recording: "mp4" (H.264 + AAC) or "gif"
+    record_fps: int = 15                 # 10, 15 or 30 pictures a second
+    record_max_minutes: int = 10         # a recording ends by itself after this long (1..60)
+    record_mic: bool = True              # the microphone in the recording
+    record_system: bool = True           # the computer's sound in the recording
+    record_cursor: bool = True           # the mouse pointer drawn into the recording
+    record_clicks: bool = True           # a yellow ring where the mouse is clicked
+    record_countdown: bool = True        # 3-2-1 before recording starts
     catalog_enabled: bool = True         # saved captures are catalogued for 캡처 찾기
     catalog_text: bool = True            # ... including their (masked) text
     version: int = SETTINGS_VERSION
@@ -138,7 +147,8 @@ def _apply(s: Settings, data: dict, warnings: list[str]) -> None:
                     raise TypeError
                 s.jpg_quality = min(100, max(1, v))
             elif name in ("auto_save", "launch_at_startup", "redact_pii", "drm_notice_shown", "ppt_new_slide", "auto_copy", "show_recent", "styled_text", "pdf_one_page", "border_shadow", "read_ahead", "keep_style", "bar_expanded", "table_quick", "guide_shown",
-                          "ai_cloud_translate", "ai_cloud_consent", "share_consent", "catalog_enabled", "catalog_text"):
+                          "ai_cloud_translate", "ai_cloud_consent", "share_consent", "catalog_enabled", "catalog_text",
+                          "record_mic", "record_system", "record_cursor", "record_clicks", "record_countdown"):
                 if not isinstance(v, bool):
                     raise TypeError
                 setattr(s, name, v)
@@ -166,6 +176,18 @@ def _apply(s: Settings, data: dict, warnings: list[str]) -> None:
                 if not _is_int(v):
                     raise TypeError
                 s.border_thickness = min(64, max(0, v))
+            elif name == "record_format":
+                if v not in ("mp4", "gif"):
+                    raise ValueError
+                s.record_format = v
+            elif name == "record_fps":
+                if v not in (10, 15, 30):
+                    raise ValueError
+                s.record_fps = v
+            elif name == "record_max_minutes":
+                if not _is_int(v):
+                    raise TypeError
+                s.record_max_minutes = min(60, max(1, v))
             elif name == "transparent_level":
                 if not _is_int(v):
                     raise TypeError

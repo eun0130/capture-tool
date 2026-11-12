@@ -7,9 +7,11 @@ from ctypes import wintypes
 from PySide6.QtCore import QObject, Signal
 from PySide6.QtWidgets import QWidget
 
+from .. import edition
 from ..core.hotkey import HotkeyError, known_conflicts, parse
 
-IDS = {"capture": 0xA001, "ocr": 0xA002, "shapes": 0xA003, "fullscreen": 0xA004, "scroll": 0xA005, "search": 0xA006}
+IDS = {"capture": 0xA001, "ocr": 0xA002, "shapes": 0xA003, "fullscreen": 0xA004, "scroll": 0xA005, "search": 0xA006,
+       "record": 0xA007}
 WM_HOTKEY = 0x0312
 
 
@@ -32,7 +34,7 @@ class HotkeyManager(QObject):
         self._active.clear()
         failures: dict[str, str] = {}
         for action, text in hotkeys.items():
-            if action not in IDS or not text:
+            if action not in IDS or not text or not edition.has(action):   # e.g. no 녹화 at work
                 continue
             try:
                 hk = parse(text)

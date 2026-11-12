@@ -557,7 +557,7 @@ def test_APP_31_side_bar_next_to_selection(make):
     assert g.left() == min(100, 800 - g.width()) >= 0 and g.top() == 308 and g.right() <= 800
     assert list(sb.buttons) == ["copy", "autosave", "text", "translate", "summarize", "table", "ppt", "mail", "kakao", "search", "pin", "more",
                                 "save_as", "resize", "border", "transparent", "rotate_left", "rotate_right", "pdf", "print", "ppt_shapes", "scroll", "link",
-                                "open_folder", "help"]
+                                "open_folder", "record", "help"]
     assert sb.columns == 0 and sb.height() <= 60
 
 
