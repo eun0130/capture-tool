@@ -16,6 +16,9 @@ on:
       - "capture_tool/platform/win_audio.py"
       - "capture_tool/platform/sound_common.py"
       - "capture_tool/platform/win_clipboard.py"
+      - "capture_tool/app/recording_ui.py"
+      - "capture_tool/app/recording_result.py"
+      - "capture_tool/core/recording.py"
       - "tests/test_platform_win.py"
       - ".github/workflows/windows-check.yml"
 
@@ -61,4 +64,14 @@ jobs:
       - name: Recording sound and the file on the clipboard
         shell: pwsh
         run: python -X utf8 -m pytest tests/test_platform_win.py -k "PWIN_34 or PWIN_35" -q -s -rs
+
+      - name: The app's recorder on the real screen (DXGI grab + Media Foundation on the recording thread)
+        shell: pwsh
+        run: python -X utf8 -m pytest tests/test_platform_win.py -k "PWIN_36" -q -s -rs
+
+      - name: Recording logic and windows on Windows (fake screen)
+        shell: pwsh
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: python -X utf8 -m pytest tests/test_recording.py tests/test_recording_export.py tests/test_recording_ui.py tests/test_sound.py -q -rs
 

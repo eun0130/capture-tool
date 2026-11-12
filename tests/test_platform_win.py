@@ -491,3 +491,41 @@ def test_PWIN_35_a_recording_goes_on_the_clipboard_as_a_file_explorer_can_paste(
     finally:
         u32.CloseClipboard()
     assert count == 1 and buf.value == str(f)
+
+
+def test_PWIN_36_the_app_recorder_records_the_real_screen_on_its_own_thread(qt_app, tmp_path):
+    """The whole recording path with Windows' own parts: the DXGI / GDI grab and the mouse read on the
+    recording thread, the pointer drawn, Media Foundation opened on that thread (COM there), the sound
+    sources this PC has (none on a server is fine); stopped from the GUI side."""
+    from PySide6.QtCore import QCoreApplication, QRect
+    from capture_tool.app.recording_ui import Recorder
+    from capture_tool.app.services import RealScreen
+    from capture_tool.core.recording_export import video_info
+    from capture_tool.core.settings import Settings
+    try:
+        from capture_tool.platform import mf_recorder
+        mf_recorder.open_writer(tmp_path / "probe.mp4", 64, 64, 15, None).close()
+    except OSError as e:
+        pytest.skip(f"Media Foundation not usable here: {e}")
+    s = Settings(record_countdown=False, record_fps=15)
+    rec = Recorder(RealScreen(), s, Rect(40, 40, 320, 240), QRect(40, 40, 320, 240), QRect(0, 0, 1024, 768),
+                   1.0, tmp_path / "rec.mp4")
+    ended = []
+    rec.ended.connect(ended.append)
+
+    def wait(seconds, done=lambda: False):
+        end = time.monotonic() + seconds
+        while time.monotonic() < end and not done():
+            QCoreApplication.processEvents()
+            time.sleep(0.01)
+    rec.start()
+    wait(2.0)
+    rec.stop()
+    wait(8.0, lambda: bool(ended))
+    ses = ended[0]
+    print("STATE", ses.state, ses.reason, "FRAMES", ses.frames, "DROPPED", ses.dropped, "ERROR", ses.error,
+          "SOURCES", [(x.name, getattr(x, "error", None)) for x in rec.sources])
+    assert ses.state == "done" and ses.reason == "stopped" and ses.error is None
+    vw, vh, fps, length = video_info(ses.path)
+    print("VIDEO", vw, vh, fps, length)
+    assert (vw, vh) == (320, 240) and 1.4 <= length <= 2.8 and ses.frames >= 18
