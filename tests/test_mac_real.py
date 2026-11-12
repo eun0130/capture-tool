@@ -302,3 +302,32 @@ def test_MACR_10_a_recording_session_writes_an_mp4_with_picture_and_sound(tmp_pa
     spec = np.abs(np.fft.rfft(mid))
     assert abs(np.fft.rfftfreq(len(mid), 1 / RATE)[spec.argmax()] - 440) < 5
     assert 0.18 < float(np.sqrt((mid ** 2).mean())) < 0.24                 # 0.3 / sqrt 2
+
+
+def test_MACR_11_the_computers_sound_comes_through_screencapturekit():
+    """Screen recording's computer sound on the Mac: 48 kHz stereo blocks keep coming (silence too)."""
+    import time
+    from capture_tool.platform.mac import audio, permissions
+    if not permissions.screen_recording():
+        pytest.skip("Screen Recording not granted")
+    got = []
+    src = audio.ScreenAudioSource()
+    src.start(lambda block, rate: got.append((block.shape, rate)))
+    time.sleep(1.5)
+    src.stop()
+    assert src.error is None, src.error
+    frames = sum(s[0] for s, _ in got)
+    assert got and all(r == 48000 and s[1] == 2 for s, r in got) and 48000 < frames < 96000
+
+
+def test_MACR_12_the_microphone_comes_through_soundcard():
+    import time
+    from capture_tool.platform.mac import audio
+    if audio.mic_permission() != "granted":
+        pytest.skip("Microphone not granted to the test runner (no prompt from a test)")
+    got = []
+    src = audio.sources(mic=True, system=False)[0]
+    src.start(lambda block, rate: got.append(block.shape))
+    time.sleep(1.0)
+    src.stop()
+    assert src.error is None and got and all(s[1] == 2 for s in got)

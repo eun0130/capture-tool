@@ -446,3 +446,26 @@ def test_PWIN_33_media_foundation_writes_an_mp4_with_picture_and_sound(tmp_path)
     print("TOP", top.tolist(), "BOTTOM", bottom.tolist())
     assert top[2] > 200 and top[0] < 60 and bottom[0] > 200 and bottom[2] < 60        # red over blue
     assert sorted(handlers) == ["soun", "vide"] and abs(duration - 2.0) < 0.2
+
+
+def test_PWIN_34_microphone_and_computer_sound_come_through_soundcard():
+    """Screen recording's sound on Windows (WASAPI through soundcard). A PC without sound devices
+    (a build server) skips; a silent computer may give no loopback blocks at all - only errors fail."""
+    import time
+    from capture_tool.platform import win_audio
+    try:
+        import soundcard
+        soundcard.default_microphone()
+        soundcard.default_speaker()
+    except Exception as e:  # noqa: BLE001
+        pytest.skip(f"no sound devices here: {e}")
+    got = {"mic": [], "system": []}
+    srcs = win_audio.sources(mic=True, system=True)
+    for s in srcs:
+        s.start(lambda block, rate, n=s.name: got[n].append((block.shape, rate)))
+    time.sleep(1.0)
+    for s in srcs:
+        s.stop()
+    print("MIC", len(got["mic"]), "SYSTEM", len(got["system"]), [s.error for s in srcs])
+    assert all(s.error is None for s in srcs), [s.error for s in srcs]
+    assert got["mic"] and all(r == 48000 and sh[1] == 2 for sh, r in got["mic"])

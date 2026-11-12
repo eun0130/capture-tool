@@ -25,10 +25,11 @@ class Backend:
         return mod
 
 
-_NAMES = ("screen", "clipboard", "hotkey", "windows", "scroll", "startup", "secret", "shell")
+_NAMES = ("screen", "clipboard", "hotkey", "windows", "scroll", "startup", "secret", "shell", "recorder", "audio")
 WINDOWS = Backend("capture_tool.platform", {"screen": "screen", "clipboard": "win_clipboard", "hotkey": "win_hotkey",
                                             "windows": "windows", "scroll": "scroll", "startup": "startup",
-                                            "secret": "secret", "shell": "shell"})
+                                            "secret": "secret", "shell": "shell", "recorder": "mf_recorder",
+                                            "audio": "win_audio"})
 MAC = Backend("capture_tool.platform.mac", {n: n for n in _NAMES})
 _override = None
 
