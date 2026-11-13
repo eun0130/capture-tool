@@ -249,3 +249,78 @@ def test_REC_18_a_muted_microphone_records_silence_while_the_computer_sound_goes
     s.finish(2.0)
     out = w.samples()
     assert len(out) == 2 * RATE and np.allclose(out[:RATE], 0.25) and np.allclose(out[RATE:], 0.75)
+
+
+# --- sound devices whose clocks are a little off (found by tools/long_recording_check.py) -----------
+class DriftSource:
+    """0.1 s blocks of `signal(wall seconds)` at RATE x (1 + ppm), each delivered 0-150 ms late."""
+
+    def __init__(self, name, signal, ppm, seed):
+        self.name, self.signal, self.ppm = name, signal, ppm
+        self.rng = np.random.default_rng(seed)
+        self.made, self.pending = 0, []
+
+    def due(self, wall):
+        rate = RATE * (1 + self.ppm * 1e-6)
+        while (self.made + 4800) / rate <= wall:
+            t0 = self.made / rate
+            due = t0 + 4800 / rate + self.rng.uniform(0, 0.15)
+            due = max(due, self.pending[-1][0]) if self.pending else due      # a stream keeps its order
+            self.pending.append((due, self.signal(t0 + np.arange(4800) / rate)))
+            self.made += 4800
+        out = [b for d, b in self.pending if d <= wall]
+        self.pending = [(d, b) for d, b in self.pending if d > wall]
+        return out
+
+
+def _beep(walls):
+    on = (walls % 10.0 < 0.05) & (walls > 5)
+    s = (0.5 * np.sin(2 * np.pi * 1000 * walls) * on).astype(np.float32)
+    return np.stack([s, s], axis=1)
+
+
+def _tone(walls):
+    s = (0.1 * np.sin(2 * np.pi * 220 * walls)).astype(np.float32)
+    return np.stack([s, s], axis=1)
+
+
+def _power(x, hz, win):
+    n = len(x) // win
+    seg = x[:n * win].reshape(n, win)
+    t = np.arange(win) / RATE
+    return ((seg @ np.cos(2 * np.pi * hz * t)) ** 2 + (seg @ np.sin(2 * np.pi * hz * t)) ** 2) / win ** 2
+
+
+def _drift_run(tmp_path, ppm_mic, ppm_sys, seconds):
+    mic, system = DriftSource("mic", _beep, ppm_mic, 1), DriftSource("system", _tone, ppm_sys, 2)
+    s, w = session(tmp_path, fps=5, max_seconds=seconds + 10, sources=(mic, system))
+    s.begin(now=0.0)
+    for i in range(1, int(seconds * 20) + 1):            # 50 ms ticks
+        now = i * 0.05
+        for src in (mic, system):
+            for block in src.due(now):
+                s.feed(src, block, RATE)
+        s.tick(now)
+    s.finish(seconds)
+    x = w.samples()[:, 0]
+    p = _power(x, 1000, 480)
+    on = p > 0.01
+    beeps = [i * 0.01 for i in np.flatnonzero(on & ~np.concatenate([[False], on[:-1]]))]
+    gaps = [round(i * 0.1, 1) for i in np.flatnonzero(_power(x, 220, 4800) < 0.0005)]
+    return beeps, gaps
+
+
+def test_REC_19_a_fast_microphone_clock_does_not_pull_the_sound_behind_the_picture(tmp_path):
+    """+0.2 % (a cheap USB microphone; 60 ppm is common): without correction the beeps came 0.36 s
+    late after 3 minutes (0.47 s after 2 hours at 60 ppm in the long check)."""
+    beeps, _ = _drift_run(tmp_path, ppm_mic=2000, ppm_sys=0, seconds=180)
+    late = [b - round(b / 10) * 10 for b in beeps if b > 60]
+    assert len(beeps) >= 16 and max(abs(d) for d in late) < 0.06, late
+
+
+def test_REC_20_a_slow_device_clock_leaves_no_holes_in_the_sound(tmp_path):
+    """-0.2 %: the device delivers a little less than the timeline uses; padding with silence made
+    100 ms holes (23 in the 2-hour check at -60 ppm)."""
+    beeps, gaps = _drift_run(tmp_path, ppm_mic=-2000, ppm_sys=-2000, seconds=180)
+    late = [b - round(b / 10) * 10 for b in beeps if b > 60]
+    assert [g for g in gaps if 1.0 < g < 179.0] == [] and max(abs(d) for d in late) < 0.06, (gaps, late)

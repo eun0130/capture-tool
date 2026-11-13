@@ -20,6 +20,10 @@ from .geometry import Rect
 
 RATE = 48000              # Hz, stereo float32 everywhere inside
 AUDIO_LAG = 0.3           # s: sound is mixed this far behind the picture - devices deliver late
+DRIFT_WINDOW = 8.0        # s: a device's smallest backlog over this long shows its clock's drift
+DRIFT_FIX_S = 8.0         # s over which a backlog error is taken back (proportional)
+DRIFT_I_S = 40.0          # s: the integral part's time, it takes the lasting drift over
+DRIFT_MAX = 0.005         # at most 0.5 % faster / slower (not heard)
 
 
 @dataclass
@@ -101,6 +105,75 @@ class MousePainter:
         return out
 
 
+class _Drift:
+    """Keeps one device in step with the video. Its sound is placed by sample count, so a clock a
+    little fast piles up (the sound slides behind the picture: 0.47 s after 2 h at 60 ppm) and a slow
+    one runs dry (holes of silence). The smallest backlog over DRIFT_WINDOW is learned once and then
+    held (PI control): the device's sound is consumed up to DRIFT_MAX faster or slower, resampled.
+    A block that comes too late leaves silence where it belonged and is skipped by that much when it
+    comes, so lateness never shifts the rest."""
+
+    def __init__(self):
+        self.ratio = 1.0                     # input samples taken per output sample
+        self.carry = 0.0                     # the fraction of an input sample not taken yet
+        self.owed = 0                        # input samples to skip (their place was filled with silence)
+        self.first: float | None = None      # media time the device's sound began
+        self.target: float | None = None     # learned backlog (samples)
+        self.integral = 0.0
+        self.last_t: float | None = None
+        self.window: list[tuple[float, int]] = []
+
+    def take(self, buf: np.ndarray, n: int) -> tuple[np.ndarray, np.ndarray]:
+        """n output samples from `buf` at the current ratio; (out, what is left of buf)."""
+        if self.owed and len(buf):
+            k = min(self.owed, len(buf))
+            buf, self.owed = buf[k:], self.owed - k
+        want = n * self.ratio + self.carry
+        m = int(want)
+        out = np.zeros((n, 2), np.float32)
+        if len(buf) < m:                       # dry: what there is, in time, silence after it
+            have = len(buf)
+            k = min(n, int(have / self.ratio))
+            if k:
+                out[:k] = _stretch(buf, k)
+            if self.first is not None:
+                self.owed += m - have
+            self.carry = 0.0
+            return out, buf[have:]
+        self.carry = want - m
+        out[:] = _stretch(buf[:m], n)
+        return out, buf[m:]
+
+    def update(self, t: float, backlog: int, has_sound: bool) -> None:
+        if self.first is None:
+            if not has_sound:
+                return
+            self.first = t
+        dt = 0.0 if self.last_t is None else max(0.0, t - self.last_t)
+        self.last_t = t
+        self.window.append((t, backlog - self.owed))
+        while self.window and self.window[0][0] < t - DRIFT_WINDOW:
+            self.window.pop(0)
+        if t - self.first < DRIFT_WINDOW:
+            return
+        low = min(b for _, b in self.window)
+        if self.target is None:
+            self.target = low
+            return
+        err = (low - self.target) / RATE                     # s of sound piled up (+) or missing (-)
+        self.integral = max(-DRIFT_MAX, min(DRIFT_MAX, self.integral + err * dt / (DRIFT_FIX_S * DRIFT_I_S)))
+        self.ratio = 1.0 + max(-DRIFT_MAX, min(DRIFT_MAX, err / DRIFT_FIX_S + self.integral))
+
+
+def _stretch(a: np.ndarray, n: int) -> np.ndarray:
+    """`a` resampled to n samples (linear; the change is a fraction of a percent)."""
+    if len(a) == n:
+        return np.ascontiguousarray(a, np.float32)
+    src = np.arange(len(a), dtype=np.float64)
+    dst = np.linspace(0, len(a) - 1, n)
+    return np.stack([np.interp(dst, src, a[:, c]) for c in range(2)], axis=1).astype(np.float32)
+
+
 class RecordingSession:
     """state: ready -> recording <-> paused -> done | failed. reason: end, limit, stopped."""
 
@@ -115,6 +188,7 @@ class RecordingSession:
         self.writer = None
         self._lock = threading.Lock()
         self._buf = {id(s): np.zeros((0, 2), np.float32) for s in self.sources}
+        self._drift = {id(s): _Drift() for s in self.sources}
         self._written = 0                 # audio samples written
         self._wav = None
         self._t0 = 0.0
@@ -235,9 +309,11 @@ class RecordingSession:
                 return
             mix = np.zeros((n, 2), np.float32)
             for key, buf in self._buf.items():
-                take = buf[:n]
-                mix[:len(take)] += take
-                self._buf[key] = buf[len(take):]
+                d = self._drift[key]
+                out, rest = d.take(buf, n)
+                mix += out
+                self._buf[key] = rest
+                d.update(upto, len(rest), len(buf) > 0)
             np.clip(mix, -1.0, 1.0, out=mix)
             start = self._written / RATE
             self._written += n
