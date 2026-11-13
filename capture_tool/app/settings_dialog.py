@@ -229,7 +229,7 @@ class SettingsDialog(QDialog):
         rrow.addWidget(self.rec_fps)
         rrow.addWidget(QLabel("최대"))
         self.rec_max = QSpinBox()
-        self.rec_max.setRange(1, 60)
+        self.rec_max.setRange(1, 240)
         self.rec_max.setSuffix("분")
         self.rec_max.setValue(settings.record_max_minutes)
         rrow.addWidget(self.rec_max)

@@ -21,6 +21,7 @@ from .render import bgr_to_pixmap
 log = logging.getLogger("capture_tool")
 
 HANDLE = 7                                    # px around a handle that grabs it
+GIF_MAX_SECONDS = 60                          # a GIF holds every picture in memory: a minute at most
 GIF_CHOICES = (("GIF 보통 (10fps · 폭 800)", 10, 800), ("GIF 작게 (8fps · 폭 640)", 8, 640),
                ("GIF 선명하게 (15fps · 폭 1024)", 15, 1024))
 
@@ -334,10 +335,13 @@ class RecordingResult(QWidget):
     def export_to(self, what: str) -> None:
         if self.busy:
             return
+        start, end, kind = self.timeline.start, self.timeline.end, self.kind
+        if kind == "gif" and end - start > GIF_MAX_SECONDS + 0.05:      # (before asking where to save)
+            self.status.setText(f"GIF는 {GIF_MAX_SECONDS // 60}분까지만 만듭니다. 파란 손잡이로 줄이거나 MP4로 저장하세요.")
+            return
         dst = self._target(what)
         if dst is None:
             return
-        start, end, kind = self.timeline.start, self.timeline.end, self.kind
         fps, width = self.gif_settings()
         writer = self.deps["open_writer"]
 

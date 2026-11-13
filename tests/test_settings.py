@@ -196,6 +196,6 @@ def test_SET_REC_01_recording_settings_have_defaults_and_are_checked(tmp_path):
     p.write_text(json.dumps({"record_format": "avi", "record_fps": 7, "record_max_minutes": 999,
                              "record_mic": "yes", "hotkeys": {"capture": "Alt + ~"}}), encoding="utf-8")
     s, warnings = load(p)
-    assert (s.record_format, s.record_fps, s.record_max_minutes, s.record_mic) == ("mp4", 15, 60, True)
+    assert (s.record_format, s.record_fps, s.record_max_minutes, s.record_mic) == ("mp4", 15, 240, True)   # up to 4 h
     assert s.hotkeys["record"] == "Ctrl + Alt + R"                      # older files get the new key
     assert any("record_format" in w for w in warnings) and any("record_mic" in w for w in warnings)

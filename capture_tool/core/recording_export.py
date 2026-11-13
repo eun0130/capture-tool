@@ -13,13 +13,18 @@ import numpy as np
 from .recording import RATE
 
 AUDIO_CHUNK = RATE // 2                   # 0.5 s per audio write
+SOUND_LEAD = 2.0                          # s the sound is written ahead of the pictures (see write_trimmed)
 
 
-def read_frames(path) -> Iterator[tuple[float, np.ndarray]]:
-    """(time in s, BGR picture) for every frame of a video file."""
+def read_frames(path, start: float = 0.0) -> Iterator[tuple[float, np.ndarray]]:
+    """(time in s, BGR picture) for every frame of a video file - from about `start` on: the reader
+    jumps there (a part from late in a 2-hour recording is not decoded from the beginning). The
+    first frame given is at or before `start`."""
     import cv2
     cap = cv2.VideoCapture(str(path))
     try:
+        if start > 1.0:
+            cap.set(cv2.CAP_PROP_POS_MSEC, 1000.0 * (start - 1.0))
         while True:
             ok, img = cap.read()
             if not ok:
@@ -42,31 +47,53 @@ def video_info(path) -> tuple[int, int, float, float]:
         cap.release()
 
 
-def read_wav(path) -> np.ndarray | None:
-    """The recording's sound as float32 [n, 2], or None when there is no WAV."""
+def read_wav(path, start: float = 0.0, end: float | None = None) -> np.ndarray | None:
+    """The recording's sound in [start, end) as float32 [n, 2], or None when there is no WAV. Only that
+    range is read (2 hours of sound are 1.4 GB on disk, twice that as float)."""
     if path is None or not Path(path).exists():
         return None
     with wave.open(str(path)) as wf:
-        raw = wf.readframes(wf.getnframes())
-        ch = wf.getnchannels()
+        rate, ch, total = wf.getframerate(), wf.getnchannels(), wf.getnframes()
+        a = min(total, max(0, int(round(start * rate))))
+        b = total if end is None else min(total, max(a, int(round(end * rate))))
+        wf.setpos(a)
+        raw = wf.readframes(b - a)
     return (np.frombuffer(raw, "<i2").astype(np.float32) / 32767).reshape(-1, ch)
 
 
 def write_trimmed(frames: Iterable[tuple[float, np.ndarray]], pcm: np.ndarray | None, start: float, end: float,
-                  writer) -> None:
-    """The part [start, end) of a recording into `writer` (opened with sound when pcm is given)."""
+                  writer, pcm_start: float = 0.0) -> None:
+    """The part [start, end) of a recording into `writer` (opened with sound when pcm is given; pcm
+    begins at `pcm_start` of the recording). The sound goes in SOUND_LEAD ahead of the pictures: the
+    Mac encoder, when not in real time, stops taking pictures that run ahead of the sound (all
+    pictures first, then the sound, stalled every part longer than a second or two)."""
+    part = None
+    if pcm is not None and len(pcm):
+        part = pcm[max(0, int(round((start - pcm_start) * RATE))):max(0, int(round((end - pcm_start) * RATE)))]
+    done, ended = 0, False                                # samples of `part` written; sound marked ended
+
+    def sound_until(t: float) -> None:
+        nonlocal done, ended
+        if part is None or ended:
+            return
+        upto = min(len(part), int(round(t * RATE)))
+        while done < upto:
+            n = min(AUDIO_CHUNK, upto - done)
+            writer.add_audio(np.ascontiguousarray(part[done:done + n], np.float32), done / RATE)
+            done += n
+        if done >= len(part) and hasattr(writer, "end_audio"):
+            writer.end_audio()          # all of it is in: the last pictures must not wait for more sound
+            ended = True
     try:
         for t, bgr in frames:
             if t < start - 1e-9:
                 continue
             if t >= end - 1e-9:
                 break
+            sound_until(t - start + SOUND_LEAD)
             bgra = np.dstack([bgr, np.full(bgr.shape[:2], 255, np.uint8)])
             writer.add_frame(bgra, t - start)
-        if pcm is not None and len(pcm):
-            part = pcm[int(round(start * RATE)):int(round(end * RATE))]
-            for k in range(0, len(part), AUDIO_CHUNK):
-                writer.add_audio(np.ascontiguousarray(part[k:k + AUDIO_CHUNK], np.float32), k / RATE)
+        sound_until(end - start)
     finally:
         writer.close()
 
@@ -115,12 +142,12 @@ def export(src, wav, start: float, end: float, kind: str, dst, open_writer, gif_
     src, dst = Path(src), Path(dst)
     w, h, fps, length = video_info(src)
     if kind == "gif":
-        return write_gif(read_frames(src), dst, start, end, gif_fps, max_width)
+        return write_gif(read_frames(src, start), dst, start, end, gif_fps, max_width)
     if start <= 0.05 and (length <= 0 or end >= length - 0.05):
         shutil.copyfile(src, dst)
         return dst
-    pcm = read_wav(wav)
+    pcm = read_wav(wav, start, end)
     writer = open_writer(path=dst, width=w, height=h, fps=int(round(fps)),
                          audio={"rate": RATE, "channels": 2} if pcm is not None else None, realtime=False)
-    write_trimmed(read_frames(src), pcm, start, end, writer)
+    write_trimmed(read_frames(src, start), pcm, start, end, writer, pcm_start=start)
     return dst

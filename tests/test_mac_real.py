@@ -436,3 +436,31 @@ def test_MACR_16_the_app_recorder_makes_a_real_mp4_from_the_screen(mac_env, qt_a
     w, h, fps, length = video_info(ses.path)
     assert (w, h) == (400, 300) and 1.5 <= length <= 2.6 and ses.frames >= 20
     assert ses.wav_path is not None and ses.wav_path.exists()
+
+
+def test_MACR_17_a_long_part_with_sound_is_cut_by_the_real_encoder(mac_env, tmp_path):
+    """Exporting (not real time) the Mac encoder stops taking pictures that run ahead of the sound;
+    all pictures first, then the sound, failed every part longer than ~2 s. 8 s of 1080p with sound."""
+    import wave
+    import cv2
+    from capture_tool.core.recording import RATE
+    from capture_tool.core.recording_export import export, video_info
+    from capture_tool.platform.mac import recorder
+    src, wav = tmp_path / "rec.mp4", tmp_path / "rec.wav"
+    vw = cv2.VideoWriter(str(src), cv2.VideoWriter_fourcc(*"mp4v"), 15, (1920, 1080))
+    for i in range(15 * 12):
+        img = np.full((1080, 1920, 3), 255, np.uint8)
+        img[500:540, (i * 10) % 1880:(i * 10) % 1880 + 40] = (0, 0, 200)
+        vw.write(img)
+    vw.release()
+    with wave.open(str(wav), "wb") as wf:
+        wf.setnchannels(2)
+        wf.setsampwidth(2)
+        wf.setframerate(RATE)
+        tone = (8000 * np.sin(2 * np.pi * 440 * np.arange(12 * RATE) / RATE)).astype("<i2")
+        wf.writeframes(np.stack([tone, tone], axis=1).tobytes())
+    out = export(src, wav, 2.0, 10.0, "mp4", tmp_path / "part.mp4", recorder.open_writer)
+    w, h, fps, length = video_info(out)
+    frames, shape, duration, vtracks, atracks, pcm = _mp4_facts(out)
+    assert (w, h) == (1920, 1080) and 118 <= frames <= 122 and abs(duration - 8.0) < 0.2, (frames, duration)
+    assert (vtracks, atracks) == (1, 1) and abs(len(pcm) / RATE - 8.0) < 0.2 and np.abs(pcm).max() > 0.1

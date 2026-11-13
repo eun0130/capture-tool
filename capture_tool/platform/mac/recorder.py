@@ -47,6 +47,7 @@ class AVWriter:
             self.vin, attrs)
         writer.addInput_(self.vin)
         self.ain = None
+        self._audio_ended = False
         if audio:
             import CoreAudio
             self.rate, self.channels = int(audio["rate"]), int(audio["channels"])
@@ -135,10 +136,15 @@ class AVWriter:
         return True
 
     # --- end --------------------------------------------------------------------------------------
+    def end_audio(self) -> None:
+        """No more sound will come (export): the encoder stops holding pictures back for it."""
+        if self.ain is not None and not self._audio_ended:
+            self.ain.markAsFinished()
+            self._audio_ended = True
+
     def close(self, timeout: float = 30.0) -> None:
         self.vin.markAsFinished()
-        if self.ain is not None:
-            self.ain.markAsFinished()
+        self.end_audio()
         done = threading.Event()
         self.writer.finishWritingWithCompletionHandler_(lambda: done.set())
         if not done.wait(timeout):

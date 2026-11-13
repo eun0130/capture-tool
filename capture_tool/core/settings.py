@@ -82,7 +82,7 @@ class Settings:
     tip_count: int = 0                   # "click a title bar = whole window" tip shown this often
     record_format: str = "mp4"           # screen recording: "mp4" (H.264 + AAC) or "gif"
     record_fps: int = 15                 # 10, 15 or 30 pictures a second
-    record_max_minutes: int = 10         # a recording ends by itself after this long (1..60)
+    record_max_minutes: int = 10         # a recording ends by itself after this long (1..240)
     record_mic: bool = True              # the microphone in the recording
     record_system: bool = True           # the computer's sound in the recording
     record_cursor: bool = True           # the mouse pointer drawn into the recording
@@ -187,7 +187,7 @@ def _apply(s: Settings, data: dict, warnings: list[str]) -> None:
             elif name == "record_max_minutes":
                 if not _is_int(v):
                     raise TypeError
-                s.record_max_minutes = min(60, max(1, v))
+                s.record_max_minutes = min(240, max(1, v))
             elif name == "transparent_level":
                 if not _is_int(v):
                     raise TypeError

@@ -247,3 +247,17 @@ def test_RUI_11_the_work_settings_have_no_recording(qt_app, monkeypatch):
     finally:
         monkeypatch.delenv("CAPTURE_EDITION")
         edition.reset()
+
+
+def test_RUI_12_long_times_show_hours_and_gifs_stop_at_a_minute(recording):
+    from capture_tool.app.recording_result import GIF_MAX_SECONDS
+    from capture_tool.app.recording_ui import mmss
+    assert mmss(59) == "00:59" and mmss(3599) == "59:59" and mmss(7805) == "2:10:05"
+    c, screen = recording()
+    res = c.recording_result
+    res.gif_button.click()
+    res.timeline.set_range(0.0, GIF_MAX_SECONDS + 5)
+    n = len(screen.writers)
+    res.trigger("save")
+    assert "1분" in res.status.text() and not list(res.deps["save_folder"]().glob("*.gif"))
+    assert len(screen.writers) == n

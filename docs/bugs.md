@@ -151,3 +151,8 @@
 - 증상: Windows 실제 테스트(PWIN-36)에서 녹화는 되지만 소리 소스가 하나도 없음.
 - 원인: `soundcard` 는 import 할 때 `CoInitializeEx(MTA)` 를 부르고 S_OK·RPC_E_CHANGED_MODE 가 아니면 예외를 낸다. 이미 MTA 로 초기화된 스레드에서는 S_FALSE 라 import 자체가 실패.
 - 고침: `sound_common.import_soundcard()` 가 처음 한 번 COM 이 없는 새 스레드에서 불러 둔다(SND-05). 앱의 GUI 스레드(Qt 가 STA)에서는 원래 괜찮았지만 어느 스레드에서 불러도 되게.
+
+## BUG-144 — 맥에서 소리 있는 녹화를 2초 넘게 잘라 저장하면 "the video encoder stopped taking frames" (v0.11.0 개발 중)
+- 원인: 내보내기(실시간 아님)의 AVAssetWriter 는 그림이 소리보다 앞서 가면 그림을 더 받지 않는다(트랙 섞어 쓰기). 자르기가 그림을 다 넣은 뒤 소리를 넣었고, 소리를 다 넣은 뒤에도 '소리 끝'을 알리지 않아 마지막 그림이 막혔다. 짧은 테스트 영상(MACR-13)은 그 창 안이라 통과.
+- 고침: 소리를 그림보다 2초 앞서 넣고(EXP-08), 소리를 다 넣으면 `end_audio()`(맥 markAsFinished, EXP-11). 실제 1080p 8초 소리 포함 자르기(MACR-17). Windows Sink Writer 도 섞어 쓰기를 기다리므로 같은 순서가 안전.
+- 같이: 긴 녹화용 — 자를 때 뒤쪽으로 바로 건너뛰기(EXP-10), 소리 파일은 고른 구간만 읽기(EXP-09), GIF 는 1분까지, 최대 길이 4시간, 2시간 넘으면 1:23:45 표시(RUI-12).

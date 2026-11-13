@@ -102,3 +102,73 @@ def test_EXP_07_a_gif_export(tmp_path):
     out = export(src, None, 0.0, 1.0, "gif", tmp_path / "out.gif", None, gif_fps=5, max_width=80)
     im = Image.open(out)
     assert im.size == (80, 60) and im.info.get("loop") == 0
+
+
+class OrderWriter(FakeWriter):
+    """Records, for every frame, how far the sound already reached - the Mac encoder stops taking
+    pictures (export, not real time) when the sound does not lead by about a second."""
+
+    def __init__(self):
+        super().__init__()
+        self.sound_end, self.lead_at_frame = 0.0, []
+
+    def add_frame(self, bgra, t):
+        self.lead_at_frame.append(self.sound_end - t)
+        return super().add_frame(bgra, t)
+
+    def add_audio(self, pcm, t):
+        self.sound_end = max(self.sound_end, t + len(pcm) / RATE)
+        return super().add_audio(pcm, t)
+
+
+def test_EXP_08_sound_is_written_ahead_of_every_picture():
+    w = OrderWriter()
+    pcm = np.zeros((10 * RATE, 2), np.float32)
+    write_trimmed(frames(seconds=10.0), pcm, 2.0, 9.0, w)
+    assert len(w.frames) == 70 and min(w.lead_at_frame[:-15]) >= 1.5            # ahead, until the end nears
+    assert sum(n for _, n in w.audio) == 7 * RATE and w.closed == 1             # all of it, once
+
+
+def test_EXP_09_the_sound_of_a_part_comes_from_its_own_range(tmp_path):
+    """A long recording's WAV (2 h = 1.4 GB) is not read whole: only the kept part."""
+    import wave
+    from capture_tool.core.recording_export import read_wav
+    wav = tmp_path / "rec.wav"
+    with wave.open(str(wav), "wb") as wf:
+        wf.setnchannels(2)
+        wf.setsampwidth(2)
+        wf.setframerate(RATE)
+        ramp = (np.arange(10 * RATE) // RATE).astype("<i2")          # second k holds the value k
+        wf.writeframes(np.stack([ramp, ramp], axis=1).tobytes())
+    part = read_wav(wav, 3.0, 5.0)
+    assert part.shape == (2 * RATE, 2) and np.allclose(part[0], 3 / 32767) and np.allclose(part[-1], 4 / 32767)
+    assert read_wav(wav).shape == (10 * RATE, 2)
+    w = FakeWriter()
+    write_trimmed(frames(seconds=10.0), part, 3.0, 5.0, w, pcm_start=3.0)
+    assert sum(n for _, n in w.audio) == 2 * RATE
+
+
+def test_EXP_10_reading_from_late_in_a_video_skips_ahead(tmp_path):
+    from capture_tool.core.recording_export import read_frames
+    src = _mp4(tmp_path / "rec.mp4", seconds=20.0)
+    late = list(read_frames(src, start=15.0))
+    assert len(late) <= 70 and late[0][0] <= 15.0 + 1e-6 and late[-1][0] >= 19.8        # not 200 frames
+    whole = list(read_frames(src))
+    assert len(whole) == 200 and whole[0][0] == 0.0
+
+
+def test_EXP_11_the_writer_hears_when_the_sound_is_complete():
+    class EndWriter(OrderWriter):
+        def __init__(self):
+            super().__init__()
+            self.ended_before_frame = None
+
+        def end_audio(self):
+            self.ended_before_frame = len(self.frames)
+
+    w = EndWriter()
+    write_trimmed(frames(seconds=10.0), np.zeros((10 * RATE, 2), np.float32), 2.0, 9.0, w)
+    assert w.ended_before_frame is not None and w.ended_before_frame < len(w.frames)   # before the last pictures
+    quiet = EndWriter()
+    write_trimmed(frames(), None, 0.0, 1.0, quiet)
+    assert quiet.ended_before_frame is None
