@@ -75,7 +75,10 @@ class ScreenAudioSource:
         sck.SCShareableContent.getShareableContentWithCompletionHandler_(have)
         if not done.wait(5) or box.get("content") is None:
             raise OSError(f"no screen to take the sound from ({box.get('err')})")
-        display = box["content"].displays()[0]
+        displays = box["content"].displays()
+        if not displays:                                    # the display asleep / the screen locked
+            raise OSError("no screen is on to take the computer's sound from")
+        display = displays[0]
         flt = sck.SCContentFilter.alloc().initWithDisplay_excludingWindows_(display, [])
         cfg = sck.SCStreamConfiguration.alloc().init()
         cfg.setCapturesAudio_(True)

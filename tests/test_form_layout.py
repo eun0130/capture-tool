@@ -210,3 +210,48 @@ def test_FORM_19_merged_cells_span():
     assert len(tables) == 1 and (tables[0].rows, tables[0].cols) == (3, 3)
     top = [c for c in tables[0].cells if c.r == 0]
     assert len(top) == 1 and top[0].cs == 3
+
+
+def _slide_line(qt_app, text, px=40, width=1700):
+    """One line of slide text drawn with the system font at slide size (letters ~26 px tall)."""
+    import numpy as np
+    from PySide6.QtCore import Qt
+    from PySide6.QtGui import QColor, QFont, QImage, QPainter
+    img = QImage(width, 110, QImage.Format_RGB32)
+    img.fill(QColor("white"))
+    p = QPainter(img)
+    p.setRenderHint(QPainter.TextAntialiasing)
+    f = QFont("Arial")
+    f.setPixelSize(px)
+    p.setFont(f)
+    p.setPen(QColor("black"))
+    p.drawText(40, 20, width - 60, 80, Qt.AlignLeft | Qt.AlignVCenter, text)
+    p.end()
+    return np.frombuffer(img.constBits(), np.uint8).reshape(110, img.bytesPerLine() // 4, 4)[:, :width, :3].copy()
+
+
+def test_FORM_20_big_slide_letters_are_not_radio_buttons(ocr, qt_app):
+    """69-slide check: at slide size an 'o' is as big as a radio ring - the line was cut off at the
+    first 'o' and the rest went in as 60 little pictures and circles. A ring inside a line of text
+    (not before it) is a letter."""
+    from capture_tool.core.shapes import find_widgets
+    line = "1. Encourage federal agencies to benefit from the expertise of the private"
+    for px in (44, 48):                                # (the sizes where Arial's o is a clean ring)
+        img = _slide_line(qt_app, line, px=px, width=2000)
+        lines = [(l.text, l.box, l.score) for l in ocr.recognize(img)]
+        assert lines and "Encourage" in lines[0][0]
+        widgets = find_widgets(img, [(t, b) for t, b, _ in lines])
+        assert widgets == [], (px, [(d.kind, d.x, d.w) for d in widgets])
+        det = recognize_layout(img, lines, lambda crop: [(l.text, l.box) for l in ocr.recognize(crop)], 96)
+        assert [d.kind for d in det if d.kind in ("ellipse", "picture", "rect")] == [], px
+        assert any("expertise of the private" in (d.text or "") for d in det), px
+
+
+def test_FORM_21_a_radio_ring_before_its_label_is_still_a_radio(ocr, qt_app):
+    import cv2 as cv
+    img = _slide_line(qt_app, "      Monthly report")
+    cv.circle(img, (60, 75), 11, (90, 90, 90), 2, cv.LINE_AA)               # the ring left of the label
+    lines = [(l.text, l.box, l.score) for l in ocr.recognize(img)]
+    from capture_tool.core.shapes import find_widgets
+    rings = [d for d in find_widgets(img, [(t, b) for t, b, _ in lines]) if d.kind == "ellipse"]
+    assert len(rings) == 1 and abs(rings[0].x + rings[0].w / 2 - 60) <= 3

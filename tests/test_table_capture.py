@@ -276,3 +276,50 @@ def test_TCAP_19_table_button_without_a_table_says_so(make):
     c2 = make(ocr=FakeOcr([]))
     c2._run_recognition_on(np.full((100, 300, 3), 255, np.uint8), "table", dpi=96)
     assert any("글자를 찾지 못" in m for m in c2.messages)
+
+
+def test_TCAP_30_a_table_takes_the_whole_capture_only_when_it_is_what_the_capture_shows():
+    """도형PPT: lines in a photo read as a sparse 2x7 'table' replaced a whole title slide (2-hour
+    recording check, slide 1). The table wins only when most of the text is in its cells and the
+    cells are mostly filled."""
+    from capture_tool.core.table_capture import CapturedTable, table_is_the_capture
+    title = [("20 years of INTACS - A Success Story", (100, 300, 700, 40), 0.9),
+             ("Innovation and Cooperation visions from INTACS perspective", (100, 380, 800, 30), 0.9),
+             ("Bernhard Sechser  Process Fellows GmbH, Germany", (100, 440, 600, 30), 0.9)]
+    junk = CapturedTable(rows=[["10 a", "4", "", "", "é", "", ""], ["", "", "", "", "", "", "2025 Beriara"]],
+                         box=(567, 157, 1154, 873))
+    junk_text = [("10 a", (600, 200, 40, 20), 0.5), ("4", (700, 200, 10, 20), 0.5), ("é", (900, 200, 10, 20), 0.4),
+                 ("2025 Beriara", (1500, 800, 100, 20), 0.5)]
+    assert not table_is_the_capture(junk, title + junk_text)
+    real = CapturedTable(rows=[["Name", "Score"], ["Kim", "90"], ["Lee", "85"]], box=(50, 100, 600, 300),
+                         outside=[("Results", (50, 60, 100, 24))])                     # its title, found with it
+    cells = [("Name", (60, 110, 80, 20), 0.9), ("Score", (400, 110, 80, 20), 0.9), ("Kim", (60, 200, 60, 20), 0.9),
+             ("90", (400, 200, 30, 20), 0.9), ("Lee", (60, 300, 60, 20), 0.9), ("85", (400, 300, 30, 20), 0.9)]
+    assert table_is_the_capture(real, cells + [("Results", (50, 60, 100, 24), 0.9)])        # a title above is fine
+    below = [(t, (x, y + 500, w, h), sc) for t, (x, y, w, h), sc in title]
+    assert not table_is_the_capture(real, cells + below)                                     # most text elsewhere
+
+
+def test_TCAP_31_layout_columns_with_holes_are_not_a_table_for_shapes():
+    """From the same check: an agenda next to a photo (photo digits as 3 more columns), icons beside a
+    list (an empty first column), a map with labels (a mostly empty column) - none is a table."""
+    from capture_tool.core.table_capture import CapturedTable, table_is_the_capture
+
+    def lines_for(rows, box):
+        x, y, w, h = box
+        out = []
+        for i, row in enumerate(rows):
+            for j, c in enumerate(row):
+                if c:
+                    out.append((c, (x + j * w // len(row) + 5, y + i * h // len(rows) + 5, 40, 16), 0.9))
+        return out
+    agenda = [["Agenda 20 Years of INTACS", "", "", ""], ["Two Decades of Innovation", "40", "55", "1015"],
+              ["Ongoing innovations", "", "udsubu", ""]]
+    icons = [["", "Digitization of Training"], ["", "Modernization of Teaching"], ["", "Greater Networking"],
+             ["", "Flexibility and Scalability"]]
+    for rows in (agenda, icons):
+        t = CapturedTable(rows=rows, box=(0, 0, 1200, 600))
+        assert not table_is_the_capture(t, lines_for(rows, t.box)), rows
+    notes = [["Item", "Owner", "Note"], ["Login", "Kim", ""], ["Search", "Lee", "later"], ["Export", "Park", ""]]
+    t = CapturedTable(rows=notes, box=(0, 0, 900, 400))
+    assert table_is_the_capture(t, lines_for(notes, t.box))           # a notes column half empty: still a table

@@ -911,8 +911,21 @@ def find_widgets(img: np.ndarray, words=()) -> list[Detected]:
             continue                               # a faint round blob (an icon's edge), not a radio ring
         if d.kind == "ellipse" and d.fill is None and d.stroke_width > 2:
             d.stroke_width = 1.0
+        if _inside_a_line(x, y, w, h, words):
+            continue                               # a big letter (o, O, 0, ㅁ) in a slide's text, not a widget
         out.append(d)
     return out
+
+
+def _inside_a_line(x, y, w, h, words) -> bool:
+    """The ring / box sits in a line of text with letters on both sides: it is one of its letters.
+    A radio button or check box stands before its label (or after it), never in the middle of the
+    words - at slide size an 'o' is as big as a radio ring (69-slide check: the line was cut there)."""
+    cx, cy = x + w / 2, y + h / 2
+    for _text, (bx, by, bw, bh) in words:
+        if by <= cy <= by + bh and bx + 1.5 * bh < cx < bx + bw - 1.5 * bh:
+            return True
+    return False
 
 
 def _ring_ok(x, y, w, h, words) -> bool:

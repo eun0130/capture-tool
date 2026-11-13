@@ -201,8 +201,10 @@ def to_slide_xml(res: dict) -> list:
                 tb = etree.SubElement(new, pq("txBody"))
                 for g in list(body):
                     tb.append(g)
-            elif name == "blipFill":
-                bf = etree.SubElement(new, pq("blipFill"))
+            elif name in ("blipFill", "spPr", "style"):      # PresentationML wrappers, DrawingML inside
+                bf = etree.SubElement(new, pq(name))
+                for k, v in child.attrib.items():
+                    bf.set(k, v)
                 for g in list(child):
                     bf.append(g)
             else:
@@ -239,6 +241,20 @@ def build_pptx(entries: list[tuple[str, dict]], dst: Path) -> None:
         for cx in list(tree.iter(f"{{{A}}}stCxn", f"{{{A}}}endCxn")):
             cx.getparent().remove(cx)
     prs.save(str(dst))
+
+
+def quicklook_export(entries: list[tuple[str, dict]], out_dir: Path) -> list[Path]:
+    """Every slide as its own .pptx, rendered by macOS's own Office reader (Quick Look) - an
+    independent reader of the same XML, no Microsoft app and no permission prompt."""
+    out_dir.mkdir(parents=True, exist_ok=True)
+    out = []
+    for title, res in entries:
+        one = out_dir / f"slide_{int(title):02d}.pptx"
+        build_pptx([(title, res)], one)
+        subprocess.run(["qlmanage", "-t", "-s", str(W), "-o", str(out_dir), str(one)], check=True,
+                       capture_output=True, timeout=120)
+        out.append(out_dir / (one.name + ".png"))
+    return out
 
 
 def powerpoint_export(pptx: Path, out_dir: Path, timeout: int = 600) -> list[Path]:
@@ -278,9 +294,12 @@ def main(argv=None) -> int:
     ap.add_argument("pdf", nargs="+")
     ap.add_argument("--frames", required=True)
     ap.add_argument("--out", default=str(Path(tempfile.gettempdir()) / "rec-long"))
-    ap.add_argument("--powerpoint", action="store_true")
+    ap.add_argument("--powerpoint", action="store_true", help="render with Microsoft PowerPoint (asks for "
+                    "permission to control it and to use its folder)")
+    ap.add_argument("--quicklook", action="store_true", help="render each slide with macOS Quick Look")
     ap.add_argument("--pylib", default=str(Path(tempfile.gettempdir()) / "pylib"))
     ap.add_argument("--only", type=int, default=0, help="first N slides (a quick try)")
+    ap.add_argument("--start", type=int, default=1, help="begin at this slide")
     a = ap.parse_args(argv)
     sys.path.append(a.pylib)                              # python-pptx / lxml, not a dependency of the app
     out = Path(a.out)
@@ -289,12 +308,13 @@ def main(argv=None) -> int:
     app = QApplication.instance() or QApplication([])  # noqa: F841
     import cv2
     pages = pdf_pages(a.pdf)
+    numbered = list(enumerate(pages, 1))[a.start - 1:]
     if a.only:
-        pages = pages[:a.only]
+        numbered = numbered[:a.only]
     convert = make_converter(Path(tempfile.mkdtemp()))
     rows, deck = [], []
     t0 = time.monotonic()
-    for n, (doc, page, img, text) in enumerate(pages, 1):
+    for n, (doc, page, img, text) in numbered:
         frame_path = Path(a.frames) / f"slide_{n:02d}.png"
         frame = cv2.imread(str(frame_path)) if frame_path.exists() else None
         truth = words(text)
@@ -332,12 +352,14 @@ def main(argv=None) -> int:
         sheet = cv2.resize(np.vstack([top, bottom]), (1280, 720), interpolation=cv2.INTER_AREA)
         cv2.imwrite(str(out / "compare" / f"slide_{n:02d}.jpg"), sheet, [cv2.IMWRITE_JPEG_QUALITY, 82])
     report = {"slides": rows, "convert_s": round(time.monotonic() - t0, 1)}
-    if a.powerpoint:
+    if a.powerpoint or a.quicklook:
         pptx = out / "shapes_check.pptx"
         build_pptx(deck, pptx)
         report["pptx"] = str(pptx)
+        report["renderer"] = "Microsoft PowerPoint" if a.powerpoint else "macOS Quick Look"
         try:
-            pngs = powerpoint_export(pptx, out / "powerpoint")
+            pngs = (powerpoint_export(pptx, out / "powerpoint") if a.powerpoint
+                    else quicklook_export(deck, out / "quicklook"))
         except Exception as e:  # noqa: BLE001 - reported; the rest of the check stands
             report["powerpoint_error"] = str(e)
             pngs = []
@@ -375,8 +397,8 @@ def write_html(report: dict, out: Path) -> None:
     page = ("<html><meta charset='utf-8'><style>body{font-family:sans-serif}td,th{border:1px solid #ccc;padding:3px;"
             "font-size:12px;vertical-align:top}table{border-collapse:collapse}</style>"
             "<h2>도형PPT 장별 비교</h2><p>그림: 왼쪽 위 원본 페이지 · 오른쪽 위 녹화 영상의 장면 · 왼쪽 아래 도형PPT 결과(앱의 SVG) · "
-            "오른쪽 아래 PowerPoint 가 연 결과</p><table><tr><th>#</th><th>문서</th><th>PDF 낱말</th><th>원본 재현율</th>"
-            "<th>녹화 재현율</th><th>녹화 정확도</th><th>원본=녹화</th><th>배치 IoU</th><th>PPT=도형</th><th>빠진 낱말</th>"
+            "오른쪽 아래 그 도형을 .pptx 로 만들어 Office 문서 렌더러가 그린 결과</p><table><tr><th>#</th><th>문서</th><th>PDF 낱말</th><th>원본 재현율</th>"
+            "<th>녹화 재현율</th><th>녹화 정확도</th><th>원본=녹화</th><th>배치 IoU</th><th>pptx=도형</th><th>빠진 낱말</th>"
             "<th>비교</th></tr>" + "".join(trs) + "</table></html>")
     (out / "ppt_report.html").write_text(page, encoding="utf-8")
 

@@ -319,6 +319,7 @@ def test_MACR_11_the_computers_sound_comes_through_screencapturekit():
     from capture_tool.platform.mac import audio, permissions
     if not permissions.screen_recording():
         pytest.skip("Screen Recording not granted")
+    _skip_if_display_asleep()                     # macOS lists no screen then: no sound source either
     got = []
     src = audio.ScreenAudioSource()
     src.start(lambda block, rate: got.append((block.shape, rate)))

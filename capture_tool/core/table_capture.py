@@ -43,6 +43,38 @@ class CapturedTable:
     runs: dict = field(default_factory=dict)    # (row, col) -> [(text, "#RRGGBB" | None)]: words in another colour
 
 
+TABLE_TEXT_SHARE = 0.9        # of the capture's letters inside the table (or its title) to be "the capture"
+TABLE_FILLED = 0.4            # of its cells with something in them
+COLUMN_FILLED = 0.5           # of the rows every column has text in
+
+
+def table_is_the_capture(t: CapturedTable, lines) -> bool:
+    """도형PPT turns a capture into one table only when the table is what the capture shows: nearly
+    all the read letters are in it (or its title), its cells are mostly filled and every column has
+    text in most rows. Otherwise - a sparse 'table' from a photo's lines, an agenda beside a photo, a
+    list with icons, a small table on a busy slide (all seen in the 69-slide check) - the capture
+    becomes shapes, where a real table still goes in as an editable table in its place.
+    lines: [(text, (x, y, w, h), score?)]."""
+    cells = [c for r in t.rows for c in r]
+    if not cells or sum(1 for c in cells if c.strip()) / len(cells) < TABLE_FILLED:
+        return False
+    if len(t.rows) >= 2:                                  # columns with holes: a layout, not a table
+        for j in range(len(t.rows[0])):
+            col = [r[j] for r in t.rows if j < len(r)]
+            if sum(1 for c in col if sum(ch.isalnum() for ch in c) >= 2) / len(col) < COLUMN_FILLED:
+                return False
+    x, y, w, h = t.box
+    total, inside = 0, sum(len(text.strip()) for text, _ in t.outside)  # its title goes along with it
+    for line in lines:
+        text, (bx, by, bw, bh) = line[0], line[1]
+        n = len(text.strip())
+        total += n
+        cx, cy = bx + bw / 2, by + bh / 2
+        if x <= cx <= x + w and y <= cy <= y + h:
+            inside += n
+    return total == 0 or min(inside, total) / total >= TABLE_TEXT_SHARE
+
+
 def plain_style(font_size: float = 11) -> TableStyle:
     """White cells, black text, thin black lines, bold header: a table for documents."""
     return TableStyle("#FFFFFF", "#FFFFFF", "#000000", "#000000", "#000000", True, float(font_size))

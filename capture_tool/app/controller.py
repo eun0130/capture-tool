@@ -33,7 +33,7 @@ from ..core.shapes import (detect, merge_free_text, page_panel, recognize_layout
                             split_doubtful, to_drawing)
 from ..core.table import detect_grid, grid_from_cells, table_is_plausible
 from ..core.box_table import find_box_table
-from ..core.table_capture import CapturedTable, find_table, phrases_from_words
+from ..core.table_capture import CapturedTable, find_table, phrases_from_words, table_is_the_capture
 from ..core.text_table import find_text_table
 from ..platform.powerpoint import (ClipboardShapes, Picture, PowerPointBusy, PowerPointUnavailable, TableItem,
                                    TextItem, clip_text, table_fits)
@@ -2434,7 +2434,7 @@ class Controller(QObject):
             scored = [(l.text, l.box, l.score) for l in lines]
             det = detect(raw, text_boxes=split_doubtful(scored)[0])
             table = self._best_table(raw, scored, det, dpi, asked=False)  # a table on screen -> a real table
-            if table is not None:                             # (the person's own drawings go on top)
+            if table is not None and table_is_the_capture(table, scored):   # (drawings go on top)
                 return kind, lines, err, None, table
             # shapes and labels in their places; dark text on a saturated fill is read again
             det = recognize_layout(raw, scored, None if err is not None else
