@@ -255,3 +255,11 @@ def test_FORM_21_a_radio_ring_before_its_label_is_still_a_radio(ocr, qt_app):
     from capture_tool.core.shapes import find_widgets
     rings = [d for d in find_widgets(img, [(t, b) for t, b, _ in lines]) if d.kind == "ellipse"]
     assert len(rings) == 1 and abs(rings[0].x + rings[0].w / 2 - 60) <= 3
+
+
+def test_FORM_22_an_o_at_the_end_of_a_line_is_a_letter(ocr, qt_app):
+    from capture_tool.core.shapes import find_widgets
+    for px in (44, 48):
+        img = _slide_line(qt_app, "J3315 AVD Standard in affirmation ballot", px=px, width=1400)
+        lines = [(l.text, l.box, l.score) for l in ocr.recognize(img)]
+        assert find_widgets(img, [(t, b) for t, b, _ in lines]) == [], px

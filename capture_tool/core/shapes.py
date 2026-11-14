@@ -999,12 +999,11 @@ def find_widgets(img: np.ndarray, words=()) -> list[Detected]:
 
 
 def _inside_a_line(x, y, w, h, words) -> bool:
-    """The ring / box sits in a line of text with letters on both sides: it is one of its letters.
-    A radio button or check box stands before its label (or after it), never in the middle of the
-    words - at slide size an 'o' is as big as a radio ring (69-slide check: the line was cut there)."""
+    """The ring / box sits in a line of text past its start: it is one of its letters (an 'o' of
+    "ballot"). A radio button or check box stands before its label, never inside the read words - at slide size an 'o' is as big as a radio ring (69-slide check: the line was cut there)."""
     cx, cy = x + w / 2, y + h / 2
     for _text, (bx, by, bw, bh) in words:
-        if by <= cy <= by + bh and bx + 1.5 * bh < cx < bx + bw - 1.5 * bh:
+        if by <= cy <= by + bh and bx + 1.5 * bh < cx < bx + bw + 2:
             return True
     return False
 
