@@ -310,6 +310,8 @@ def main(argv=None) -> int:
     ap.add_argument("--pylib", default=str(Path(tempfile.gettempdir()) / "pylib"))
     ap.add_argument("--only", type=int, default=0, help="first N slides (a quick try)")
     ap.add_argument("--start", type=int, default=1, help="begin at this slide")
+    ap.add_argument("--merge", action="store_true", help="only build the deck from the slides saved in --out "
+                    "(runs in parts keep the memory low: --start/--only per part, then --merge)")
     a = ap.parse_args(argv)
     sys.path.append(a.pylib)                              # python-pptx / lxml, not a dependency of the app
     out = Path(a.out)
@@ -321,6 +323,9 @@ def main(argv=None) -> int:
     numbered = list(enumerate(pages, 1))[a.start - 1:]
     if a.only:
         numbered = numbered[:a.only]
+    if a.merge:
+        return merge(a, out, pages)
+    a.merge_after = False                                 # this part's slides are kept on disk, merged later
     convert = make_converter(Path(tempfile.mkdtemp()))
     rows, deck = [], []
     t0 = time.monotonic()
@@ -354,6 +359,12 @@ def main(argv=None) -> int:
         rows.append(row)
         best = results.get("recording") or results.get("original")
         results.pop("original", None) if best is not results.get("original") else None
+        import pickle
+        (out / "shapes").mkdir(exist_ok=True)
+        pickle.dump({"shapes": best["shapes"], "conns": best["conns"]}, open(out / "shapes" / f"slide_{n:02d}.pkl", "wb"))
+        json.dump(row, open(out / "shapes" / f"slide_{n:02d}.json", "w"), ensure_ascii=False)
+        if not a.merge_after:
+            continue
         deck.append((f"{n}", best))
         print(f"slide {n:2d}  " + "  ".join(
             f"{s}: recall {row[s]['recall']:.2f} prec {row[s]['precision']:.2f} iou {row[s]['layout_iou']:.2f}"
@@ -364,7 +375,22 @@ def main(argv=None) -> int:
         sheet = cv2.resize(np.vstack([top, bottom]), (1280, 720), interpolation=cv2.INTER_AREA)
         cv2.imwrite(str(out / "compare" / f"slide_{n:02d}.jpg"), sheet, [cv2.IMWRITE_JPEG_QUALITY, 82])
         best["drawn"] = cv2.resize(best["drawn"], (W // 2, H // 2), interpolation=cv2.INTER_AREA)
-    report = {"slides": rows, "convert_s": round(time.monotonic() - t0, 1)}
+    print(f"converted in {time.monotonic() - t0:.0f}s; build the deck with --merge", flush=True)
+    return 0
+
+
+def merge(a, out: Path, pages) -> int:
+    """One deck from the slides converted (possibly in several runs), rendered and compared."""
+    import pickle
+    import cv2
+    rows, deck = [], []
+    for pk in sorted((out / "shapes").glob("slide_*.pkl")):
+        n = int(pk.stem.split("_")[1])
+        res = pickle.load(open(pk, "rb"))
+        res.update({"svg": None, "gvml": None, "table_html": None})
+        rows.append(json.load(open(pk.with_suffix(".json"))))
+        deck.append((f"{n}", res))
+    report = {"slides": rows}
     if a.powerpoint or a.quicklook:
         pptx = out / "shapes_check.pptx"
         build_pptx(deck, pptx)
@@ -380,9 +406,8 @@ def main(argv=None) -> int:
         for row, (_, res), png in zip(rows, deck, pngs):
             ppt = cv2.resize(cv2.imread(str(png)), (W, H), interpolation=cv2.INTER_AREA)
             orig = pages[row["slide"] - 1][2]
-            res["drawn"] = cv2.resize(res["drawn"], (W, H), interpolation=cv2.INTER_LINEAR)
-            row["powerpoint"] = {"iou_vs_shapes_svg": round(iou(ink(res["drawn"]), ink(ppt)), 3),
-                                 "iou_vs_page": round(iou(ink(orig), ink(ppt)), 3)}
+            row["powerpoint"] = {"iou_vs_page": round(iou(ink(orig), ink(ppt)), 3)}
+            res["drawn"] = np.full_like(orig, 255)
             sheet_path = out / "compare" / f"slide_{row['slide']:02d}.jpg"
             frame = cv2.imread(str(Path(a.frames) / f"slide_{row['slide']:02d}.png"))
             top = np.hstack([orig, frame if frame is not None else np.full_like(orig, 200)])
@@ -405,14 +430,14 @@ def write_html(report: dict, out: Path) -> None:
             f"<tr><td>{r['slide']}</td><td>{html.escape(r['doc'][:18])} p{r['page']}</td><td>{r['pdf_words']}</td>"
             f"<td>{cell(r, 'original', 'recall')}</td><td>{cell(r, 'recording', 'recall')}</td>"
             f"<td>{cell(r, 'recording', 'precision')}</td><td>{r.get('orig_vs_rec_words', '-')}</td>"
-            f"<td>{cell(r, 'recording', 'layout_iou')}</td><td>{ppt.get('iou_vs_shapes_svg', '-')}</td>"
+            f"<td>{cell(r, 'recording', 'layout_iou')}</td><td>{ppt.get('iou_vs_page', '-')}</td>"
             f"<td>{html.escape(miss)}</td>"
             f"<td><a href='compare/slide_{r['slide']:02d}.jpg'><img src='compare/slide_{r['slide']:02d}.jpg' width=320></a></td></tr>")
     page = ("<html><meta charset='utf-8'><style>body{font-family:sans-serif}td,th{border:1px solid #ccc;padding:3px;"
             "font-size:12px;vertical-align:top}table{border-collapse:collapse}</style>"
             "<h2>도형PPT 장별 비교</h2><p>그림: 왼쪽 위 원본 페이지 · 오른쪽 위 녹화 영상의 장면 · 왼쪽 아래 도형PPT 결과(앱의 SVG) · "
             "오른쪽 아래 그 도형을 .pptx 로 만들어 Office 문서 렌더러가 그린 결과</p><table><tr><th>#</th><th>문서</th><th>PDF 낱말</th><th>원본 재현율</th>"
-            "<th>녹화 재현율</th><th>녹화 정확도</th><th>원본=녹화</th><th>배치 IoU</th><th>pptx=도형</th><th>빠진 낱말</th>"
+            "<th>녹화 재현율</th><th>녹화 정확도</th><th>원본=녹화</th><th>배치 IoU</th><th>pptx=원본</th><th>빠진 낱말</th>"
             "<th>비교</th></tr>" + "".join(trs) + "</table></html>")
     (out / "ppt_report.html").write_text(page, encoding="utf-8")
 

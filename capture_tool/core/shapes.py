@@ -1485,10 +1485,11 @@ def _with_graphics(img: np.ndarray, det: list[Detected], lines=(), dpi: float = 
         return a != b and iw * ih >= 0.8 * a[2] * a[3]
     boxes = [b for b in boxes if not any(inside(b, p) for p in pages)]      # one picture for the page
     out = [d for d in det if not any(_share_inside(d, b) >= 0.8 for b in boxes)
-           and not any(centre_in(d, b) for b in pages)]          # the page's words come again, whole, below
+           and not any(centre_in(d, b) for b in pages)
+           and not (d.text and d.kind == "text" and any(centre_in(d, b) for b in boxes))]   # words: again, below
     for x, y, w, h in boxes:
         crop = np.ascontiguousarray(img[y:y + h, x:x + w, :3])
-        if w * h >= GRAPHIC_PAGE * W * H:                # the page's own design: words stay editable
+        if True:                                         # its words stay editable, on top of it
             mine = [(t, b) for t, b, *_ in lines if x <= b[0] + b[2] / 2 <= x + w and y <= b[1] + b[3] / 2 <= y + h]
             words = text_boxes_for(mine, img, dpi)
             for t in words:
