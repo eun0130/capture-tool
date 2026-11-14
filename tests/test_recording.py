@@ -324,3 +324,26 @@ def test_REC_20_a_slow_device_clock_leaves_no_holes_in_the_sound(tmp_path):
     beeps, gaps = _drift_run(tmp_path, ppm_mic=-2000, ppm_sys=-2000, seconds=180)
     late = [b - round(b / 10) * 10 for b in beeps if b > 60]
     assert [g for g in gaps if 1.0 < g < 179.0] == [] and max(abs(d) for d in late) < 0.06, (gaps, late)
+
+
+def test_REC_21_our_pointer_and_click_ring_are_erased_before_recognition():
+    """69-slide check: the pointer drawn into a recording made a line unreadable or gave it a huge
+    font, and the click ring became a circle shape. Both are the app's own drawings: found by their
+    exact shape / colour and painted over; a frame without them is left alone."""
+    import cv2
+    from capture_tool.core.recording import MousePainter, erase_pointer
+    page = np.full((300, 600, 3), 255, np.uint8)
+    cv2.putText(page, "Committee Expertise", (20, 150), cv2.FONT_HERSHEY_SIMPLEX, 1.4, (0, 0, 0), 3)
+    rect = Rect(0, 0, 600, 300)
+    for scale in (1.0, 1.5, 2.0):
+        t = {"down": True}
+        p = MousePainter(lambda: (300, 40, t["down"]), clock=lambda: 0.1, scale=scale)   # on blank page
+        p(page, rect)                                           # the press: a ring starts here
+        t["down"] = False
+        marked = p(page, rect)[:, :, :3]
+        assert (np.abs(marked.astype(int) - page).max(axis=2) > 60).sum() > 100
+        clean = erase_pointer(marked)
+        left = np.abs(clean.astype(int) - page).max(axis=2) > 60
+        assert left.sum() < 15, (scale, int(left.sum()))                # pointer and ring gone
+        assert (clean[110:170] == page[110:170]).all()                   # the words below untouched
+    assert (erase_pointer(page) == page).all()                  # nothing of ours: untouched

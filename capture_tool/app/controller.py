@@ -2412,7 +2412,13 @@ class Controller(QObject):
         pos = pos if pos is not None else QPoint(0, 0)
         user_shapes = list(user_shapes)
 
+        src = raw
+
         def work():
+            raw = src
+            if kind != "text":                    # a frame of a recording: our pointer / click ring are not
+                from ..core.recording import erase_pointer         # content (done here, off the screen thread)
+                raw = erase_pointer(raw)
             lines, err = [], None
             try:
                 lines = self._read(raw)

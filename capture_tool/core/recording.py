@@ -174,6 +174,55 @@ def _stretch(a: np.ndarray, n: int) -> np.ndarray:
     return np.stack([np.interp(dst, src, a[:, c]) for c in range(2)], axis=1).astype(np.float32)
 
 
+RING_BGR = (0, 200, 255)
+
+
+def _pointer_template(k: float):
+    pts = np.round(_ARROW * k + 2 * k + 2).astype(np.int32)
+    size = (int(np.ceil(24 * k + 6)), int(np.ceil(16 * k + 6)))
+    import cv2
+    tmpl = np.full(size, 128, np.uint8)
+    mask = np.zeros(size, np.uint8)
+    cv2.fillPoly(tmpl, [pts], 255, cv2.LINE_AA)
+    cv2.polylines(tmpl, [pts], True, 0, max(1, int(round(k))), cv2.LINE_AA)
+    cv2.fillPoly(mask, [pts], 255)
+    cv2.polylines(mask, [pts], True, 255, max(1, int(round(k))))
+    return tmpl, mask
+
+
+def erase_pointer(img: np.ndarray, scales=(1.0, 1.25, 1.5, 2.0, 2.5)) -> np.ndarray:
+    """The app's own pointer arrow and click rings (MousePainter) painted over in a frame taken
+    from a recording, so they don't turn into shapes or spoil a line of text. Returns `img`
+    itself when there is nothing of ours in it."""
+    import cv2
+    bgr = img[:, :, :3]
+    erase = np.zeros(bgr.shape[:2], np.uint8)
+    b, g, r = (bgr[:, :, i].astype(np.int16) for i in range(3))
+    yellow = ((b < 110) & (np.abs(g - RING_BGR[1]) < 55) & (r > 200)).astype(np.uint8)
+    if yellow.any():
+        n, labels, stats, _ = cv2.connectedComponentsWithStats(yellow)
+        for j in range(1, n):
+            x, y, w, h, area = stats[j]
+            if 14 <= w <= 140 and 0.75 <= w / max(h, 1) <= 1.33 and area < 0.5 * w * h:   # a hollow ring
+                erase[labels == j] = 255
+    gray = cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY)
+    for k in scales:
+        tmpl, mask = _pointer_template(k)
+        if gray.shape[0] < tmpl.shape[0] or gray.shape[1] < tmpl.shape[1]:
+            continue
+        res = cv2.matchTemplate(gray, tmpl, cv2.TM_SQDIFF, mask=mask)
+        per_px = res / max(1, int((mask > 0).sum()))
+        for y, x in zip(*np.where(per_px < 55 ** 2)):       # (sub-pixel placement at 1.5x: ~42)
+            region = (mask > 0).astype(np.uint8) * 255
+            erase[y:y + region.shape[0], x:x + region.shape[1]] |= region
+    if not erase.any():
+        return img
+    erase = cv2.dilate(erase, np.ones((7, 7), np.uint8))          # with the video's soft edges
+    out = img.copy()
+    out[:, :, :3] = cv2.inpaint(np.ascontiguousarray(bgr), erase, 3, cv2.INPAINT_TELEA)
+    return out
+
+
 class RecordingSession:
     """state: ready -> recording <-> paused -> done | failed. reason: end, limit, stopped."""
 

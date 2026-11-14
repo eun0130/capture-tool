@@ -88,6 +88,27 @@ def _snap(size: float) -> float:
     return min(FONT_SIZES, key=lambda v: abs(v - size))
 
 
+def _ring_background(img: np.ndarray, x: int, y: int, w: int, h: int, margin: int = 5):
+    """The colour around a text box: the most common colour in a ring just outside it. The box's own
+    edge pixels are letters when it sits tight on them (a bold white title on a blue bar was read as
+    blue text on white, invisible) or the line above / below."""
+    H, W = img.shape[:2]
+    x0, y0, x1, y1 = max(0, x - margin), max(0, y - margin), min(W, x + w + margin), min(H, y + h + margin)
+    if x1 - x0 < 3 or y1 - y0 < 3:
+        return None
+    outer = img[y0:y1, x0:x1]
+    mask = np.ones(outer.shape[:2], bool)
+    mask[max(0, y - y0):max(0, y - y0 + h), max(0, x - x0):max(0, x - x0 + w)] = False
+    px = outer[mask].astype(np.int32)
+    if len(px) < 20:
+        return None
+    q = px // 16
+    keys = (q[:, 0] << 8) | (q[:, 1] << 4) | q[:, 2]
+    vals, counts = np.unique(keys, return_counts=True)
+    top = vals[np.argmax(counts)]
+    return np.median(px[keys == top], axis=0).astype(np.int16)
+
+
 def text_style(img: np.ndarray, box, text: str, dpi: float = 96) -> TextStyle:
     """Colour, size (pt) and boldness of the text inside an OCR box, read from its pixels."""
     img = _to_bgr(img)
@@ -96,7 +117,8 @@ def text_style(img: np.ndarray, box, text: str, dpi: float = 96) -> TextStyle:
     c = img[y0:max(y0, y + h), x0:max(x0, x + w)].astype(np.int16)
     if c.shape[0] < 3 or c.shape[1] < 3:
         return TextStyle()
-    bg = np.median(np.concatenate([c[0], c[-1], c[:, 0], c[:, -1]]), axis=0)
+    ring = _ring_background(img, x, y, w, h)
+    bg = ring if ring is not None else np.median(np.concatenate([c[0], c[-1], c[:, 0], c[:, -1]]), axis=0)
     d = np.abs(c - bg).max(axis=2)
     m = d > max(40, int(d.max() * 0.5))
     if m.sum() < 6:
@@ -831,6 +853,9 @@ ICON_DIFF = 40                  # how far a pixel must be from what the shapes e
 MAX_ICONS = 60
 
 
+BORDER_SHARE = 0.85      # share of a row / column a box border fills (a bold title's letters: <= 0.7)
+
+
 def _ink_box(img: np.ndarray, box, pad: int = 2):
     """The OCR box shrunk to the letters' ink (+pad). OCR boxes are taller than the text and
     run over the borders of input boxes and buttons (and over the line above or below); those
@@ -843,8 +868,8 @@ def _ink_box(img: np.ndarray, box, pad: int = 2):
         return box
     bg = np.median(c.reshape(-1, 3), axis=0)         # letters are the minority of the box
     m = np.abs(c - bg).max(axis=2) > FG_THRESHOLD
-    m[m.mean(axis=1) > 0.6, :] = False            # a border running along the box
-    m[:, m.mean(axis=0) > 0.6] = False
+    m[m.mean(axis=1) > BORDER_SHARE, :] = False   # a border running along the box (bold capitals fill
+    m[:, m.mean(axis=0) > BORDER_SHARE] = False   # up to ~70% of a row: they are not one)
     rows = np.nonzero(m.any(axis=1))[0]
     if len(rows) < 2:
         return box
