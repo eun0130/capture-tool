@@ -218,8 +218,7 @@ def to_slide_xml(res: dict) -> list:
 
 
 def build_pptx(entries: list[tuple[str, dict]], dst: Path) -> None:
-    """One slide per entry (title, conversion result); pictures (icons) are dropped (none in
-    these decks' shapes is a picture - counted in the report)."""
+    """One slide per entry (title, conversion result); pictures (icons, photos) in their z-place."""
     from pptx import Presentation
     from pptx.util import Emu
     prs = Presentation()
@@ -229,8 +228,19 @@ def build_pptx(entries: list[tuple[str, dict]], dst: Path) -> None:
         slide = prs.slides.add_slide(blank)
         tree = slide.shapes._spTree
         next_id = 2
+        images = [sh for sh in res["shapes"] if getattr(sh, "image", None)]
+        k = 0
         for tag, el in to_slide_xml(res):
-            if tag == "pic":
+            if tag == "pic":                              # the picture through python-pptx, in its z-place
+                sh = images[k]
+                k += 1
+                off = el.find(f".//{{{A}}}off")
+                ext = el.find(f".//{{{A}}}ext")
+                pic = slide.shapes.add_picture(io.BytesIO(sh.image), Emu(int(off.get("x"))), Emu(int(off.get("y"))),
+                                               Emu(int(ext.get("cx"))), Emu(int(ext.get("cy"))))
+                tree.remove(pic._element)
+                tree.append(pic._element)
+                next_id += 1
                 continue
             cnv = el.find(f".//{{{P}}}cNvPr")
             if cnv is not None:

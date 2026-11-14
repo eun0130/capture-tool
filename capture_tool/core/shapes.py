@@ -626,6 +626,18 @@ def _near_color(a: str, b: str, tol: int = 60) -> bool:
     return max(abs(int(a[k:k + 2], 16) - int(b[k:k + 2], 16)) for k in (1, 3, 5)) <= tol
 
 
+def _even_sizes(items: list) -> list:
+    """Lines of the same height get the same size: the size read from each line's ink varies a step
+    or two with its letters (a paragraph came out in 3 sizes and fell apart into single lines)."""
+    out = []
+    for text, box, st in items:
+        h = box[3]
+        same = sorted(o[2].size for o in items if abs(o[1][3] - h) <= 0.1 * h)
+        size = same[len(same) // 2] if same else st.size
+        out.append((text, box, TextStyle(st.color, size, st.bold)))
+    return out
+
+
 def text_boxes_for(lines: list[tuple[str, tuple]], img, dpi: float = 96) -> list[Detected]:
     """Text outside every shape -> free text boxes keeping colour, size and boldness; lines of
     one paragraph (same left edge, same look, close together) stay in one box."""
@@ -633,6 +645,7 @@ def text_boxes_for(lines: list[tuple[str, tuple]], img, dpi: float = 96) -> list
     for text, box in sorted(lines, key=lambda l: (l[1][1], l[1][0])):
         if text and text.strip():
             items.append((text.strip(), box, text_style(img, box, text, dpi)))
+    items = _even_sizes(items)
     groups: list[list] = []
     for it in items:
         _, (x, y, w, h), st = it
@@ -640,7 +653,8 @@ def text_boxes_for(lines: list[tuple[str, tuple]], img, dpi: float = 96) -> list
         if g:
             _, (gx, gy, gw, gh), gst = g[-1]
             if (abs(x - g[0][1][0]) <= 0.6 * h and 0.75 <= h / max(gh, 1) <= 1.33
-                    and 0 <= y - (gy + gh) <= 0.9 * h and gst.size == st.size and gst.bold == st.bold
+                    and 0 <= y - (gy + gh) <= 0.9 * h and abs(gst.size - st.size) <= max(1.5, 0.12 * st.size)
+                    and gst.bold == st.bold
                     and _near_color(gst.color, st.color)):
                 g.append(it)
                 continue
@@ -745,7 +759,8 @@ def to_drawing(detected: list[Detected], keep_style: bool = True) -> tuple[list[
     shapes, sizes and text, for decks with their own design."""
     closed = [d for d in detected if d.kind not in ("line", "arrow")]
     # back to front: big empty panels, then the boxes on them, then icons and free text on top
-    closed.sort(key=lambda d: (d.over_text, d.kind == "text", d.kind == "picture" or bool(d.text), -d.w * d.h))
+    closed.sort(key=lambda d: (d.kind != "photo", d.over_text, d.kind == "text", d.kind == "picture" or bool(d.text),
+                               -d.w * d.h))                     # photos: always at the very back
 
     def color(d: Detected) -> str:
         if not keep_style:
@@ -755,7 +770,7 @@ def to_drawing(detected: list[Detected], keep_style: bool = True) -> tuple[list[
     shapes = []
     for d in closed:
         bold = d.bold and keep_style
-        if d.kind == "picture":
+        if d.kind in ("picture", "photo"):
             shapes.append(DShape("rect", d.x, d.y, d.w, d.h, fill=None, stroke=None, image=d.image))
         elif d.kind == "text":
             shapes.append(DShape("rect", d.x, d.y, d.w, d.h, fill=d.fill if keep_style else None, stroke=None,
@@ -781,8 +796,8 @@ def to_drawing(detected: list[Detected], keep_style: bool = True) -> tuple[list[
         def near(p):
             best = None
             for i, s in enumerate(closed):
-                if s.kind in ("text", "picture"):
-                    continue                            # arrows point at shapes, not at labels
+                if s.kind in ("text", "picture", "photo"):
+                    continue                            # arrows point at shapes, not at labels or photos
                 dist = _edge_distance(p, s)
                 if dist <= LINK_DISTANCE and (best is None or dist < best[0]):
                     best = (dist, i)
@@ -1320,6 +1335,126 @@ def find_icons(img: np.ndarray, det: list[Detected], text_boxes) -> list[Detecte
     return out
 
 
+# --- photos: kept as pictures, never turned into shapes ------------------------------------------
+PHOTO_BLOCK = 8          # px blocks of the 480-wide copy (~32 px of a full-HD capture)
+PHOTO_COLOURS = 18       # distinct colours (16 levels each) a photo block has at least ...
+PHOTO_DOMINANT = 0.30    # ... with no colour on more than this share (text: its page colour on half)
+PHOTO_MIN_SHARE = 0.02   # of the capture: smaller photos (icons, logos) are left to the icon finder
+PHOTO_BACKGROUND = 0.5   # a photo this big is the page's background: its words become text boxes
+
+
+def find_photos(img: np.ndarray) -> list[tuple[int, int, int, int]]:
+    """Rectangles (x, y, w, h) of camera pictures / rendered images in a capture: many colours in every
+    small block and no colour taking over (text, flat shapes, gradients and diagrams have few). Grown
+    to the picture's own edge against the page."""
+    img = _to_bgr(img)
+    H, W = img.shape[:2]
+    if min(H, W) < 120:
+        return []
+    k = min(1.0, 480 / W)
+    small = cv2.resize(img, (max(1, int(round(W * k))), max(1, int(round(H * k)))), interpolation=cv2.INTER_AREA)
+    q = (small // 16).astype(np.int32)
+    keys = (q[..., 0] << 8) | (q[..., 1] << 4) | q[..., 2]
+    B = PHOTO_BLOCK
+    hb, wb = keys.shape[0] // B, keys.shape[1] // B
+    if hb < 2 or wb < 2:
+        return []
+    m = np.zeros((hb, wb), np.uint8)
+    for i in range(hb):
+        for j in range(wb):
+            _, c = np.unique(keys[i * B:(i + 1) * B, j * B:(j + 1) * B], return_counts=True)
+            m[i, j] = len(c) >= PHOTO_COLOURS and c.max() / c.sum() < PHOTO_DOMINANT
+    m = cv2.morphologyEx(m, cv2.MORPH_CLOSE, np.ones((3, 3), np.uint8))
+    n, _, stats, _ = cv2.connectedComponentsWithStats(m)
+    bg = _background(img)
+    ink = (_dist(img, bg) > 30).astype(np.uint8)
+    out = []
+    for j in range(1, n):
+        x, y, w, h, area = stats[j]
+        if area < PHOTO_MIN_SHARE * m.size or area < 0.45 * w * h:
+            continue
+        s = B / k
+        rect = (int(x * s), int(y * s), int(w * s), int(h * s))
+        out.append(_photo_edge(ink, rect))
+    return out
+
+
+def _photo_edge(ink: np.ndarray, rect) -> tuple[int, int, int, int]:
+    """The block-sized rectangle grown to the photo's edge: the inked region around it (the page
+    colour stops at a photo's border), unless that region runs far beyond (text touching it)."""
+    H, W = ink.shape
+    x, y, w, h = rect
+    mx, my = int(0.2 * w) + 8, int(0.2 * h) + 8
+    x0, y0, x1, y1 = max(0, x - mx), max(0, y - my), min(W, x + w + mx), min(H, y + h + my)
+    win = cv2.dilate(ink[y0:y1, x0:x1], np.ones((3, 3), np.uint8))
+    n, labels, stats, _ = cv2.connectedComponentsWithStats(win)
+    inner = labels[y - y0:y - y0 + h, x - x0:x - x0 + w]
+    ids, counts = np.unique(inner[inner > 0], return_counts=True)
+    if not len(ids):
+        return (x, y, min(w, W - x), min(h, H - y))
+    best = ids[np.argmax(counts)]
+    bx, by, bw, bh, _ = stats[best]
+    if bw * bh > 2.5 * w * h:
+        return (x, y, min(w, W - x), min(h, H - y))
+    return (int(x0 + bx), int(y0 + by), int(bw), int(bh))
+
+
+def _share_inside(d: Detected, p) -> float:
+    px, py, pw, ph = p
+    iw = max(0, min(d.x + d.w, px + pw) - max(d.x, px))
+    ih = max(0, min(d.y + d.h, py + ph) - max(d.y, py))
+    return iw * ih / max(1, d.w * d.h)
+
+
+def _with_photos(img: np.ndarray, det: list[Detected], lines=(), dpi: float = 96) -> list[Detected]:
+    """Photos go in as pictures at the back; what was found inside one (bits of the picture taken for
+    circles, panels, specks, letters of its signs) is dropped. A photo that is the page's background
+    keeps the page's words: whole OCR lines (not the pieces cut by the 'shapes' of the photo) are
+    painted out of the picture and put on top as text boxes."""
+    photos = find_photos(img)
+    if not photos:
+        return det
+    H, W = img.shape[:2]
+    out, words = [], {i: [] for i in range(len(photos))}
+    for d in det:
+        if not any(_share_inside(d, p) >= 0.8 for p in photos):
+            out.append(d)
+    for i, (px, py, pw, ph) in enumerate(photos):
+        if pw * ph < PHOTO_BACKGROUND * W * H:
+            continue                                   # an embedded photo keeps its words as pixels
+        mine = [(t, b) for t, b, *_ in lines
+                if px <= b[0] + b[2] / 2 <= px + pw and py <= b[1] + b[3] / 2 <= py + ph]
+        for t in text_boxes_for(mine, img, dpi):
+            t.fill = None
+            out.append(t)
+            words[i].append(t)
+    pics = []
+    for i, (x, y, w, h) in enumerate(photos):
+        crop = np.ascontiguousarray(img[y:y + h, x:x + w, :3])
+        if words[i]:
+            crop = _paint_out(crop, [(d.x - x, d.y - y, d.w, d.h) for d in words[i]])
+        ok, jpg = cv2.imencode(".jpg", crop, [cv2.IMWRITE_JPEG_QUALITY, 88])
+        if ok:
+            pics.append(Detected("photo", x, y, w, h, image=jpg.tobytes()))
+    return pics + out
+
+
+def _paint_out(crop: np.ndarray, boxes) -> np.ndarray:
+    """Words removed from a picture (inpainting at half size: a full-HD page in a fraction of a second)."""
+    h, w = crop.shape[:2]
+    mask = np.zeros((h, w), np.uint8)
+    for bx, by, bw, bh in boxes:
+        mask[max(0, by):max(0, by + bh), max(0, bx):max(0, bx + bw)] = 255
+    if not mask.any():
+        return crop
+    sm = cv2.resize(crop, (max(1, w // 2), max(1, h // 2)), interpolation=cv2.INTER_AREA)
+    mm = cv2.resize(mask, (sm.shape[1], sm.shape[0]), interpolation=cv2.INTER_NEAREST)
+    fill = cv2.resize(cv2.inpaint(sm, mm, 3, cv2.INPAINT_TELEA), (w, h), interpolation=cv2.INTER_LINEAR)
+    out = crop.copy()
+    out[mask > 0] = fill[mask > 0]
+    return out
+
+
 def merge_free_text(det: list[Detected]) -> list[Detected]:
     """도형PPT option: put every loose text box (labels / paragraph lines on the page, not inside a
     shape) into ONE text box - line order, left alignment, blank rows between blocks and the shared
@@ -1406,7 +1541,89 @@ def recognize_layout(img: np.ndarray, lines, recognize, dpi: float = 96, find_ag
                           and d.x <= cx <= d.x + d.w and d.y <= cy <= d.y + d.h for d in det):
             t.fill = None                              # the button behind already has that colour
         det.append(t)
+    det = _with_photos(img, det, kept, dpi)
+    return _fit_texts(_without_repeats(_join_pieces(det)), dpi)
+
+
+def _char_em(c: str) -> float:
+    """A letter's advance as a share of the font size (a common sans font)."""
+    if "\uac00" <= c <= "\ud7a3" or "\u3040" <= c <= "\u9fff":
+        return 1.0
+    if c.isspace():
+        return 0.28
+    if c.isupper():
+        return 0.66
+    if c.isdigit():
+        return 0.56
+    if c.isalpha():
+        return 0.52
+    return 0.38
+
+
+def _fit_texts(det: list[Detected], dpi: float = 96) -> list[Detected]:
+    """No text runs out of its box: a size read from a tall OCR box (two lines, a pointer, a logo)
+    made lines 2-3x too big, running off the slide. The font is brought down to fit the width."""
+    for d in det:
+        if not d.text or not d.font_size or d.kind in ("photo", "picture"):
+            continue
+        widest = max(sum(_char_em(c) for c in line) for line in d.text.split("\n"))
+        room_pt = max(1.0, d.w - 0.2 * dpi * (d.kind == "text")) * 72 / dpi
+        need_pt = widest * d.font_size
+        if need_pt > 1.12 * room_pt:
+            target = d.font_size * room_pt * 1.05 / need_pt
+            d.font_size = max([v for v in FONT_SIZES if v <= target] or [FONT_SIZES[0]])
     return det
+
+
+def _norm_words(t: str) -> str:
+    return " ".join(t.lower().split())
+
+
+def _join_pieces(det: list[Detected]) -> list[Detected]:
+    """Pieces of one line read separately and overlapping ("two decades ago in resp" | "response to
+    increasing demands"): joined where the end of one repeats the start of the next."""
+    texts = sorted((d for d in det if d.kind == "text" and d.text and "\n" not in d.text), key=lambda d: d.x)
+    gone = set()
+    for i, a in enumerate(texts):
+        if id(a) in gone:
+            continue
+        for b in texts[i + 1:]:
+            if id(b) in gone:
+                continue
+            vy = min(a.y + a.h, b.y + b.h) - max(a.y, b.y)
+            if vy < 0.6 * min(a.h, b.h) or b.x > a.x + a.w or b.x + b.w <= a.x + a.w:
+                continue
+            at, bt = a.text, b.text
+            k = next((n for n in range(min(len(at), len(bt)), 1, -1) if at[-n:].lower() == bt[:n].lower()), 0)
+            if not k:
+                continue
+            a.text = at + bt[k:]
+            right = b.x + b.w
+            a.y, a.h = min(a.y, b.y), max(a.y + a.h, b.y + b.h) - min(a.y, b.y)
+            a.w = right - a.x
+            gone.add(id(b))
+    return [d for d in det if id(d) not in gone]
+
+
+def _without_repeats(det: list[Detected]) -> list[Detected]:
+    """The same words twice on top of each other (read whole, and again in a shape cut out of it):
+    the shorter copy goes."""
+    texts = [d for d in det if d.kind == "text" and d.text]
+    drop = set()
+    for i, a in enumerate(texts):
+        for b in texts[i + 1:]:
+            if id(a) in drop or id(b) in drop:
+                continue
+            iw = max(0, min(a.x + a.w, b.x + b.w) - max(a.x, b.x))
+            ih = max(0, min(a.y + a.h, b.y + b.h) - max(a.y, b.y))
+            small, big = (a, b) if len(a.text) <= len(b.text) else (b, a)
+            if iw * ih < 0.5 * small.w * small.h:
+                continue
+            st, bt = _norm_words(small.text), _norm_words(big.text)
+            if st and (st in bt or __import__("difflib").SequenceMatcher(None, st, bt).find_longest_match(
+                    0, len(st), 0, len(bt)).size >= 0.6 * len(st)):
+                drop.add(id(small))
+    return [d for d in det if id(d) not in drop]
 
 
 # --- ruled tables on a screen -> real PowerPoint tables -------------------------------------

@@ -259,11 +259,17 @@ _RELS = ('<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
          'Target="clipboard/drawings/drawing1.xml"/></Relationships>')
 
 
+def _image_ext(data: bytes) -> str:
+    """Icons are PNG, photos JPEG (a full-HD photo is ~10x smaller)."""
+    return "jpeg" if data[:2] == b"\xff\xd8" else "png"
+
+
 def gvml_package(shapes: list[DShape], connectors: list[DConnector], dpi: float = 96) -> bytes:
     images = [s.image for s in shapes if s.image]
     ct = _CT
     if images:
         ct = ct.replace('<Default Extension="xml"', '<Default Extension="png" ContentType="image/png"/>'
+                                                    '<Default Extension="jpeg" ContentType="image/jpeg"/>'
                                                     '<Default Extension="xml"')
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
@@ -271,14 +277,15 @@ def gvml_package(shapes: list[DShape], connectors: list[DConnector], dpi: float 
         z.writestr("_rels/.rels", _RELS)
         z.writestr("clipboard/drawings/drawing1.xml", drawing_xml(shapes, connectors, dpi))
         if images:
-            rels = "".join(f'<Relationship Id="rIdImg{k}" Type="{R_NS}/image" Target="../media/image{k}.png"/>'
+            rels = "".join(f'<Relationship Id="rIdImg{k}" Type="{R_NS}/image" '
+                           f'Target="../media/image{k}.{_image_ext(images[k - 1])}"/>'
                            for k in range(1, len(images) + 1))
             z.writestr("clipboard/drawings/_rels/drawing1.xml.rels",
                        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
                        '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
                        + rels + "</Relationships>")
             for k, data in enumerate(images, 1):
-                z.writestr(f"clipboard/media/image{k}.png", data)
+                z.writestr(f"clipboard/media/image{k}.{_image_ext(data)}", data)
     return buf.getvalue()
 
 
@@ -300,7 +307,7 @@ def svg(shapes: list[DShape], connectors: list[DConnector], dpi: float = 96) -> 
         if s.image:
             import base64
             out.append(f'<image x="{f(x)}" y="{f(y)}" width="{f(s.w)}" height="{f(s.h)}" '
-                       f'href="data:image/png;base64,{base64.b64encode(s.image).decode()}"/>')
+                       f'href="data:image/{_image_ext(s.image)};base64,{base64.b64encode(s.image).decode()}"/>')
             continue
         style = f'fill="{s.fill or "none"}" stroke="{s.stroke or "none"}" stroke-width="{f(s.stroke_width)}"'
         if s.dash:
