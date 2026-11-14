@@ -150,3 +150,14 @@ def test_PB_11_the_recorders_check_their_own_parts():
         fn = next(n for n in ast.parse(src).body if isinstance(n, ast.FunctionDef) and n.name == "self_check")
         body = ast.get_source_segment(src, fn)
         assert all(n in body for n in needs), path
+
+
+def test_PB_12_the_mac_uses_an_opencv_without_the_kleidicv_hal():
+    """KleidiCV (OpenCV 4.11+ on ARM) crashed Python in its parallel resize (BUG-149): the Mac stays
+    on 4.10 until that is fixed upstream; the build would ship whatever the venv has."""
+    import sys
+    import cv2
+    spec = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
+    assert "opencv-python-headless==4.10.0.84; sys_platform == 'darwin'" in spec
+    if sys.platform == "darwin":
+        assert "kleidicv" not in cv2.getBuildInformation().lower(), cv2.__version__

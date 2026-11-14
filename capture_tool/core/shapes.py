@@ -568,6 +568,13 @@ def _colors(img, contour, bg, d: Detected) -> Detected:
     k = min(width, 3) * 2 + 5                    # (a plain fill measures as one thick border)
     inner = cv2.erode(filled, np.ones((k, k), np.uint8))
     fill = _fill_color(img, inner)
+    rim = cv2.subtract(inner, cv2.erode(filled, np.ones((k + 20, k + 20), np.uint8)))
+    rim_px = img[rim > 0]
+    if fill is not None and len(rim_px) > 200:       # boxes inside a panel can outnumber its own colour:
+        u, n = np.unique(rim_px.reshape(-1, 3), axis=0, return_counts=True)   # the panel shows at its rim
+        rim_c = tuple(int(v) for v in u[n.argmax()])
+        if n.max() >= 0.6 * len(rim_px) and max(abs(a_ - b_) for a_, b_ in zip(rim_c, fill)) > 12:
+            fill = rim_c
     d.stroke = _hex(stroke) if stroke else None
     d.stroke_width = float(width)
     if fill is None or max(abs(a - b) for a, b in zip(fill, bg)) <= 12:
@@ -1382,6 +1389,7 @@ PHOTO_BLOCK = 8          # px blocks of the 480-wide copy (~32 px of a full-HD c
 PHOTO_COLOURS = 14       # distinct colours (16 levels each) a photo block has at least ...
 PHOTO_DOMINANT = 0.30    # ... with no colour on more than this share (text: its page colour on half)
 PHOTO_MIN_SHARE = 0.02   # of the capture: smaller photos (icons, logos) are left to the icon finder
+PHOTO_MIN_SIDE = 0       # px: a photo thumbnail is at least this big both ways
 PHOTO_BACKGROUND = 0.8   # a photo this big is the page's background: its words become text boxes
 
 
@@ -1417,6 +1425,8 @@ def find_photos(img: np.ndarray) -> list[tuple[int, int, int, int]]:
             continue
         s = B / k
         rect = (int(x * s), int(y * s), int(w * s), int(h * s))
+        if min(rect[2], rect[3]) < PHOTO_MIN_SIDE:
+            continue                                   # (a bold letter of a big title, a coloured icon)
         out.append(_photo_edge(ink, rect))
     return out
 

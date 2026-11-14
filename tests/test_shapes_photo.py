@@ -130,3 +130,10 @@ def test_PHOTO_10_a_word_in_a_sliver_is_a_misreading():
     det = recognize_layout(img, [("wex", (190, 60, 15, 34), 0.6), ("Exam", (120, 120, 70, 24), 0.99)], None, 96)
     texts = [d.text for d in det if d.text]
     assert not any("wex" in t for t in texts) and any("Exam" in t for t in texts)
+
+
+def test_PHOTO_11_svg_keeps_each_line_of_a_text_on_its_own_line():
+    from capture_tool.core.drawingml import svg
+    out = svg([DShape("rect", 0, 0, 400, 80, text="first line\nsecond line", align="l")], [])
+    assert out.count("<tspan") == 2 and ">first line</tspan>" in out and ">second line</tspan>" in out
+    assert 'text-anchor="start"' in out

@@ -325,11 +325,19 @@ def svg(shapes: list[DShape], connectors: list[DConnector], dpi: float = 96) -> 
             italic = ' font-style="italic"' if s.italic else ""
             deco = " ".join(d for d, on in (("underline", s.underline), ("line-through", s.strike)) if on)
             deco = f' text-decoration="{deco}"' if deco else ""
+            size = s.font_size * dpi / 72
+            rows = _clean(s.text).split("\n")             # SVG joins lines in one text: one tspan each
+            step = 1.2 * size
+            left = s.align == "l"
+            tx = x + (s.pad_left if s.pad_left > 0 else 0.1 * dpi) if left else x + s.w / 2
+            top = y + s.h / 2 - step * (len(rows) - 1) / 2
+            spans = "".join(f'<tspan x="{f(tx)}" y="{f(top + i * step)}">{escape(r) or " "}</tspan>'
+                            for i, r in enumerate(rows))
             out.append(
-                f'<text x="{f(x + s.w / 2)}" y="{f(y + s.h / 2)}" text-anchor="middle" dominant-baseline="central" '
+                f'<text text-anchor="{"start" if left else "middle"}" dominant-baseline="central" '
                 f'font-family="{_attr((s.font_family + ", ") if s.font_family else "")}Malgun Gothic, sans-serif" '
-                f'font-size="{f(s.font_size * dpi / 72)}"{weight}{italic}{deco} '
-                f'fill="{s.text_color}">{escape(_clean(s.text))}</text>'
+                f'font-size="{f(size)}"{weight}{italic}{deco} '
+                f'fill="{s.text_color}">{spans}</text>'
             )
     for l in lines:
         color = normalize_hex(l.c.color)

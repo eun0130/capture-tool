@@ -14,7 +14,10 @@ license = { text = "MIT" }
 dependencies = [
     "PySide6>=6.8",
     "numpy>=2.0",
-    "opencv-python-headless>=4.10",
+    "opencv-python-headless>=4.10; sys_platform != 'darwin'",
+    # Mac: 4.10 exactly - 4.11+ (and 5.0) bring the KleidiCV ARM HAL whose parallel resize crashed
+    # Python now and then (SIGSEGV in kleidicv_resize_generic_stripe_u8, BUG-149)
+    "opencv-python-headless==4.10.0.84; sys_platform == 'darwin'",
     "onnxruntime>=1.20",
     "rapidocr>=3.0",
     "mss>=9.0",
