@@ -121,3 +121,12 @@ def test_PHOTO_09_pieces_of_one_line_become_one_line_and_rows_stay_apart():
     assert [t for t, _ in out] == ["Structured Certification: Clear roles, defined paths", "High-Quality Assurance:",
                                    "far away"]
     assert out[0][1][2] == 750 - 100
+
+
+def test_PHOTO_10_a_word_in_a_sliver_is_a_misreading():
+    from capture_tool.core.shapes import recognize_layout
+    img = _page(400, 200)
+    cv2.rectangle(img, (100, 40), (300, 160), (160, 60, 20), -1)
+    det = recognize_layout(img, [("wex", (190, 60, 15, 34), 0.6), ("Exam", (120, 120, 70, 24), 0.99)], None, 96)
+    texts = [d.text for d in det if d.text]
+    assert not any("wex" in t for t in texts) and any("Exam" in t for t in texts)

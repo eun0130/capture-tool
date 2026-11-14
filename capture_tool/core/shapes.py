@@ -750,7 +750,7 @@ def find_missed_text(img, detected: list[Detected], recognize, skip=()) -> list[
             return any(x - 2 <= cx <= x + w + 2 and y - 2 <= cy <= y + h + 2 and o.w * o.h < w * h * 1.5
                        for _, (x, y, w, h) in found)
         detected[:] = [o for o in detected if not inside_text(o)]
-    return found
+    return [(t, b) for t, b in found if not (len(t.strip()) >= 2 and b[2] < NARROWEST * b[3] * len(t.strip()))]
 
 
 def _read_together(img, shapes: list[Detected], recognize) -> list[tuple[str, tuple]]:
@@ -908,6 +908,7 @@ ICON_DIFF = 40                  # how far a pixel must be from what the shapes e
 MAX_ICONS = 60
 
 
+NARROWEST = 0.2         # x the box height x letters: the narrowest a real word gets (69-slide check: "wex")
 BORDER_SHARE = 0.85      # share of a row / column a box border fills (a bold title's letters: <= 0.7)
 
 
@@ -1443,6 +1444,7 @@ def _photo_edge(ink: np.ndarray, rect) -> tuple[int, int, int, int]:
 
 GRAPHIC_MIN_SHARE = 0.006   # of the capture: unexplained ink this big is a graphic (a map, a pie chart)
 GRAPHIC_INK = 0.08          # share of a graphic's box that is unexplained ink (maps, pies: more)
+GRAPHIC_DENSE = 0.15        # ... this much of it unexplained: a picture even with shapes found on it
 GRAPHIC_PAGE = 0.5          # a graphic this big is the page's design: its words go on top, editable
 
 
@@ -1465,8 +1467,12 @@ def _with_graphics(img: np.ndarray, det: list[Detected], lines=(), dpi: float = 
             continue                                   # scattered strokes (dashes, arrow heads), not a graphic
         held = [d for d in det if d.kind not in ("text", "picture", "photo", "line", "arrow")
                 and x <= d.x + d.w / 2 <= x + w and y <= d.y + d.h / 2 <= y + h and d.w * d.h < 2 * w * h]   # (not the panel behind)
-        if len(held) >= 2 or any(d.w * d.h >= 0.25 * w * h for d in held):
-            continue                                   # a diagram / a drawn shape: they stay editable
+        dense = left[y:y + h, x:x + w].mean() >= GRAPHIC_DENSE
+        page = w * h >= GRAPHIC_PAGE * W * H
+        if any(d.w * d.h >= 0.25 * w * h for d in held) and not page:
+            continue                                   # a drawn shape with its marks: it stays editable
+        if len(held) >= 2 and not dense:
+            continue                                   # a diagram of shapes: they stay editable
         boxes.append((x, y, w, h))
     if not boxes:
         return det
@@ -1598,6 +1604,8 @@ def recognize_layout(img: np.ndarray, lines, recognize, dpi: float = 96, find_ag
         if len(t) == 1 and box[2] <= 30 and box[3] <= 30 and (
                 t in SYMBOLS or box[3] <= 12 or any(_overlap(box, w) > 0.5 for w in widgets)):
             continue                                   # a radio ring, dropdown or scroll arrow, icon: not a word
+        if len(t) >= 2 and box[2] < NARROWEST * box[3] * len(t):
+            continue                                   # letters can't be that narrow: a misreading of a sliver
         if len(t) > 1 and t[0] in RING_LETTERS and "가" <= t[1:].lstrip()[:1] <= "힣" and any(
                 _overlap((box[0], box[1], box[3], box[3]), w) > 0.5 for w in widgets):
             t = t[1:].lstrip()                         # a bullet ring read as a letter

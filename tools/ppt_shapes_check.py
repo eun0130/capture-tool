@@ -347,11 +347,13 @@ def main(argv=None) -> int:
             drawn = render_svg(res) if res["table_html"] is None else np.full_like(img, 255)
             row[src]["layout_iou"] = round(iou(ink(img), ink(drawn)), 3)
             res["drawn"] = drawn
+            res["svg"] = res["gvml"] = None             # (69 slides of base64 photos ran out of memory)
         if "original" in results and "recording" in results:
             g1, g2 = words(shape_text(results["original"])), words(shape_text(results["recording"]))
             row["orig_vs_rec_words"] = round(overlap(g1, g2)[0], 3)
         rows.append(row)
         best = results.get("recording") or results.get("original")
+        results.pop("original", None) if best is not results.get("original") else None
         deck.append((f"{n}", best))
         print(f"slide {n:2d}  " + "  ".join(
             f"{s}: recall {row[s]['recall']:.2f} prec {row[s]['precision']:.2f} iou {row[s]['layout_iou']:.2f}"
@@ -361,6 +363,7 @@ def main(argv=None) -> int:
         bottom = np.hstack([best["drawn"], np.full_like(img, 235)])
         sheet = cv2.resize(np.vstack([top, bottom]), (1280, 720), interpolation=cv2.INTER_AREA)
         cv2.imwrite(str(out / "compare" / f"slide_{n:02d}.jpg"), sheet, [cv2.IMWRITE_JPEG_QUALITY, 82])
+        best["drawn"] = cv2.resize(best["drawn"], (W // 2, H // 2), interpolation=cv2.INTER_AREA)
     report = {"slides": rows, "convert_s": round(time.monotonic() - t0, 1)}
     if a.powerpoint or a.quicklook:
         pptx = out / "shapes_check.pptx"
@@ -377,6 +380,7 @@ def main(argv=None) -> int:
         for row, (_, res), png in zip(rows, deck, pngs):
             ppt = cv2.resize(cv2.imread(str(png)), (W, H), interpolation=cv2.INTER_AREA)
             orig = pages[row["slide"] - 1][2]
+            res["drawn"] = cv2.resize(res["drawn"], (W, H), interpolation=cv2.INTER_LINEAR)
             row["powerpoint"] = {"iou_vs_shapes_svg": round(iou(ink(res["drawn"]), ink(ppt)), 3),
                                  "iou_vs_page": round(iou(ink(orig), ink(ppt)), 3)}
             sheet_path = out / "compare" / f"slide_{row['slide']:02d}.jpg"
