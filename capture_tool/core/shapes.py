@@ -330,7 +330,46 @@ def _split_attached_lines(img, contour, fg):
         return None
     body = cv2.bitwise_and(m, cv2.bitwise_not(cv2.dilate(remove, np.ones((3, 3), np.uint8))))
     body = cv2.morphologyEx(body, cv2.MORPH_OPEN, np.ones((3, 3), np.uint8))
+    local = np.zeros_like(m)                            # the drawn pixels under m (padded at the image edge)
+    ys0, xs0 = y - p, x - p
+    src = fg[max(0, ys0):ys0 + m.shape[0], max(0, xs0):xs0 + m.shape[1]]
+    local[max(0, -ys0):max(0, -ys0) + src.shape[0], max(0, -xs0):max(0, -xs0) + src.shape[1]] = src
     cs, _ = cv2.findContours(body, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
+    bodies = [cc + [x - p, y - p] for cc in cs if cv2.contourArea(cc) >= MIN_AREA]
+    if np.count_nonzero(local & body) < BODY_INK * max(1, np.count_nonzero(body)) and not any(
+            _classify(img, b, fg, True, _background(img)) for b in bodies):
+        drawn = _split_drawn(img, local & m, x, y, p)   # no shape in a 'body' of gaps: gridlines + bars
+        if drawn is not None:
+            return drawn
+    return bodies, lines
+
+
+BODY_INK = 0.85        # a split-off body less drawn than this holds gaps (bars between gridlines)
+
+
+def _split_drawn(img, m: np.ndarray, x: int, y: int, p: int):
+    """The thick drawn parts (a chart's bars) and the thin ones (its gridlines and axis) of a region
+    whose outline encloses mostly empty page: bars stood on the gridlines, the region's filled
+    outline became one big block and the bars were lost (69-slide check, slides 12-14)."""
+    opened = cv2.morphologyEx(m, cv2.MORPH_OPEN, np.ones((SPLIT_KERNEL, SPLIT_KERNEL), np.uint8))
+    if np.count_nonzero(opened) < 0.15 * np.count_nonzero(m):
+        return None
+    thin = cv2.bitwise_and(m, cv2.bitwise_not(cv2.dilate(opened, np.ones((5, 5), np.uint8))))
+    n, labels, stats, _ = cv2.connectedComponentsWithStats(thin)
+    lines = []
+    for j in range(1, n):
+        if stats[j, cv2.CC_STAT_AREA] < 25:
+            continue
+        ys, xs = np.nonzero(labels == j)
+        d = _line_from_points(img, np.stack([xs + x - p, ys + y - p], axis=1))
+        if d is not None:
+            lines.append(d)
+    cs, _ = cv2.findContours(opened, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
+    H, W = m.shape
+    big = [cc for cc in cs if cv2.contourArea(cc) >= 0.01 * H * W
+           and max(cv2.boundingRect(cc)[3] / H, cv2.boundingRect(cc)[2] / W) >= 0.2]
+    if not big:
+        return None                                  # bits of letters and icons: not bars
     bodies = [cc + [x - p, y - p] for cc in cs if cv2.contourArea(cc) >= MIN_AREA]
     return bodies, lines
 
@@ -642,6 +681,7 @@ def text_boxes_for(lines: list[tuple[str, tuple]], img, dpi: float = 96) -> list
     """Text outside every shape -> free text boxes keeping colour, size and boldness; lines of
     one paragraph (same left edge, same look, close together) stay in one box."""
     items = []
+    lines = _join_row(list(lines))
     for text, box in sorted(lines, key=lambda l: (l[1][1], l[1][0])):
         if text and text.strip():
             items.append((text.strip(), box, text_style(img, box, text, dpi)))
@@ -759,8 +799,8 @@ def to_drawing(detected: list[Detected], keep_style: bool = True) -> tuple[list[
     shapes, sizes and text, for decks with their own design."""
     closed = [d for d in detected if d.kind not in ("line", "arrow")]
     # back to front: big empty panels, then the boxes on them, then icons and free text on top
-    closed.sort(key=lambda d: (d.kind != "photo", d.over_text, d.kind == "text", d.kind == "picture" or bool(d.text),
-                               -d.w * d.h))                     # photos: always at the very back
+    closed.sort(key=lambda d: (d.over_text, d.kind == "text", d.kind == "picture" or bool(d.text), -d.w * d.h))
+    # (a photo sorts like an empty panel by size: over the panel it sits on, under what was laid on it)
 
     def color(d: Detected) -> str:
         if not keep_style:
@@ -1269,7 +1309,7 @@ def _last_stroke(d: Detected, lines) -> bool:
     return False
 
 
-def find_icons(img: np.ndarray, det: list[Detected], text_boxes) -> list[Detected]:
+def find_icons(img: np.ndarray, det: list[Detected], text_boxes, want_mask: bool = False):
     """What the shapes and the text don't explain (icons, dropdown arrows, a skipped "(") ->
     small pictures cut from the capture. The 'expected' screen is the background with every
     shape's fill painted in; ink that differs from it, away from outlines, lines and words, is left."""
@@ -1298,6 +1338,8 @@ def find_icons(img: np.ndarray, det: list[Detected], text_boxes) -> list[Detecte
         covered[max(0, y - 1):y + h + 1, max(0, x - 1):x + w + 1] = 255
     left = (np.abs(img.astype(np.int16) - expect.astype(np.int16)).max(axis=2)
             > ICON_DIFF) & (covered == 0)
+    if want_mask:
+        return left
     m = cv2.dilate(left.astype(np.uint8) * 255, np.ones((3, 3), np.uint8))
     n, labels, stats, _ = cv2.connectedComponentsWithStats(m)
     out: list[Detected] = []
@@ -1337,10 +1379,10 @@ def find_icons(img: np.ndarray, det: list[Detected], text_boxes) -> list[Detecte
 
 # --- photos: kept as pictures, never turned into shapes ------------------------------------------
 PHOTO_BLOCK = 8          # px blocks of the 480-wide copy (~32 px of a full-HD capture)
-PHOTO_COLOURS = 18       # distinct colours (16 levels each) a photo block has at least ...
+PHOTO_COLOURS = 14       # distinct colours (16 levels each) a photo block has at least ...
 PHOTO_DOMINANT = 0.30    # ... with no colour on more than this share (text: its page colour on half)
 PHOTO_MIN_SHARE = 0.02   # of the capture: smaller photos (icons, logos) are left to the icon finder
-PHOTO_BACKGROUND = 0.5   # a photo this big is the page's background: its words become text boxes
+PHOTO_BACKGROUND = 0.8   # a photo this big is the page's background: its words become text boxes
 
 
 def find_photos(img: np.ndarray) -> list[tuple[int, int, int, int]]:
@@ -1397,6 +1439,61 @@ def _photo_edge(ink: np.ndarray, rect) -> tuple[int, int, int, int]:
     if bw * bh > 2.5 * w * h:
         return (x, y, min(w, W - x), min(h, H - y))
     return (int(x0 + bx), int(y0 + by), int(bw), int(bh))
+
+
+GRAPHIC_MIN_SHARE = 0.006   # of the capture: unexplained ink this big is a graphic (a map, a pie chart)
+GRAPHIC_INK = 0.08          # share of a graphic's box that is unexplained ink (maps, pies: more)
+GRAPHIC_PAGE = 0.5          # a graphic this big is the page's design: its words go on top, editable
+
+
+def _with_graphics(img: np.ndarray, det: list[Detected], lines=(), dpi: float = 96) -> list[Detected]:
+    """What no shape, line or word explains and is bigger than an icon - a world map, a pie chart, a
+    drawn logo, an infographic - goes in as a picture of itself instead of a scatter of pieces (or
+    nothing). A graphic over most of the page keeps the page's words on top as text boxes."""
+    text_boxes = [b for _, b, *_ in lines]
+    left = find_icons(img, [d for d in det if d.kind != "picture"], text_boxes, want_mask=True)
+    H, W = img.shape[:2]
+    m = cv2.dilate(left.astype(np.uint8) * 255, np.ones((25, 25), np.uint8))
+    n, _, stats, _ = cv2.connectedComponentsWithStats(m)
+    boxes = []
+    for j in range(1, n):
+        x, y, w, h, _ = stats[j]
+        x, y, w, h = int(x) + 12, int(y) + 12, int(w) - 24, int(h) - 24     # undo the dilation
+        if w <= ICON_MAX or h <= ICON_MAX // 2 or w * h < GRAPHIC_MIN_SHARE * W * H:
+            continue
+        if left[y:y + h, x:x + w].sum() < GRAPHIC_INK * w * h:
+            continue                                   # scattered strokes (dashes, arrow heads), not a graphic
+        held = [d for d in det if d.kind not in ("text", "picture", "photo", "line", "arrow")
+                and x <= d.x + d.w / 2 <= x + w and y <= d.y + d.h / 2 <= y + h and d.w * d.h < 2 * w * h]   # (not the panel behind)
+        if len(held) >= 2 or any(d.w * d.h >= 0.25 * w * h for d in held):
+            continue                                   # a diagram / a drawn shape: they stay editable
+        boxes.append((x, y, w, h))
+    if not boxes:
+        return det
+    def centre_in(d, b):
+        return b[0] <= d.x + d.w / 2 <= b[0] + b[2] and b[1] <= d.y + d.h / 2 <= b[1] + b[3]
+    pages = [b for b in boxes if b[2] * b[3] >= GRAPHIC_PAGE * W * H]
+
+    def inside(a, b):
+        iw = max(0, min(a[0] + a[2], b[0] + b[2]) - max(a[0], b[0]))
+        ih = max(0, min(a[1] + a[3], b[1] + b[3]) - max(a[1], b[1]))
+        return a != b and iw * ih >= 0.8 * a[2] * a[3]
+    boxes = [b for b in boxes if not any(inside(b, p) for p in pages)]      # one picture for the page
+    out = [d for d in det if not any(_share_inside(d, b) >= 0.8 for b in boxes)
+           and not any(centre_in(d, b) for b in pages)]          # the page's words come again, whole, below
+    for x, y, w, h in boxes:
+        crop = np.ascontiguousarray(img[y:y + h, x:x + w, :3])
+        if w * h >= GRAPHIC_PAGE * W * H:                # the page's own design: words stay editable
+            mine = [(t, b) for t, b, *_ in lines if x <= b[0] + b[2] / 2 <= x + w and y <= b[1] + b[3] / 2 <= y + h]
+            words = text_boxes_for(mine, img, dpi)
+            for t in words:
+                t.fill = None
+            out.extend(words)
+            crop = _paint_out(crop, [(t.x - x, t.y - y, t.w, t.h) for t in words])
+        ok, png = cv2.imencode(".png", crop)
+        if ok:
+            out.append(Detected("photo", x, y, w, h, image=png.tobytes()))
+    return out
 
 
 def _share_inside(d: Detected, p) -> float:
@@ -1542,6 +1639,7 @@ def recognize_layout(img: np.ndarray, lines, recognize, dpi: float = 96, find_ag
             t.fill = None                              # the button behind already has that colour
         det.append(t)
     det = _with_photos(img, det, kept, dpi)
+    det = _with_graphics(img, det, kept, dpi)
     return _fit_texts(_without_repeats(_join_pieces(det)), dpi)
 
 
@@ -1577,6 +1675,37 @@ def _fit_texts(det: list[Detected], dpi: float = 96) -> list[Detected]:
 
 def _norm_words(t: str) -> str:
     return " ".join(t.lower().split())
+
+
+ROW_GAP = 1.6           # x the letter height: pieces of one line this close are one line
+
+
+def _join_row(lines: list) -> list:
+    """OCR lines on one row, close together and the same height (a bold lead-in and its plain
+    sentence, words split by a gap in the background), joined into one line: placed apart, each piece
+    drifted from the next at PowerPoint's font widths (overlaps and big holes in the sentence)."""
+    items = sorted(lines, key=lambda l: l[1][0])
+    out, used = [], set()
+    for i, (t, b, *rest) in enumerate(items):
+        if i in used:
+            continue
+        x, y, w, h = b
+        text = t
+        for j in range(i + 1, len(items)):
+            if j in used:
+                continue
+            t2, (x2, y2, w2, h2), *_ = items[j]
+            same_row = abs((y + h / 2) - (y2 + h2 / 2)) <= 0.35 * max(h, h2) and 0.7 <= h2 / max(h, 1) <= 1.4
+            gap = x2 - (x + w)
+            if same_row and -0.6 * max(h, h2) <= gap <= ROW_GAP * max(h, h2):
+                k = next((n for n in range(min(len(text), len(t2)), 1, -1)
+                          if text[-n:].lower() == t2[:n].lower()), 0) if gap < 0 else 0
+                text = text + t2[k:] if k else text + " " + t2
+                ny, nb = min(y, y2), max(y + h, y2 + h2)
+                x, y, w, h = x, ny, x2 + w2 - x, nb - ny
+                used.add(j)
+        out.append((text, (x, y, w, h), *rest))
+    return out
 
 
 def _join_pieces(det: list[Detected]) -> list[Detected]:

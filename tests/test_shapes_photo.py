@@ -46,8 +46,10 @@ def test_PHOTO_02_what_was_found_inside_a_photo_goes_and_the_photo_is_a_picture_
     kinds = [d.kind for d in out]
     assert kinds[0] == "photo" and out[0].image[:2] == b"\xff\xd8"                  # a JPEG
     assert "ellipse" not in kinds and all(d.text != "40" for d in out) and any(d.text == "Agenda" for d in out)
-    shapes, _ = to_drawing(out)
-    assert shapes[0].image == out[0].image                                           # drawn first = behind
+    page = Detected("rect", 0, 0, 960, 540, fill="#FFFFFF")                          # a panel the photo sits on
+    shapes, _ = to_drawing([page] + out)
+    order = [s.image is not None for s in shapes]
+    assert order.index(True) == 1                                                    # over the panel, under the rest
 
 
 def test_PHOTO_03_a_background_photo_keeps_the_page_words_as_text_boxes_painted_out_of_it():
@@ -56,7 +58,7 @@ def test_PHOTO_03_a_background_photo_keeps_the_page_words_as_text_boxes_painted_
     cv2.putText(img, "Founded two decades ago", (120, 265), cv2.FONT_HERSHEY_SIMPLEX, 1.4, (0, 0, 0), 3)
     lines = [("Founded two decades ago", (118, 228, 560, 48), 0.99)]
     out = _with_photos(img, [Detected("rect", 100, 200, 760, 100, fill="#FAFAFA")], lines)
-    assert out[0].kind == "photo" and out[0].w * out[0].h > 0.5 * 960 * 540
+    assert out[0].kind == "photo" and out[0].w * out[0].h > 0.8 * 960 * 540
     words = [d for d in out if d.kind == "text"]
     assert [d.text for d in words] == ["Founded two decades ago"] and words[0].fill is None
     pic = cv2.imdecode(np.frombuffer(out[0].image, np.uint8), cv2.IMREAD_COLOR)
@@ -109,3 +111,13 @@ def test_PHOTO_08_photos_travel_as_jpeg_in_the_clipboard_package():
     z = zipfile.ZipFile(io.BytesIO(pkg))
     assert "clipboard/media/image1.jpeg" in z.namelist()
     assert 'Extension="jpeg"' in z.read("[Content_Types].xml").decode()
+
+
+def test_PHOTO_09_pieces_of_one_line_become_one_line_and_rows_stay_apart():
+    from capture_tool.core.shapes import _join_row
+    lines = [("Structured Certification:", (100, 100, 300, 30)), ("Clear roles, defined paths", (430, 102, 320, 28)),
+             ("High-Quality Assurance:", (100, 150, 280, 30)), ("far away", (1400, 150, 100, 30))]
+    out = sorted(_join_row(lines), key=lambda l: (l[1][1], l[1][0]))
+    assert [t for t, _ in out] == ["Structured Certification: Clear roles, defined paths", "High-Quality Assurance:",
+                                   "far away"]
+    assert out[0][1][2] == 750 - 100
