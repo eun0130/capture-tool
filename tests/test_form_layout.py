@@ -247,6 +247,14 @@ def test_FORM_20_big_slide_letters_are_not_radio_buttons(ocr, qt_app):
         assert any("expertise of the private" in (d.text or "") for d in det), px
 
 
+def test_FORM_23_the_second_letter_o_is_a_letter():
+    """Windows build: the o of "Monthly" sat 1.4 line heights into the line and was taken for a radio."""
+    from capture_tool.core.shapes import _inside_a_line
+    assert _inside_a_line(146, 48, 23, 25, [("Monthly report", (110, 45, 300, 32))])
+    assert not _inside_a_line(48, 48, 23, 25, [("Monthly report", (110, 45, 300, 32))])      # before it: a radio
+    assert not _inside_a_line(112, 48, 23, 25, [("OMonthly report", (110, 45, 300, 32))])    # read as its "O"
+
+
 def test_FORM_21_a_radio_ring_before_its_label_is_still_a_radio(ocr, qt_app):
     import cv2 as cv
     img = _slide_line(qt_app, "      Monthly report")
